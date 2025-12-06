@@ -147,8 +147,12 @@ pub fn emit_calls_in_node_with_builder(
                     regs.push(r);
                 }
                 // Consult lowering context plugin function registry for bare name calls.
-                if let Some((plugin_name, qualified)) = ctx.lookup_plugin_func(name) {
+                let candidates = ctx.lookup_plugin_func(name);
+                if candidates.len() == 1 {
+                    let (plugin_name, qualified) = candidates[0].clone();
                     fb.emit_op(IROp::PluginCall { dest: None, plugin_name, func_name: qualified, args: regs });
+                } else if candidates.len() > 1 {
+                    log::error!("lowering: ambiguous bare function '{}' resolves to multiple plugins; specify a domain alias.", name);
                 }
             } else {
                 // Fallback: evaluate the full call expression (member-style calls,

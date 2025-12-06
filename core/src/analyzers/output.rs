@@ -26,6 +26,9 @@ pub struct AnalyzerOutput {
     /// Plugin function mappings discovered from manifests to support lowering of
     /// bare calls. Each entry is (bare_name, plugin_name, qualified_func_name).
     pub plugin_func_mappings: Vec<(String, String, String)>,
+    /// Alias imports mapping alias name -> plugin name (manifest name) to support
+    /// alias-qualified call resolution during lowering.
+    pub plugin_aliases: Vec<(String, String)>,
 }
 
 impl AnalyzerOutput {
@@ -40,6 +43,7 @@ impl AnalyzerOutput {
             version: 1,
             star_imports: Vec::new(),
             plugin_func_mappings: Vec::new(),
+            plugin_aliases: Vec::new(),
         }
     }
 }

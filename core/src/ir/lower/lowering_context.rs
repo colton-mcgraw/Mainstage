@@ -38,7 +38,10 @@ pub struct LoweringContext {
     pub suppress_module_emits: usize,
     /// Registry mapping bare names (e.g., "say") to `(plugin_name, qualified_func)`
     /// so lowering can emit `PluginCall` ops without hardcoding tables.
-    pub plugin_func_registry: HashMap<String, (String, String)>,
+    /// Map bare name -> list of (plugin_name, qualified_func)
+    pub plugin_func_registry: HashMap<String, Vec<(String, String)>>,
+    /// Alias name -> plugin name (manifest name) for alias-qualified resolution
+    pub alias_to_plugin: HashMap<String, String>,
     // next_provisional_id is no longer used - IR module provides real ids
 }
 
@@ -56,6 +59,7 @@ impl LoweringContext {
             temp_idents: HashMap::new(),
             suppress_module_emits: 0,
             plugin_func_registry: HashMap::new(),
+            alias_to_plugin: HashMap::new(),
         }
     }
 
@@ -100,6 +104,9 @@ impl LoweringContext {
         // Register plugin function mappings discovered during analysis.
         for (bare, plugin, qualified) in &analysis.plugin_func_mappings {
             ctx.register_plugin_func(bare, plugin, qualified);
+        }
+        for (alias, plugin) in &analysis.plugin_aliases {
+            ctx.alias_to_plugin.insert(alias.clone(), plugin.clone());
         }
         if !analysis.plugin_func_mappings.is_empty() {
             log::debug!("lowering: registered {} plugin function mappings from manifests", analysis.plugin_func_mappings.len());
@@ -208,12 +215,26 @@ impl LoweringContext {
     /// name (e.g., "say"), `plugin_name` the plugin identifier (e.g., "stdlib_plugin"),
     /// and `qualified_func` the domain-qualified function name (e.g., "util.say").
     pub fn register_plugin_func(&mut self, bare: &str, plugin_name: &str, qualified_func: &str) {
-        self.plugin_func_registry.insert(bare.to_string(), (plugin_name.to_string(), qualified_func.to_string()));
+        self.plugin_func_registry.entry(bare.to_string()).or_insert_with(Vec::new).push((plugin_name.to_string(), qualified_func.to_string()));
     }
 
     /// Lookup a plugin function mapping by its bare name.
-    pub fn lookup_plugin_func(&self, bare: &str) -> Option<(String, String)> {
-        self.plugin_func_registry.get(bare).cloned()
+    pub fn lookup_plugin_func(&self, bare: &str) -> Vec<(String, String)> {
+        self.plugin_func_registry.get(bare).cloned().unwrap_or_default()
+    }
+
+    /// Lookup a plugin function mapping by its fully-qualified domain name
+    /// (e.g., "util.array.append"). Returns the `(plugin_name, qualified)`
+    /// pair if found.
+    pub fn lookup_plugin_func_qualified(&self, qualified: &str) -> Option<(String, String)> {
+        for (_bare, vec) in self.plugin_func_registry.iter() {
+            for (plugin, qual) in vec.iter() {
+                if qual == qualified {
+                    return Some((plugin.clone(), qual.clone()));
+                }
+            }
+        }
+        None
     }
 }
 

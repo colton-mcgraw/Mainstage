@@ -2,23 +2,21 @@ import "stdlib" as *;
 import "cpp" as cpp_plugin;
 
 workspace hello_ws {
-    // Read source files from the example_plugin_use project and store as an array.
-    say(example_plugin_use.srcs);
-    glb = glob(example_plugin_use.srcs);
-    say("Globbed source files:");
-    say(glb);
-    sources = read(glb[0]);
-    // Debug output
-    say("Compiling C++ sources:");
-    say(sources);
-    // Compile using the cpp plugin
-    val = cpp_plugin.compile(sources, example_plugin_use.flags);
+    glb = glob(example_plugin_use.srcs);            // Array<String> of paths
+    contents = [];                                  // Array<String or Null>
+    for p in glb {
+        say("Reading file: " + p);
+        c = read(p);                                // String or Null
+        contents = append(contents, c);             // accumulate contents
+    }
+    
+    // Use contents as needed, e.g., compile the first
+    val = cpp_plugin.compile(contents, example_plugin_use.flags);
     if val.ok {
         say("Compilation succeeded. Output binary at: " + val.path);
     } else {
         say("Compilation failed with error: " + val.error);
     }
-    // Debug
     say(val);
 }
 

@@ -100,7 +100,9 @@ pub fn lower_expr_to_reg_with_builder(
                         regs.push(r);
                     }
                     // Consult lowering context plugin function registry for bare name calls.
-                    if let Some((plugin_name, qualified)) = _ctx.lookup_plugin_func(name) {
+                    let candidates = _ctx.lookup_plugin_func(name);
+                    if candidates.len() == 1 {
+                        let (plugin_name, qualified) = candidates[0].clone();
                         if let Some(b) = builder.as_mut() {
                             let dest = b.alloc_reg();
                             b.emit_op(IROp::PluginCall { dest: Some(dest), plugin_name, func_name: qualified, args: regs });
@@ -110,6 +112,12 @@ pub fn lower_expr_to_reg_with_builder(
                             ir_mod.emit_op(IROp::PluginCall { dest: Some(dest), plugin_name, func_name: qualified, args: regs });
                             return dest;
                         }
+                    } else if candidates.len() > 1 {
+                        // ambiguous: require domain alias to disambiguate
+                        log::error!("lowering: ambiguous bare function '{}' resolves to multiple plugins; specify a domain alias.", name);
+                        // evaluate args for side-effects and return Null
+                        for a in args.iter() { let builder_arg = builder.as_mut().map(|b| &mut **b); let _ = lower_expr_to_reg_with_builder(a, ir_mod, _ctx, builder_arg); }
+                        if let Some(b) = builder.as_mut() { let r = b.alloc_reg(); b.emit_op(IROp::LConst { dest: r, value: crate::ir::value::Value::Null }); return r; } else { let r = ir_mod.alloc_reg(); ir_mod.emit_op(IROp::LConst { dest: r, value: crate::ir::value::Value::Null }); return r; }
                     }
                     // If not a stdlib bare name, but symbol exists, lower as stage call label
                     if _ctx.symbols.get(name).is_some() {
@@ -117,29 +125,93 @@ pub fn lower_expr_to_reg_with_builder(
                         // until stage call mapping is implemented.
                     }
             }
-            // Member-style callee could be a plugin call: <alias>.<func>(...)
-            if let crate::ast::AstNodeKind::Member { object, property } = callee.get_kind() {
-                if let crate::ast::AstNodeKind::Identifier { name: alias } = object.get_kind() {
-                    // Check lowering context symbols for a dotted function symbol inserted by the analyzer
-                    let full_name = format!("{}.{}", alias, property);
-                    // If the analyzer populated a dotted function symbol (e.g. "alias.func"),
-                    // or the alias itself is known (imported module), treat this as a plugin call.
-                    if _ctx.symbols.get(&full_name).is_some() || _ctx.symbols.get(alias).is_some() {
-                        // lower args
-                        let mut regs: Vec<usize> = Vec::new();
-                        for a in args.iter() {
-                            let builder_arg = builder.as_mut().map(|b| &mut **b);
-                            let r = lower_expr_to_reg_with_builder(a, ir_mod, _ctx, builder_arg);
-                            regs.push(r);
+            // Member-style callee: resolve nested domain names like util.array.append
+            if let crate::ast::AstNodeKind::Member { .. } = callee.get_kind() {
+                // Walk the Member chain to build a qualified name.
+                fn collect_member_chain<'a>(n: &'a crate::ast::AstNode, out: &mut Vec<String>) -> Option<&'a crate::ast::AstNode> {
+                    match n.get_kind() {
+                        crate::ast::AstNodeKind::Member { object, property } => {
+                            out.push(property.clone());
+                            collect_member_chain(object, out)
                         }
-                        if let Some(b) = builder.as_mut() {
-                            let dest = b.alloc_reg();
-                            b.emit_op(IROp::PluginCall { dest: Some(dest), plugin_name: alias.clone(), func_name: property.clone(), args: regs });
-                            return dest;
+                        crate::ast::AstNodeKind::Identifier { .. } => Some(n),
+                        _ => None,
+                    }
+                }
+
+                let mut segments: Vec<String> = Vec::new();
+                if let Some(root) = collect_member_chain(callee, &mut segments) {
+                    if let crate::ast::AstNodeKind::Identifier { name: base } = root.get_kind() {
+                        segments.reverse();
+                        let qualified = if segments.is_empty() { base.clone() } else { format!("{}.{}", base, segments.join(".")) };
+
+                        // Try qualified lookup in plugin registry
+                        // If root is an alias, translate to domain-qualified using alias_to_plugin
+                        let mut resolved_plugin: Option<String> = None;
+                        let mut resolved_qualified: Option<String> = None;
+                        if let Some(pname) = _ctx.alias_to_plugin.get(base) {
+                            // rewrite qualified by replacing alias with plugin domain name
+                            let domain_pref = pname.clone();
+                            // domain_pref should match the manifest domain root (e.g., 'cpp' or 'stdlib')
+                            // segments already contains subdomains+func
+                            let dq = if segments.is_empty() { domain_pref.clone() } else { format!("{}.{}", domain_pref, segments.join(".")) };
+                            if let Some((plugin_name, func_qualified)) = _ctx.lookup_plugin_func_qualified(&dq) {
+                                resolved_plugin = Some(plugin_name);
+                                resolved_qualified = Some(func_qualified);
+                            }
+                        } else if let Some((plugin_name, func_qualified)) = _ctx.lookup_plugin_func_qualified(&qualified) {
+                            resolved_plugin = Some(plugin_name);
+                            resolved_qualified = Some(func_qualified);
+                        }
+
+                        if let (Some(plugin_name), Some(func_qualified)) = (resolved_plugin, resolved_qualified) {
+                            // lower args
+                            let mut regs: Vec<usize> = Vec::new();
+                            for a in args.iter() {
+                                let builder_arg = builder.as_mut().map(|b| &mut **b);
+                                let r = lower_expr_to_reg_with_builder(a, ir_mod, _ctx, builder_arg);
+                                regs.push(r);
+                            }
+                            if let Some(b) = builder.as_mut() {
+                                let dest = b.alloc_reg();
+                                b.emit_op(IROp::PluginCall { dest: Some(dest), plugin_name, func_name: func_qualified, args: regs });
+                                return dest;
+                            } else {
+                                let dest = ir_mod.alloc_reg();
+                                ir_mod.emit_op(IROp::PluginCall { dest: Some(dest), plugin_name, func_name: func_qualified, args: regs });
+                                return dest;
+                            }
                         } else {
-                            let dest = ir_mod.alloc_reg();
-                            ir_mod.emit_op(IROp::PluginCall { dest: Some(dest), plugin_name: alias.clone(), func_name: property.clone(), args: regs });
-                            return dest;
+                            // Fallback: resolve by bare function name (last segment)
+                            let bare = segments.last().cloned().unwrap_or_else(|| qualified.clone());
+                            let candidates = _ctx.lookup_plugin_func(&bare);
+                            if candidates.len() == 1 {
+                                let (plugin_name, func_qualified) = candidates[0].clone();
+                                let mut regs: Vec<usize> = Vec::new();
+                                for a in args.iter() {
+                                    let builder_arg = builder.as_mut().map(|b| &mut **b);
+                                    let r = lower_expr_to_reg_with_builder(a, ir_mod, _ctx, builder_arg);
+                                    regs.push(r);
+                                }
+                                if let Some(b) = builder.as_mut() {
+                                    let dest = b.alloc_reg();
+                                    b.emit_op(IROp::PluginCall { dest: Some(dest), plugin_name, func_name: func_qualified, args: regs });
+                                    return dest;
+                                } else {
+                                    let dest = ir_mod.alloc_reg();
+                                    ir_mod.emit_op(IROp::PluginCall { dest: Some(dest), plugin_name, func_name: func_qualified, args: regs });
+                                    return dest;
+                                }
+                            } else if candidates.len() > 1 {
+                                log::error!("lowering: ambiguous bare function '{}' resolves to multiple plugins; specify a domain alias.", bare);
+                                for a in args.iter() { let builder_arg = builder.as_mut().map(|b| &mut **b); let _ = lower_expr_to_reg_with_builder(a, ir_mod, _ctx, builder_arg); }
+                                if let Some(b) = builder.as_mut() { let r = b.alloc_reg(); b.emit_op(IROp::LConst { dest: r, value: crate::ir::value::Value::Null }); return r; } else { let r = ir_mod.alloc_reg(); ir_mod.emit_op(IROp::LConst { dest: r, value: crate::ir::value::Value::Null }); return r; }
+                            } else {
+                                // If we cannot resolve, emit an error and return Null
+                                log::error!("lowering: unresolved function '{}': no matching plugin or script function", qualified);
+                                for a in args.iter() { let builder_arg = builder.as_mut().map(|b| &mut **b); let _ = lower_expr_to_reg_with_builder(a, ir_mod, _ctx, builder_arg); }
+                                if let Some(b) = builder.as_mut() { let r = b.alloc_reg(); b.emit_op(IROp::LConst { dest: r, value: crate::ir::value::Value::Null }); return r; } else { let r = ir_mod.alloc_reg(); ir_mod.emit_op(IROp::LConst { dest: r, value: crate::ir::value::Value::Null }); return r; }
+                            }
                         }
                     }
                 }

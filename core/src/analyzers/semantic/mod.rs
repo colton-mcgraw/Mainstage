@@ -32,12 +32,20 @@ pub fn analyze_semantic_rules(ast: &mut AstNode, manifests: Option<&HashMap<Stri
         return Err(vec![e]);
     }
 
-    // Collect diagnostics (warnings/infos) produced by the analyzer. If any
-    // diagnostics were collected, return them as the error path so callers can
-    // display or handle them.
-    let diagnostics = analyzer.take_diagnostics();
-    if !diagnostics.is_empty() {
-        return Err(diagnostics);
+    // Collect diagnostics produced by the analyzer. Only abort on errors;
+    // continue building the analysis on warnings so downstream steps
+    // (like call graph collection and usage recording) can still run.
+    let mut diagnostics = analyzer.take_diagnostics();
+    // Partition diagnostics into errors vs non-errors
+    let mut errors: Vec<Box<dyn MainstageErrorExt>> = Vec::new();
+    let mut non_errors: Vec<Box<dyn MainstageErrorExt>> = Vec::new();
+    for d in diagnostics.drain(..) {
+        // Use the common diagnostic trait to determine severity.
+        let is_error = d.level() == crate::error::Level::Error || d.level() == crate::error::Level::Critical;
+        if is_error { errors.push(d); } else { non_errors.push(d); }
+    }
+    if !errors.is_empty() {
+        return Err(errors);
     }
 
     // The symbol table holds the chosen entrypoint workspace name (if any).
@@ -188,10 +196,43 @@ pub fn analyze_semantic_rules(ast: &mut AstNode, manifests: Option<&HashMap<Stri
                             }
                         }
                     }
+                    // Treat all identifier arguments as reads/usages
+                    for a in args.iter() {
+                        if let AstNodeKind::Identifier { name } = a.get_kind() {
+                            // Find the innermost scope containing this symbol and record usage
+                            for scope in &mut analysis.scopes {
+                                if let Some(sym) = scope.symbols.iter_mut().find(|s| s.name == *name) {
+                                    sym.usages.push((a.location.clone().unwrap_or_default(), a.span.clone()));
+                                }
+                            }
+                        }
+                    }
                     // traverse args
                     for a in args {
                         collect_from_node(a, current_func, analysis, func_name_to_node);
                     }
+                }
+                AstNodeKind::Index { object: array, index: _ } => {
+                    // Mark base identifier as used
+                    if let AstNodeKind::Identifier { name } = array.get_kind() {
+                        for scope in &mut analysis.scopes {
+                            if let Some(sym) = scope.symbols.iter_mut().find(|s| s.name == *name) {
+                                sym.usages.push((array.location.clone().unwrap_or_default(), array.span.clone()));
+                            }
+                        }
+                    }
+                    collect_from_node(array, current_func, analysis, func_name_to_node);
+                }
+                AstNodeKind::Member { object, .. } => {
+                    // Mark base identifier as used
+                    if let AstNodeKind::Identifier { name } = object.get_kind() {
+                        for scope in &mut analysis.scopes {
+                            if let Some(sym) = scope.symbols.iter_mut().find(|s| s.name == *name) {
+                                sym.usages.push((object.location.clone().unwrap_or_default(), object.span.clone()));
+                            }
+                        }
+                    }
+                    collect_from_node(object, current_func, analysis, func_name_to_node);
                 }
                 AstNodeKind::Script { body } => {
                     for b in body {
@@ -301,7 +342,8 @@ pub fn analyze_semantic_rules(ast: &mut AstNode, manifests: Option<&HashMap<Stri
                 if is_star {
                     analysis.star_imports.push(module.clone());
                     if let Some(desc) = mmap.get(&module) {
-                        let plugin_name = desc.manifest.name.clone();
+                        // Use runtime name: manifest.entry if provided, else manifest.name
+                        let plugin_name = desc.manifest.entry.clone().unwrap_or_else(|| desc.manifest.name.clone());
                         for f in &desc.manifest.functions {
                             // Build qualified name from explicit domain if provided, else use the name as-is.
                             let qualified = if let Some(dom) = &f.domain {
@@ -315,6 +357,20 @@ pub fn analyze_semantic_rules(ast: &mut AstNode, manifests: Option<&HashMap<Stri
                         }
                     } else {
                         log::warn!("analyzer: no manifest descriptor found for star import module '{}'", module);
+                    }
+                } else {
+                    // Alias import: record alias -> plugin name and also bare mappings
+                    if let Some(desc) = mmap.get(&module) {
+                        // Use runtime name: manifest.entry if provided, else manifest.name
+                        let plugin_name = desc.manifest.entry.clone().unwrap_or_else(|| desc.manifest.name.clone());
+                        analysis.plugin_aliases.push((alias.clone(), plugin_name.clone()));
+                        for f in &desc.manifest.functions {
+                            let qualified = if let Some(dom) = &f.domain { format!("{}.{}", dom, f.name) } else { f.name.clone() };
+                            let bare = match qualified.rsplit_once('.') { Some((_, tail)) => tail.to_string(), None => qualified.clone() };
+                            analysis.plugin_func_mappings.push((bare, plugin_name.clone(), qualified));
+                        }
+                    } else {
+                        log::warn!("analyzer: no manifest descriptor found for alias import module '{}'", module);
                     }
                 }
             }

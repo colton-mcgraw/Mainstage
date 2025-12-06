@@ -15,7 +15,7 @@
     },
     {
       "name": "say",
-      "args": [{ "name": "message", "kind": "String" }],
+      "args": [{ "name": "message", "kind": "Any" }],
       "description": "Output a message to the user."
     },
     {
@@ -140,11 +140,11 @@
       "domain": "fs",
       "name": "glob",
       "args": [
-        { "name": "pattern", "kind": "String" },
+        { "name": "pattern", "kind": "Array<String>" },
         { "name": "recursive", "kind": "Bool", "optional": true }
       ],
       "returns": { "name": "matches", "kind": "Array<String>" },
-      "description": "Find paths matching a glob pattern; supports recursive search when enabled."
+      "description": "Find paths matching one or more glob patterns; accepts a single string or an array of strings. Supports recursive search when enabled."
     },
     {
       "domain": "fs",
@@ -221,6 +221,43 @@
       ],
       "returns": { "name": "result", "kind": "String" },
       "description": "Format a string using the given format and arguments."
+    }
+    ,
+    {
+      "domain": "util.array",
+      "name": "empty",
+      "args": [ ],
+      "returns": { "name": "result", "kind": "Array<Any>" },
+      "description": "Create a new empty array."
+    },
+    {
+      "domain": "util.array",
+      "name": "append",
+      "args": [
+        { "name": "array", "kind": "Array<Any>" },
+        { "name": "item",  "kind": "Any" }
+      ],
+      "returns": { "name": "result", "kind": "Array<Any>" },
+      "description": "Append an item to an array and return the new array."
+    },
+    {
+      "domain": "util.array",
+      "name": "extend",
+      "args": [
+        { "name": "array", "kind": "Array<Any>" },
+        { "name": "items", "kind": "Array<Any>" }
+      ],
+      "returns": { "name": "result", "kind": "Array<Any>" },
+      "description": "Extend an array with items from another array and return the new array."
+    },
+    {
+      "domain": "util.array",
+      "name": "length",
+      "args": [
+        { "name": "array", "kind": "Array<Any>" }
+      ],
+      "returns": { "name": "result", "kind": "Int" },
+      "description": "Return the number of elements in the array."
     }
   ]
 }

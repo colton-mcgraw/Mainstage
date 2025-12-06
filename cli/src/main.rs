@@ -66,10 +66,21 @@ fn main() {
     let matches = cli.get_matches();
 
     // VM plugin discovery (CLI may override the directory)
+    // Resolve plugin-dir against the original CLI CWD, independent of later CWD changes.
     let mut vm = VM::new(vec![]);
+    let orig_cli_cwd = std::env::current_dir().ok();
     let plugin_dir: Option<PathBuf> = matches
         .get_one::<String>("plugin-dir")
-        .map(|s| PathBuf::from(s));
+        .map(|s| {
+            let p = PathBuf::from(s);
+            if p.is_absolute() {
+                p
+            } else if let Some(ref cwd) = orig_cli_cwd {
+                cwd.join(p)
+            } else {
+                p
+            }
+        });
     match vm.discover_plugins(plugin_dir.as_ref()) {
         Ok(n) => info!("Discovered {} plugin manifest(s)", n),
         Err(e) => error!("Plugin discovery failed: {}", e),
@@ -174,7 +185,23 @@ fn dispatch_commands(
             let out = sub_m.get_one::<String>("output");
             let optimize = sub_m.get_flag("optimize");
 
-            let script = mainstage_core::script::Script::new(std::path::PathBuf::from(file))
+            // Preserve CLI CWD for argument resolution; set CWD to script dir for core.
+            let orig_cwd = std::env::current_dir().ok();
+            let rel_script_path = std::path::PathBuf::from(file);
+            let script_path_abs = if rel_script_path.is_absolute() {
+                rel_script_path.clone()
+            } else if let Some(ref cwd) = orig_cwd {
+                cwd.join(&rel_script_path)
+            } else {
+                rel_script_path.clone()
+            };
+            if let Some(parent) = script_path_abs.parent() {
+                if let Err(e) = std::env::set_current_dir(parent) {
+                    warn!("failed to set working dir to {:?}: {}", parent, e);
+                }
+            }
+
+            let script = mainstage_core::script::Script::new(script_path_abs.clone())
                 .expect("Failed to load script file");
 
             // Properly handle the Result so we don't silently drop errors.
@@ -207,25 +234,50 @@ fn dispatch_commands(
 
             let bytecode = mainstage_core::ir::emit_bytecode(&ir_module);
 
+            // Resolve output and dump paths relative to original CLI CWD.
             if let Some(output_file) = out {
-                fs::write(output_file.to_owned() + ".msx", &bytecode)
-                    .expect("Failed to write output file");
+                let out_rel = std::path::PathBuf::from(output_file);
+                let out_path = if out_rel.is_absolute() {
+                    out_rel
+                } else if let Some(ref cwd) = orig_cwd {
+                    cwd.join(out_rel)
+                } else {
+                    out_rel
+                };
+                if let Err(e) = fs::write(out_path.with_extension("msx"), &bytecode) {
+                    error!("Failed to write output file: {}", e);
+                }
             }
 
             if let Some(dump_stage) = sub_m.get_one::<String>("dump") {
                 match dump_stage.as_str() {
                     "ast" => {
-                        fs::write("dumped_ast.txt", format!("{:#?}", ast))
-                            .expect("Failed to write dumped AST");
+                        let dump_path = orig_cwd
+                            .as_ref()
+                            .map(|d| d.join("dumped_ast.txt"))
+                            .unwrap_or_else(|| std::path::PathBuf::from("dumped_ast.txt"));
+                        if let Err(e) = fs::write(dump_path, format!("{:#?}", ast)) {
+                            error!("Failed to write dumped AST: {}", e);
+                        }
                     }
                     "ir" => {
-                        fs::write("dumped_ir.txt", format!("{}", ir_module))
-                            .expect("Failed to write dumped IR");
+                        let dump_path = orig_cwd
+                            .as_ref()
+                            .map(|d| d.join("dumped_ir.txt"))
+                            .unwrap_or_else(|| std::path::PathBuf::from("dumped_ir.txt"));
+                        if let Err(e) = fs::write(dump_path, format!("{}", ir_module)) {
+                            error!("Failed to write dumped IR: {}", e);
+                        }
                     }
                     _ => {
                         error!("Unknown dump stage: {}", dump_stage);
                     }
                 }
+            }
+
+            // Restore original working directory if available
+            if let Some(orig) = orig_cwd {
+                let _ = std::env::set_current_dir(orig);
             }
         }
 
@@ -237,7 +289,7 @@ fn dispatch_commands(
             let script = mainstage_core::script::Script::new(std::path::PathBuf::from(file))
                 .expect("Failed to load script file");
 
-            // Properly handle the Result so we don't silently drop errors.
+            // Properly handle the Result so we don't silently drop errors. 
             let mut ast = match generate_ast_from_source(&script) {
                 Ok(ast) => ast,
                 Err(e) => {
@@ -587,12 +639,36 @@ fn dispatch_commands(
             let file = sub_m.get_one::<String>("file").expect("required argument");
             let output_file = sub_m.get_one::<String>("output");
 
-            let bytecode = fs::read(file).expect("Failed to read .msx file");
+            // Preserve original CLI CWD; set CWD to file dir for reading.
+            let orig_cwd = std::env::current_dir().ok();
+            let rel_path = std::path::PathBuf::from(file);
+            let abs_path = if rel_path.is_absolute() {
+                rel_path.clone()
+            } else if let Some(ref cwd) = orig_cwd {
+                cwd.join(&rel_path)
+            } else {
+                rel_path.clone()
+            };
+            if let Some(parent) = abs_path.parent() {
+                if let Err(e) = std::env::set_current_dir(parent) {
+                    warn!("failed to set working dir to {:?}: {}", parent, e);
+                }
+            }
+
+            let bytecode = fs::read(&abs_path).expect("Failed to read .msx file");
 
             match disassembler::disassemble(&bytecode) {
                 Ok(f) => {
                     if let Some(output_file) = output_file {
-                        if let Err(e) = fs::write(output_file, f) {
+                        let out_rel = std::path::PathBuf::from(output_file);
+                        let out_path = if out_rel.is_absolute() {
+                            out_rel
+                        } else if let Some(ref cwd) = orig_cwd {
+                            cwd.join(out_rel)
+                        } else {
+                            out_rel
+                        };
+                        if let Err(e) = fs::write(out_path, f) {
                             error!("Failed to write disassembly output file: {}", e);
                         }
                     } else {
@@ -602,6 +678,11 @@ fn dispatch_commands(
                 Err(e) => {
                     error!("Failed to disassemble bytecode: {}", e);
                 }
+            }
+
+            // Restore original working directory if available
+            if let Some(orig) = orig_cwd {
+                let _ = std::env::set_current_dir(orig);
             }
         }
         _ => {

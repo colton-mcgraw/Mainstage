@@ -4,9 +4,9 @@
 //! that stores `Symbol` entries, tracks object-contexts, and accumulates
 //! diagnostics produced during analysis.
 
-use super::symbol::{Symbol, SymbolKind};
-use std::collections::HashMap;
+use super::symbol::{Symbol};
 use crate::error::MainstageErrorExt;
+use std::collections::HashMap;
 
 // A single scope: name -> overload set
 type Scope = HashMap<String, Vec<Symbol>>;
@@ -24,7 +24,6 @@ pub struct SymbolTable {
     /// the first workspace encountered will be used.
     entrypoint: Option<String>,
 }
-
 
 impl SymbolTable {
     pub fn new() -> Self {
@@ -59,21 +58,18 @@ impl SymbolTable {
             if let Some(current_scope) = self.symbols.last() {
                 for symbols in current_scope.values() {
                     for sym in symbols {
-                        // Only consider variables (not functions/objects)
-                        if matches!(sym.kind(), SymbolKind::Variable) {
-                            if !sym.is_referenced() {
-                                // Build a warning diagnostic for this unused variable.
-                                let msg = format!("Variable '{}' is declared but never used", sym.name);
-                                self.diagnostics.push(Box::new(
-                                    crate::analyzers::semantic::err::SemanticError::with(
-                                        crate::error::Level::Warning,
-                                        msg,
-                                        "mainstage.analyzers.semantic.table.exit_scope".to_string(),
-                                        sym.location(),
-                                        sym.span(),
-                                    ),
-                                ));
-                            }
+                        if !sym.is_referenced() {
+                            // Build a warning diagnostic for this unused variable.
+                            let msg = format!("Variable '{}' is declared but never used", sym.name);
+                            self.diagnostics.push(Box::new(
+                                crate::analyzers::semantic::err::SemanticError::with(
+                                    crate::error::Level::Warning,
+                                    msg,
+                                    "mainstage.analyzers.semantic.table.exit_scope".to_string(),
+                                    sym.location(),
+                                    sym.span(),
+                                ),
+                            ));
                         }
                     }
                 }
