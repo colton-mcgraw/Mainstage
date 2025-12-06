@@ -7,5 +7,7 @@ edition = "2021"
 crate-type = ["cdylib"]
 
 [dependencies]
+mainstage_core = { path = "../../core" }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+libc = "0.2"

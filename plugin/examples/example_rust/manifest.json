@@ -3,9 +3,10 @@
   "version": "0.1.0",
   "description": "Example in-process Rust plugin",
   "entry": "rust_inproc",
+  "path": "target/release",
   "abi": "inprocess",
   "kind": "inprocess",
   "functions": [
-    { "name": "echo", "args": [], "returns": { "name": "r", "kind": "any" } }
+    { "name": "util.echo", "args": [ {"name":"args","kind":"Array<Any>"} ], "returns": { "name": "r", "kind": "Any" } }
   ]
 }

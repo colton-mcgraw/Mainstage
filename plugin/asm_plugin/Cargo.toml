@@ -15,6 +15,7 @@ mainstage_core = { path = "../../core" }
 async-trait = "0.1"
 serde_json = "1.0"
 which = "8.0.0"
+libc = "0.2"
 common = { path = "../common" }
 
 [dev-dependencies]

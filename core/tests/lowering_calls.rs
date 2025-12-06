@@ -46,7 +46,7 @@ fn calllabel_args_are_present_after_lowering() {
     let ast = ast::generate_ast_from_source(&script).expect("failed to parse sample");
 
     // Lower AST to IR targeting the workspace `demo_ws`
-    let ir_mod = ir::lower_ast_to_ir(&ast, "demo_ws", false, None);
+    let ir_mod = ir::lower_ast_to_ir(&ast, false, None);
 
     // Debug print IR if test fails
     let ir_str = format!("{}", ir_mod);

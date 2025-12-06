@@ -110,11 +110,6 @@ pub(crate) enum Op {
         target: Register,
     },
     Halt,
-    Call {
-        dest: Register,
-        func: Register,
-        args: Vec<Register>,
-    },
     CallLabel {
         dest: Register,
         label_index: Register,

@@ -35,7 +35,7 @@ const STAGE_SAMPLE: &str = r#"stage s() {
 fn stage_forin_creates_local_binding() {
     let script = Script { name: "stage_loop.ms".to_string(), path: PathBuf::from("stage_loop.ms"), content: STAGE_SAMPLE.to_string() };
     let ast = ast::generate_ast_from_source(&script).expect("failed to parse stage sample");
-    let ir_mod = ir::lower_ast_to_ir(&ast, "", false, None);
+    let ir_mod = ir::lower_ast_to_ir(&ast, false, None);
 
     // Look for a local index that is both SLocal (store) and LLocal (load)
     let mut stores: std::collections::HashSet<usize> = std::collections::HashSet::new();
@@ -56,7 +56,7 @@ fn stage_forin_creates_local_binding() {
 fn workspace_forin_creates_wrapper_function() {
     let script = Script { name: "ws_loop.ms".to_string(), path: PathBuf::from("ws_loop.ms"), content: WORKSPACE_SAMPLE.to_string() };
     let ast = ast::generate_ast_from_source(&script).expect("failed to parse workspace sample");
-    let ir_mod = ir::lower_ast_to_ir(&ast, "demo_ws", false, None);
+    let ir_mod = ir::lower_ast_to_ir(&ast, false, None);
 
     // Ensure an Array constant was emitted for the static list
     let mut found_array_const = false;

@@ -1,18 +1,19 @@
 [package]
-name = "c_plugin"
+name = "stdlib"
 version = "0.1.0"
 edition = "2024"
 
 [lib]
+name = "stdlib"
 crate-type = ["cdylib"]
 
 [dependencies]
 mainstage_core = { path = "../../core" }
-async-trait = "0.1"
-serde_json = "1.0"
-which = "8.0.0"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+rand = "0.8"
+which = "4"
 libc = "0.2"
-common = { path = "../common" }
 
-[dev-dependencies]
+#[dev-dependencies]
 tempfile = "3"

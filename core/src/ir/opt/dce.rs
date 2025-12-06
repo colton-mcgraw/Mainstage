@@ -46,7 +46,6 @@ pub(crate) fn dce(ir: &mut IrModule) {
             | IROp::AllocClosure { dest }
             | IROp::CLoad { dest, .. }
             | IROp::ArrayNew { dest, .. }
-            | IROp::Call { dest, .. }
             | IROp::CallLabel { dest, .. }
             | IROp::LoadGlobal { dest, .. }
             | IROp::ArrayGet { dest, .. }
@@ -70,10 +69,6 @@ pub(crate) fn dce(ir: &mut IrModule) {
         match op {
             IROp::PluginCall { dest, args, .. } => {
                 if let Some(d) = dest { work.push_back((*d, i)); }
-                for a in args.iter() { work.push_back((*a, i)); }
-            }
-            IROp::Call { dest: _, func, args } => {
-                work.push_back((*func, i));
                 for a in args.iter() { work.push_back((*a, i)); }
             }
             IROp::CallLabel { dest: _, label_index: _, args } => {
@@ -137,7 +132,6 @@ pub(crate) fn dce(ir: &mut IrModule) {
                     IROp::GetProp { obj, key, .. } => { work.push_back((*obj, idx)); work.push_back((*key, idx)); }
                     IROp::LoadGlobal { src, .. } => { work.push_back((*src, idx)); }
                     IROp::CLoad { closure, .. } => { work.push_back((*closure, idx)); }
-                    IROp::Call { func, args, .. } => { work.push_back((*func, idx)); for a in args.iter() { work.push_back((*a, idx)); } }
                     IROp::CallLabel { args, .. } => { for a in args.iter() { work.push_back((*a, idx)); } }
                     IROp::PluginCall { dest: _, args, .. } => { for a in args.iter() { work.push_back((*a, idx)); } }
                     IROp::ArraySet { array, index, src } => { work.push_back((*array, idx)); work.push_back((*index, idx)); work.push_back((*src, idx)); }
@@ -167,12 +161,7 @@ pub(crate) fn dce(ir: &mut IrModule) {
                 keep = true;
                 mark_reg(*cond, &mut live_regs);
             }
-            // Calls and plugin calls are side-effecting (conservative)
-            IROp::Call { dest: _, func, args } => {
-                keep = true;
-                mark_reg(*func, &mut live_regs);
-                for a in args.iter() { mark_reg(*a, &mut live_regs); }
-            }
+            
             IROp::CallLabel { dest: _, label_index: _, args } => {
                 keep = true;
                 for a in args.iter() { mark_reg(*a, &mut live_regs); }
@@ -275,7 +264,6 @@ pub(crate) fn dce(ir: &mut IrModule) {
                 | IROp::AllocClosure { dest }
                 | IROp::CLoad { dest, .. }
                 | IROp::ArrayNew { dest, .. }
-                | IROp::Call { dest, .. }
                 | IROp::CallLabel { dest, .. }
                 | IROp::ArrayGet { dest, .. }
                 | IROp::GetProp { dest, .. }

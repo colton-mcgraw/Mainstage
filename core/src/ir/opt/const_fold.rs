@@ -96,13 +96,11 @@ pub(crate) fn constant_fold(ir: &mut IrModule) {
             // ops that write to a destination register should invalidate that register
             IROp::Inc { .. }
             | IROp::Dec { .. }
-            | IROp::Call { .. }
             | IROp::CallLabel { .. }
             | IROp::CLoad { .. } => {
                 let d = match &op {
                     IROp::Inc { dest } => *dest,
                     IROp::Dec { dest } => *dest,
-                    IROp::Call { dest, .. } => *dest,
                     IROp::CallLabel { dest, .. } => *dest,
                     IROp::CLoad { dest, .. } => *dest,
                     _ => unreachable!(),

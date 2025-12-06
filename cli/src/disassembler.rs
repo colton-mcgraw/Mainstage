@@ -216,16 +216,6 @@ pub fn disassemble(bytes: &[u8]) -> Result<String, String> {
                 "{:04}  SetProp r{}.r{} <- r{}\n",
                 i, obj, key, src
             )),
-            IROp::Call { dest, func, args } => {
-                out.push_str(&format!("{:04}  Call r{} <- r{}(", i, dest, func));
-                for (j, a) in args.iter().enumerate() {
-                    if j > 0 {
-                        out.push_str(", ");
-                    }
-                    out.push_str(&format!("r{}", a));
-                }
-                out.push_str(")\n");
-            }
             IROp::CallLabel {
                 dest,
                 label_index,
@@ -575,20 +565,6 @@ fn convert_byte_to_opcode(cur: &mut Cursor<&[u8]>, i: usize, label_map: &mut Has
                 dest: dest as usize,
                 closure: clo as usize,
                 field: field as usize,
-            }
-        }
-        0x70 => {
-            let dest = read_u32(cur)?;
-            let func = read_u32(cur)?;
-            let argc = read_u32(cur)?;
-            let mut args = Vec::new();
-            for _ in 0..argc {
-                args.push(read_u32(cur)? as usize);
-            }
-            IROp::Call {
-                dest: dest as usize,
-                func: func as usize,
-                args,
             }
         }
         0x71 => {

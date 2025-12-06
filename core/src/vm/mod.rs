@@ -14,7 +14,6 @@ pub mod plugin;
 mod run;
 mod bytecode;
 mod exec;
-mod host;
 
 pub struct VM
 {

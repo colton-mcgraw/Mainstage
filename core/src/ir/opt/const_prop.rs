@@ -161,7 +161,6 @@ pub(crate) fn const_prop(ir: &mut IrModule) {
                 else if let IROp::AllocClosure { dest } = &op { consts.remove(dest); }
                 else if let IROp::CLoad { dest, .. } = &op { consts.remove(dest); }
                 else if let IROp::ArrayNew { dest, .. } = &op { consts.remove(dest); }
-                else if let IROp::Call { dest, .. } = &op { consts.remove(dest); }
                 else if let IROp::CallLabel { dest, .. } = &op { consts.remove(dest); }
                 else if let IROp::PluginCall { dest: Some(d), .. } = &op { consts.remove(d); }
                 else if let IROp::LoadGlobal { dest, .. } = &op { consts.remove(dest); }
@@ -196,7 +195,6 @@ pub(crate) fn const_prop(ir: &mut IrModule) {
             | IROp::Or { dest: _, src1, src2 } => { used.insert(*src1); used.insert(*src2); }
             IROp::Not { dest: _, src } => { used.insert(*src); }
             IROp::BrTrue { cond, .. } | IROp::BrFalse { cond, .. } => { used.insert(*cond); }
-            IROp::Call { dest: _, func, args } => { used.insert(*func); for a in args.iter() { used.insert(*a); } }
             IROp::CallLabel { dest: _, label_index: _, args } => { for a in args.iter() { used.insert(*a); } }
             IROp::PluginCall { dest, plugin_name: _, func_name: _, args } => {
                 if let Some(d) = dest { used.insert(*d); }

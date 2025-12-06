@@ -25,27 +25,13 @@ pub fn lower_statment(
             // into module-level registers.
             if let AstNodeKind::Call { callee, args } = stmt_node.get_kind() {
                 if let AstNodeKind::Identifier { name } = callee.get_kind() {
-                    if let Some(id) = ctx.symbols.get(name).copied() {
+                    if ctx.symbols.get(name).is_some() {
                         let mut regs: Vec<usize> = Vec::new();
                         for arg in args.iter() {
                             let r = super::lower_expr::lower_expr_to_reg_with_builder(arg, ir_mod, ctx, None);
                             regs.push(r);
                         }
-                        let name = name.clone();
-                        // Host builtins should lower to a Call (host) with a Symbol
-                        match name.as_str() {
-                            "say" | "read" | "ask" | "write" => {
-                                let func_reg = ir_mod.alloc_reg();
-                                ir_mod.emit_op(crate::ir::op::IROp::LConst { dest: func_reg, value: crate::ir::value::Value::Symbol(name.clone()) });
-                                let dest = ir_mod.alloc_reg();
-                                ir_mod.emit_op(crate::ir::op::IROp::Call { dest, func: func_reg, args: regs });
-                            }
-                            _ => {
-                                let dest = ir_mod.alloc_reg();
-                                let label_idx = (id as usize).saturating_sub(1);
-                                ir_mod.emit_op(crate::ir::op::IROp::CallLabel { dest, label_index: label_idx, args: regs });
-                            }
-                        }
+                        let _name = name.clone();
                     }
                 }
             }
@@ -104,7 +90,7 @@ pub fn lower_statment(
                                 if let Some(reg2) = ctx.get_object_reg_by_objid(obj_id) {
                                     reg2
                                 } else {
-                                        super::lower_expr::lower_expr_to_reg_helper(object, ir_mod, Some(ctx))
+                                                super::lower_expr::lower_expr_to_reg_helper(object, ir_mod, Some(ctx))
                                     }
                             } else {
                                 super::lower_expr::lower_expr_to_reg_helper(object, ir_mod, Some(ctx))
@@ -153,27 +139,16 @@ pub fn emit_calls_in_node_with_builder(
         AstNodeKind::Call { callee, args } => {
             // If callee is a simple identifier, handle as before.
             if let AstNodeKind::Identifier { name } = callee.get_kind() {
-                let maybe_id = ctx.symbols.get(name).copied();
-                if let Some(id) = maybe_id {
-                    let mut regs: Vec<usize> = Vec::new();
-                    for arg in args.iter() {
-                        let r = super::lower_expr::lower_expr_to_reg_with_builder(arg, ir_mod, ctx, Some(fb));
-                        regs.push(r);
-                    }
-                    let name = name.clone();
-                    match name.as_str() {
-                        "say" | "read" | "ask" | "write" => {
-                            let func_reg = fb.alloc_reg();
-                            fb.emit_op(IROp::LConst { dest: func_reg, value: crate::ir::value::Value::Symbol(name.clone()) });
-                            let dest = fb.alloc_reg();
-                            fb.emit_op(IROp::Call { dest, func: func_reg, args: regs });
-                        }
-                        _ => {
-                            let dest = fb.alloc_reg();
-                            let label_idx = (id as usize).saturating_sub(1);
-                            fb.emit_op(IROp::CallLabel { dest, label_index: label_idx, args: regs });
-                        }
-                    }
+                // Lower bare identifier calls either when present in symbols
+                // or when matching a known stdlib function name.
+                let mut regs: Vec<usize> = Vec::new();
+                for arg in args.iter() {
+                    let r = super::lower_expr::lower_expr_to_reg_with_builder(arg, ir_mod, ctx, Some(fb));
+                    regs.push(r);
+                }
+                // Consult lowering context plugin function registry for bare name calls.
+                if let Some((plugin_name, qualified)) = ctx.lookup_plugin_func(name) {
+                    fb.emit_op(IROp::PluginCall { dest: None, plugin_name, func_name: qualified, args: regs });
                 }
             } else {
                 // Fallback: evaluate the full call expression (member-style calls,

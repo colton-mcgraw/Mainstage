@@ -105,6 +105,7 @@ fn parse_terminated_statement_rule(
             let mut inner = next_rule.into_inner();
             let module_pair = inner.next().unwrap();
             let alias_pair = inner.next();
+            // alias can be identifier or literal "*" per grammar
             let alias = match alias_pair {
                 Some(ap) => ap.as_str().to_string(),
                 None => module_pair.as_str().to_string(),
@@ -112,7 +113,7 @@ fn parse_terminated_statement_rule(
             Ok(AstNode::new(
                 AstNodeKind::Import {
                     module: module_pair.as_str().to_string(),
-                    alias: alias,
+                    alias,
                 },
                 location,
                 span,

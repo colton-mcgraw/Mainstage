@@ -144,7 +144,6 @@ impl FunctionBuilder {
                 IROp::GetProp { dest, obj, key } => { let od=*dest; if od < local_reg_count { *dest += reg_base; } let oo=*obj; if oo < local_reg_count { *obj += reg_base; } let ok=*key; if ok < local_reg_count { *key += reg_base; } }
                 IROp::SetProp { obj, key, src } => { let oo=*obj; if oo < local_reg_count { *obj += reg_base; } let ok=*key; if ok < local_reg_count { *key += reg_base; } let os=*src; if os < local_reg_count { *src += reg_base; } }
 
-                IROp::Call { dest, func, args } => { let od=*dest; if od < local_reg_count { *dest += reg_base; } let of=*func; if of < local_reg_count { *func += reg_base; } for a in args.iter_mut() { let oa=*a; if oa < local_reg_count { *a += reg_base; } } }
                 IROp::PluginCall { dest, plugin_name: _, func_name: _, args } => {
                     if let Some(d) = dest {
                         let od = *d; if od < local_reg_count { *d += reg_base; }

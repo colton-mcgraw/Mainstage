@@ -16,9 +16,15 @@ pub use self::bytecode::emit_bytecode;
 use self::module::IrModule;
 use self::lower::lower_script_objects;
 
+/// # lower_ast_to_ir
+/// Lowers an AST node into an IR module.
+/// 
+/// # Parameters
+/// - `ast`: The AST node to lower.
+/// - `optimize`: Whether to run optimizations on the IR.
+/// - `analysis`: Optional analysis output to assist lowering.
 pub fn lower_ast_to_ir(
     ast: &crate::ast::AstNode,
-    _entrypoint: &str,
     optimize: bool,
     analysis: Option<&crate::analyzers::output::AnalyzerOutput>,
 ) -> IrModule {

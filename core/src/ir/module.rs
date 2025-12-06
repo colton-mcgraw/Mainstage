@@ -9,14 +9,30 @@
 use crate::ir::{ op::IROp };
 use std::collections::{HashMap, HashSet};
 
+/// # IrModule
+/// Contains a sequence of IR operations along with metadata
+/// such as declared functions, objects, labels, and register allocation.
+/// 
+/// # Notes
+/// This structure is used during the lowering phase to build up the IR
+/// representation of a module before final bytecode emission. It also
+/// provides helper methods for optimizations and analyses that operate
+/// on the IR.
 #[derive(Debug, Clone)]
 pub struct IrModule {
+    /// Sequence of IR operations in the module.
     pub ops: Vec<IROp>,
+    /// Next available virtual register index.
     next_reg: usize,
+    /// Next available function/object id.
     next_id: u32,
+    /// Mapping of declared function names to their ids.
     functions: HashMap<String, u32>,
+    /// Mapping of declared object names to their ids.
     objects: HashMap<String, u32>,
+    /// Mapping of label names to their positions in `ops`.
     labels: HashMap<String, usize>,
+    /// List of unresolved branches to patch later.
     unresolved_branches: Vec<(usize, String)>,
     /// Registers that are intended to be externally-observable (e.g. plugin
     /// call arguments or plugin call results). Optimizations should treat
@@ -39,13 +55,14 @@ impl IrModule {
         }
     }
 
-    /// Allocate a fresh virtual register index for use by lowering.
+    /// Allocate a new virtual register and return its index.
     pub fn alloc_reg(&mut self) -> usize {
         let r = self.next_reg;
         self.next_reg = self.next_reg.wrapping_add(1);
         r
     }
 
+    /// Emit an IR operation into the module.
     pub fn emit_op(&mut self, op: IROp) {
         // record the index where the op will be inserted
         let idx = self.ops.len();
@@ -104,7 +121,6 @@ impl IrModule {
                 IROp::LConst { dest, .. } if *dest == reg => return true,
                 IROp::ArrayNew { dest, .. } if *dest == reg => return true,
                 IROp::ArrayGet { dest, .. } if *dest == reg => return true,
-                IROp::Call { dest, .. } if *dest == reg => return true,
                 IROp::CallLabel { dest, .. } if *dest == reg => return true,
                 IROp::Add { dest, .. } if *dest == reg => return true,
                 IROp::Lt { dest, .. } if *dest == reg => return true,

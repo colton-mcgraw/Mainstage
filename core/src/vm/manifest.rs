@@ -21,6 +21,11 @@ pub struct FunctionArg {
 pub struct FunctionSpec {
     pub name: String,
     #[serde(default)]
+    /// Optional domain/namespace for the function (e.g., "util", "fs").
+    /// When present, callers should treat the fully-qualified name as
+    /// `"<domain>.<name>"`. If absent, `name` may already be qualified.
+    pub domain: Option<String>,
+    #[serde(default)]
     pub args: Vec<FunctionArg>,
     #[serde(default)]
     pub returns: Option<FunctionArg>,
@@ -92,6 +97,13 @@ pub fn discover_manifests_in_dir<P: AsRef<Path>>(dir: P) -> Result<Vec<(PluginMa
     let dir = dir.as_ref();
     if !dir.exists() {
         return Ok(out);
+    }
+    // First, check if a manifest.json exists directly in the provided directory.
+    let root_manifest = dir.join("manifest.json");
+    if root_manifest.exists() {
+        let manifest = PluginManifest::load_from_file(&root_manifest)?;
+        manifest.validate()?;
+        out.push((manifest, root_manifest));
     }
     for entry in std::fs::read_dir(dir).map_err(|e| format!("read dir: {}", e))? {
         let entry = entry.map_err(|e| format!("read dir entry: {}", e))?;

@@ -87,10 +87,6 @@ fn numeric_cmp(a: &Value, b: &Value) -> Option<std::cmp::Ordering> {
     }
 }
 
-fn run_host_call(name: &str, args: &Vec<Value>) -> Result<Value, String> {
-    crate::vm::host::run_host_fn(name, args)
-}
-
 pub(crate) fn dispatch_op(state: &mut ExecState) -> Result<(), String> {
     let op = &state.ops[state.pc];
     match op {
@@ -437,20 +433,6 @@ pub(crate) fn dispatch_op(state: &mut ExecState) -> Result<(), String> {
                 if let Some(ret_reg) = f.return_reg { ensure_reg(&mut state.regs, ret_reg); state.regs[ret_reg] = state.regs[*src].clone(); }
                 if let Some(ret_pc) = f.return_pc { state.pc = ret_pc; } else { state.pc = state.ops.len(); }
             } else { state.pc = state.ops.len(); }
-        }
-        Op::Call { dest, func, args } => {
-            ensure_reg(&mut state.regs, *func);
-            let func_val = state.regs[*func].clone();
-            let arg_vals = take_args(&state.regs, args);
-            match func_val {
-                Value::Symbol(name) => {
-                    let ret = run_host_call(&name, &arg_vals)?;
-                    ensure_reg(&mut state.regs, *dest);
-                    state.regs[*dest] = ret;
-                    state.pc += 1;
-                }
-                _ => return Err("Call: unsupported non-symbol function value".to_string()),
-            }
         }
         Op::CallLabel { dest, label_index, args } => {
             let return_pc = state.pc + 1;

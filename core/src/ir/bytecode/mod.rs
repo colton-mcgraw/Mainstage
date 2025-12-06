@@ -180,15 +180,6 @@ pub fn emit_bytecode(module: &crate::ir::module::IrModule) -> Vec<u8> {
                 write_u32(&mut out, *closure as u32);
                 write_u32(&mut out, *field as u32);
             }
-            IROp::Call { dest, func, args } => {
-                out.push(0x70);
-                write_u32(&mut out, *dest as u32);
-                write_u32(&mut out, *func as u32);
-                write_u32(&mut out, args.len() as u32);
-                for a in args.iter() {
-                    write_u32(&mut out, *a as u32);
-                }
-            }
             IROp::CallLabel {
                 dest,
                 label_index,

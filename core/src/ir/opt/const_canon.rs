@@ -26,7 +26,6 @@ pub(crate) fn canonicalize_constants(ir: &mut IrModule) {
             | IROp::AllocClosure { dest }
             | IROp::CLoad { dest, .. }
             | IROp::ArrayNew { dest, .. }
-            | IROp::Call { dest, .. }
             | IROp::CallLabel { dest, .. }
             | IROp::LoadGlobal { dest, .. }
             | IROp::ArrayGet { dest, .. }
@@ -133,7 +132,6 @@ fn rewrite_op_regs(op: IROp, remap: &std::collections::HashMap<usize, usize>) ->
         IROp::ArraySet { array, index, src } => IROp::ArraySet { array: rewrite_reg(array, remap), index: rewrite_reg(index, remap), src: rewrite_reg(src, remap) },
         IROp::GetProp { dest, obj, key } => IROp::GetProp { dest: rewrite_reg(dest, remap), obj: rewrite_reg(obj, remap), key: rewrite_reg(key, remap) },
         IROp::SetProp { obj, key, src } => IROp::SetProp { obj: rewrite_reg(obj, remap), key: rewrite_reg(key, remap), src: rewrite_reg(src, remap) },
-        IROp::Call { dest, func, args } => IROp::Call { dest: rewrite_reg(dest, remap), func: rewrite_reg(func, remap), args: args.into_iter().map(|r| rewrite_reg(r, remap)).collect() },
         IROp::CallLabel { dest, label_index, args } => IROp::CallLabel { dest: rewrite_reg(dest, remap), label_index, args: args.into_iter().map(|r| rewrite_reg(r, remap)).collect() },
         IROp::PluginCall { dest, plugin_name, func_name, args } => IROp::PluginCall { dest: dest.map(|d| rewrite_reg(d, remap)), plugin_name, func_name, args: args.into_iter().map(|r| rewrite_reg(r, remap)).collect() },
         IROp::Ret { src } => IROp::Ret { src: rewrite_reg(src, remap) },

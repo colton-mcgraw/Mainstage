@@ -20,11 +20,7 @@ pub fn lower_script_objects(
         None => super::lowering_context::LoweringContext::new(),
     };
 
-    // Ensure a small set of builtin runtime functions are declared so calls
-    // like `say(...)` and `read(...)` lower to CallLabel rather than
-    // falling back to Null producers.
-    super::declare_builtins::declare_builtin_functions(ir_mod, &mut ctx);
-
+    // If the script node has a body, perform lowering passes.
     if let Some(body) = match script.get_kind() {
         crate::ast::AstNodeKind::Script { body, .. } => Some(body),
         _ => None,

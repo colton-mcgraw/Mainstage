@@ -1,9 +1,7 @@
 use std::ffi::{CStr, CString};
 use std::os::raw::c_char;
 
-// Minimal in-process adapter for c_plugin. Exposes `plugin_name`,
-// `plugin_call_json` and `plugin_free` and delegates to the same logic
-// used by the CLI binary (assembly functions) via the `common` crate when possible.
+// In-process adapter for c_plugin using mainstage_register + JSON handlers.
 
 fn list_compilers_json() -> String {
     let found = common::find_available_compilers_from(&["gcc", "clang", "cl"]); // reasonable defaults for C
@@ -91,33 +89,49 @@ fn compile_json(args_json: &serde_json::Value) -> String {
     serde_json::to_string(&output).unwrap_or("null".to_string())
 }
 
+// C ABI types mirrored from core
+type CJsonHandler = unsafe extern "C" fn(input_json: *const c_char) -> *mut c_char;
+type CRegistrar = unsafe extern "C" fn(ctx: *mut std::ffi::c_void, name: *const c_char, handler: CJsonHandler);
+
 #[unsafe(no_mangle)]
-pub extern "C" fn plugin_name() -> *const c_char {
-    let s = CString::new("c_plugin").unwrap();
-    s.into_raw()
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn plugin_call_json(func: *const c_char, args_json: *const c_char) -> *mut c_char {
-    unsafe {
-        let func = if func.is_null() { "" } else { CStr::from_ptr(func).to_str().unwrap_or("") };
-        let args = if args_json.is_null() { serde_json::json!(null) } else {
-            match CStr::from_ptr(args_json).to_str() {
-                Ok(s) => serde_json::from_str(s).unwrap_or(serde_json::json!(null)),
-                Err(_) => serde_json::json!(null),
-            }
-        };
-        let res = match func {
-            "list_compilers" => list_compilers_json(),
-            "compile" => compile_json(&args),
-            _ => serde_json::json!({"error": "unknown function"}).to_string(),
-        };
-        CString::new(res).unwrap().into_raw()
+pub unsafe extern "C" fn mainstage_register(ctx: *mut std::ffi::c_void, registrar: CRegistrar) {
+    unsafe extern "C" fn list_compilers_handler(_input_json: *const c_char) -> *mut c_char {
+        let out = list_compilers_json();
+        let c = CString::new(out).unwrap();
+        dup_cstr(&c)
     }
+    unsafe extern "C" fn compile_handler(input_json: *const c_char) -> *mut c_char {
+        let json = if input_json.is_null() {
+            serde_json::Value::Null
+        } else {
+            let s = CStr::from_ptr(input_json).to_string_lossy().into_owned();
+            serde_json::from_str::<serde_json::Value>(&s).unwrap_or(serde_json::Value::Null)
+        };
+        let out = compile_json(&json);
+        let c = CString::new(out).unwrap();
+        dup_cstr(&c)
+    }
+
+    let n1 = CString::new("list_compilers").unwrap();
+    registrar(ctx, n1.as_ptr(), list_compilers_handler);
+    let n2 = CString::new("compile").unwrap();
+    registrar(ctx, n2.as_ptr(), compile_handler);
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn plugin_free(ptr: *mut c_char) {
-    if ptr.is_null() { return }
-    unsafe { let _ = CString::from_raw(ptr); }; // reclaim
+pub unsafe extern "C" fn mainstage_free(ptr: *mut c_char) {
+    if !ptr.is_null() {
+        libc::free(ptr as *mut libc::c_void);
+    }
+}
+
+fn dup_cstr(s: &CString) -> *mut c_char {
+    unsafe {
+        let bytes = s.as_bytes_with_nul();
+        let ptr = libc::malloc(bytes.len()) as *mut u8;
+        if ptr.is_null() { return std::ptr::null_mut(); }
+        std::ptr::copy_nonoverlapping(bytes.as_ptr(), ptr, bytes.len());
+        ptr as *mut c_char
+    }
 }
  

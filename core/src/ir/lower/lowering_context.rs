@@ -36,6 +36,9 @@ pub struct LoweringContext {
     /// be suppressed (used while workspace bodies are being collected so
     /// they can be lowered into wrappers instead of emitted at module scope).
     pub suppress_module_emits: usize,
+    /// Registry mapping bare names (e.g., "say") to `(plugin_name, qualified_func)`
+    /// so lowering can emit `PluginCall` ops without hardcoding tables.
+    pub plugin_func_registry: HashMap<String, (String, String)>,
     // next_provisional_id is no longer used - IR module provides real ids
 }
 
@@ -52,6 +55,7 @@ impl LoweringContext {
             object_id_regs: HashMap::new(),
             temp_idents: HashMap::new(),
             suppress_module_emits: 0,
+            plugin_func_registry: HashMap::new(),
         }
     }
 
@@ -73,7 +77,7 @@ impl LoweringContext {
     /// prototypes/objects with the provided `IrModule` so lowering emits can
     /// reference real IR ids instead of provisional placeholders.
     pub fn from_analyzer_output(analysis: &AnalyzerOutput, ir_mod: &mut IrModule) -> Self {
-        let mut ctx = LoweringContext::new();
+        let mut ctx = LoweringContext::default();
 
         for func in &analysis.functions {
             let name = func.name.as_deref().unwrap_or("<anon>");
@@ -93,7 +97,13 @@ impl LoweringContext {
             ctx.symbols.insert(obj.name.clone(), id);
         }
 
-
+        // Register plugin function mappings discovered during analysis.
+        for (bare, plugin, qualified) in &analysis.plugin_func_mappings {
+            ctx.register_plugin_func(bare, plugin, qualified);
+        }
+        if !analysis.plugin_func_mappings.is_empty() {
+            log::debug!("lowering: registered {} plugin function mappings from manifests", analysis.plugin_func_mappings.len());
+        }
         // Pre-create module-level runtime object registers for all
         // analyzer-discovered objects. This ensures lowering can resolve
         // property Get/Set ops and static list initializers even if the
@@ -193,4 +203,22 @@ impl LoweringContext {
         let v = self.temp_idents.get(name).copied();
         v
     }
+
+    /// Register a plugin function mapping. `bare` should be the unqualified call
+    /// name (e.g., "say"), `plugin_name` the plugin identifier (e.g., "stdlib_plugin"),
+    /// and `qualified_func` the domain-qualified function name (e.g., "util.say").
+    pub fn register_plugin_func(&mut self, bare: &str, plugin_name: &str, qualified_func: &str) {
+        self.plugin_func_registry.insert(bare.to_string(), (plugin_name.to_string(), qualified_func.to_string()));
+    }
+
+    /// Lookup a plugin function mapping by its bare name.
+    pub fn lookup_plugin_func(&self, bare: &str) -> Option<(String, String)> {
+        self.plugin_func_registry.get(bare).cloned()
+    }
+}
+
+// Keep Default minimal: no built-in mappings. Lowering will rely on
+// analyzer-provided `plugin_func_mappings` exclusively.
+impl Default for LoweringContext {
+    fn default() -> Self { LoweringContext::new() }
 }

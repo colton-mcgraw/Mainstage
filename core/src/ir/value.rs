@@ -7,6 +7,17 @@
 //!
 use std::hash::{Hash, Hasher};
 
+/// # Value
+/// 
+/// Represents a value in the IR.
+/// This can be a constant integer, float, string, boolean, array, object, etc.
+/// This type is used in IR operations to represent constant values.
+/// 
+/// # Notes
+/// `Value` cannot implement Hash or Eq directly if it contains floating-point numbers
+/// due to the nature of floating-point equality. However, in this implementation,
+/// we use the bit representation of floats for hashing and equality checks.
+/// 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Value {
     Int(i64),

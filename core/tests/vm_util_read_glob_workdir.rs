@@ -28,12 +28,12 @@ stage main() {
         Ok(a) => a,
         Err(diags) => panic!("generate ast diags: {:?}", diags),
     };
-    let (entry, analysis) = match mainstage_core::analyzers::semantic::analyze_semantic_rules(&mut ast, None) {
-        Ok((e,a)) => (e,a),
+    let analysis = match mainstage_core::analyzers::semantic::analyze_semantic_rules(&mut ast, None) {
+        Ok((_,a)) => a,
         Err(diags) => panic!("analysis diags: {:?}", diags),
     };
     mainstage_core::analyzers::acyclic::analyze_acyclic_rules(&ast).expect("acyclic");
-    let ir_module = mainstage_core::ir::lower_ast_to_ir(&ast, &entry, false, Some(&analysis));
+    let ir_module = mainstage_core::ir::lower_ast_to_ir(&ast, false, Some(&analysis));
     let bytecode = mainstage_core::ir::emit_bytecode(&ir_module);
 
     let result = mainstage_core::VM::new(bytecode).run(true);
@@ -72,12 +72,12 @@ stage main() {
         Ok(a) => a,
         Err(diags) => panic!("generate ast diags: {:?}", diags),
     };
-    let (entry, analysis) = match mainstage_core::analyzers::semantic::analyze_semantic_rules(&mut ast, None) {
-        Ok((e,a)) => (e,a),
+    let analysis = match mainstage_core::analyzers::semantic::analyze_semantic_rules(&mut ast, None) {
+        Ok((_,a)) => a,
         Err(diags) => panic!("generate ast diags: {:?}", diags),
     };
     mainstage_core::analyzers::acyclic::analyze_acyclic_rules(&ast).expect("acyclic");
-    let ir_module = mainstage_core::ir::lower_ast_to_ir(&ast, &entry, false, Some(&analysis));
+    let ir_module = mainstage_core::ir::lower_ast_to_ir(&ast, false, Some(&analysis));
     let bytecode = mainstage_core::ir::emit_bytecode(&ir_module);
 
     let result = mainstage_core::VM::new(bytecode).run(true);

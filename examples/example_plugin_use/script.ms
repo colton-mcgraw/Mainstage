@@ -1,8 +1,13 @@
+import "stdlib" as *;
 import "cpp" as cpp_plugin;
 
 workspace hello_ws {
     // Read source files from the example_plugin_use project and store as an array.
-    sources = read(example_plugin_use.srcs);
+    say(example_plugin_use.srcs);
+    glb = glob(example_plugin_use.srcs);
+    say("Globbed source files:");
+    say(glb);
+    sources = read(glb[0]);
     // Debug output
     say("Compiling C++ sources:");
     say(sources);

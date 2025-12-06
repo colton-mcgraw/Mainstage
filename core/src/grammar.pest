@@ -21,7 +21,7 @@ terminated_statement = {
 
 return_stmt     = { "return" ~ expression ~ ";" }
 include_stmt    = { "include" ~ string ~ ";" }
-import_stmt     = { "import" ~ string ~ "as" ~ identifier ~ ";" }
+import_stmt     = { "import" ~ string ~ "as" ~ (identifier | "*") ~ ";" }
 expression_stmt = { expression ~ ";" }
 
 // --- Blocks ---

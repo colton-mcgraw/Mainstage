@@ -41,7 +41,7 @@ fn emit_bytecode_calllabel_should_have_args() {
     };
 
     let ast = ast::generate_ast_from_source(&script).expect("failed to parse sample");
-    let ir_mod = ir::lower_ast_to_ir(&ast, "demo_ws", false, None);
+    let ir_mod = ir::lower_ast_to_ir(&ast, false, None);
     // Debug print IR to help diagnose missing args
     println!("Lowered IR:\n{}", ir_mod);
     let bytes = ir::emit_bytecode(&ir_mod);

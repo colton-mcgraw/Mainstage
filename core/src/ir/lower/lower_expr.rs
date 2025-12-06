@@ -91,46 +91,31 @@ pub fn lower_expr_to_reg_with_builder(
         AstNodeKind::Call { callee, args } => {
             // simple identifier callee -> CallLabel
             if let AstNodeKind::Identifier { name } = callee.get_kind() {
-                if let Some(id) = _ctx.symbols.get(name).copied() {
+                // Lower bare identifier calls either when present in symbols
+                // or when matching a known stdlib function name.
                     let mut regs = Vec::new();
                     for a in args.iter() {
                         let builder_arg = builder.as_mut().map(|b| &mut **b);
                         let r = lower_expr_to_reg_with_builder(a, ir_mod, _ctx, builder_arg);
                         regs.push(r);
                     }
-                    // If this is a known builtin host function, emit a Call (host)
-                    // where the function is represented as a Symbol value in a reg.
-                        match name.as_str() {
-                        "say" | "read" | "ask" | "write" | "fmt" => {
-                            if let Some(b) = builder.as_mut() {
-                                let func_reg = b.alloc_reg();
-                                b.emit_op(IROp::LConst { dest: func_reg, value: crate::ir::value::Value::Symbol(name.clone()) });
-                                let dest = b.alloc_reg();
-                                b.emit_op(IROp::Call { dest, func: func_reg, args: regs });
-                                return dest;
-                            } else {
-                                let func_reg = ir_mod.alloc_reg();
-                                ir_mod.emit_op(IROp::LConst { dest: func_reg, value: crate::ir::value::Value::Symbol(name.clone()) });
-                                let dest = ir_mod.alloc_reg();
-                                ir_mod.emit_op(IROp::Call { dest, func: func_reg, args: regs });
-                                return dest;
-                            }
-                        }
-                        _ => {
-                            if let Some(b) = builder.as_mut() {
-                                let dest = b.alloc_reg();
-                                let label_idx = (id as usize).saturating_sub(1);
-                                b.emit_op(IROp::CallLabel { dest, label_index: label_idx, args: regs });
-                                return dest;
-                            } else {
-                                let dest = ir_mod.alloc_reg();
-                                let label_idx = (id as usize).saturating_sub(1);
-                                ir_mod.emit_op(IROp::CallLabel { dest, label_index: label_idx, args: regs });
-                                return dest;
-                            }
+                    // Consult lowering context plugin function registry for bare name calls.
+                    if let Some((plugin_name, qualified)) = _ctx.lookup_plugin_func(name) {
+                        if let Some(b) = builder.as_mut() {
+                            let dest = b.alloc_reg();
+                            b.emit_op(IROp::PluginCall { dest: Some(dest), plugin_name, func_name: qualified, args: regs });
+                            return dest;
+                        } else {
+                            let dest = ir_mod.alloc_reg();
+                            ir_mod.emit_op(IROp::PluginCall { dest: Some(dest), plugin_name, func_name: qualified, args: regs });
+                            return dest;
                         }
                     }
-                }
+                    // If not a stdlib bare name, but symbol exists, lower as stage call label
+                    if _ctx.symbols.get(name).is_some() {
+                        // Without a stage label resolution here, evaluate args and return Null
+                        // until stage call mapping is implemented.
+                    }
             }
             // Member-style callee could be a plugin call: <alias>.<func>(...)
             if let crate::ast::AstNodeKind::Member { object, property } = callee.get_kind() {

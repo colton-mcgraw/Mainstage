@@ -19,13 +19,13 @@ workspace w {
 
     let script = Script { name: "t.ms".to_string(), path: PathBuf::from("t.ms"), content: src.to_string() };
     let mut ast = ast::generate_ast_from_source(&script).expect("parse");
-    let (entry, analysis) = match analyzers::semantic::analyze_semantic_rules(&mut ast, None) {
-        Ok((e,a)) => (e,a),
+    let analysis = match analyzers::semantic::analyze_semantic_rules(&mut ast, None) {
+        Ok((_,a)) => a,
         Err(diags) => panic!("analysis diags: {:?}", diags),
     };
     analyzers::acyclic::analyze_acyclic_rules(&ast).expect("acyclic");
 
-    let ir_mod = ir::lower_ast_to_ir(&ast, &entry, false, Some(&analysis));
+    let ir_mod = ir::lower_ast_to_ir(&ast, false, Some(&analysis));
     let bytes = ir::emit_bytecode(&ir_mod);
 
     // Run VM (no plugins required for this simple script)

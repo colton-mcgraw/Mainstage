@@ -14,7 +14,7 @@
 0013: Halt
 0014: Label L34
 0015: LConst r10 <- Symbol("srcs")
-0016: LoadGlobal r11 <- r1
+0016: LoadGlobal r11 <- r4
 0017: GetProp r12 <- r11.r10
 0018: PluginCall <- stdlib.say(r12)
 0019: LConst r13 <- Symbol("srcs")

@@ -169,16 +169,6 @@ pub(crate) fn parse_ops(
             0x60..=0x62 => {
                 return Err("closure ops not supported in VM yet".to_string());
             }
-            0x70 => {
-                let dest = read_u32(&mut cur)? as usize;
-                let func = read_u32(&mut cur)? as usize;
-                let argc = read_u32(&mut cur)? as usize;
-                let mut args = Vec::new();
-                for _ in 0..argc {
-                    args.push(read_u32(&mut cur)? as usize);
-                }
-                ops.push(Op::Call { dest, func, args });
-            }
             0x71 => {
                 let dest = read_u32(&mut cur)? as usize;
                 let lbl = read_u32(&mut cur)? as usize;

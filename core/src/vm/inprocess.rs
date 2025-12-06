@@ -1,15 +1,16 @@
 //! file: core/src/vm/inprocess.rs
 //! description: in-process dynamic library plugin adapter using `libloading`.
 //!
-//! This adapter loads a shared library at runtime and resolves the minimal
-//! C-style symbols (`plugin_name`, `plugin_call_json`, `plugin_free`) so the
-//! host can call plugin functions without spawning a separate process.
+//! This adapter loads a shared library at runtime and resolves a Rust-friendly
+//! registration symbol (`mainstage_register`) so the plugin can register
+//! handlers directly without a JSON bridge.
 
-use std::ffi::{CStr, CString};
 use std::io::Seek;
-use std::os::raw::c_char;
 use std::path::Path;
 use std::sync::Arc;
+use std::collections::HashMap;
+use std::ffi::{CStr, CString};
+use std::os::raw::c_char;
 
 use crate::vm::plugin::{Plugin, PluginMetadata};
 use crate::vm::value::{Value as VmValue, json_to_value, values_to_json_array};
@@ -17,17 +18,20 @@ use async_trait::async_trait;
 use libloading::{Library, Symbol};
 use serde_json::Value as JsonValue;
 
-type PluginNameFn = unsafe extern "C" fn() -> *const c_char;
-type PluginCallJsonFn =
-    unsafe extern "C" fn(func: *const c_char, args_json: *const c_char) -> *mut c_char;
-type PluginFreeFn = unsafe extern "C" fn(ptr: *mut c_char);
+// C ABI types: plugin provides JSON handler functions as C string in/out.
+type CJsonHandler = unsafe extern "C" fn(input_json: *const c_char) -> *mut c_char;
+type CFreeFn = unsafe extern "C" fn(ptr: *mut c_char);
+
+// Core provides a C ABI registrar callback: plugin calls this per function.
+type CRegistrar = unsafe extern "C" fn(ctx: *mut std::ffi::c_void, name: *const c_char, handler: CJsonHandler);
+
+// Symbol signature the plugin must export.
+type RegisterFn = unsafe extern "C" fn(ctx: *mut std::ffi::c_void, registrar: CRegistrar);
 
 pub struct InProcessPlugin {
     _lib: Arc<Library>,
     name: String,
-    _name_fn: PluginNameFn,
-    call_fn: PluginCallJsonFn,
-    free_fn: Option<PluginFreeFn>,
+    handlers: HashMap<String, Box<dyn Fn(JsonValue) -> JsonValue + Send + Sync>>,
 }
 
 impl InProcessPlugin {
@@ -57,46 +61,64 @@ impl InProcessPlugin {
                 )
             })?;
 
-            // Resolve plugin_name symbol
-            let name_sym: Symbol<PluginNameFn> = lib.get(b"plugin_name\0").map_err(|e| {
-                format!(
-                    "missing symbol 'plugin_name' in {}: {}. Ensure the plugin exports the C symbol 'plugin_name' with 'extern \"C\"' and `#[no_mangle]`.",
-                    path.display(), e
-                )
-            })?;
-            let name_fn = *name_sym;
-            let raw = name_fn();
-            if raw.is_null() {
-                return Err(format!(
-                    "plugin_name returned null for library {}",
-                    path.display()
-                ));
-            }
-            let cname = match CStr::from_ptr(raw).to_str() {
-                Ok(s) if !s.trim().is_empty() => s.to_string(),
-                Ok(_) => {
-                    return Err(format!(
-                        "plugin_name returned empty string in {}",
-                        path.display()
-                    ));
-                }
-                Err(e) => {
-                    return Err(format!(
-                        "plugin_name returned invalid UTF-8 in {}: {}",
-                        path.display(),
-                        e
-                    ));
-                }
-            };
+            // Determine a default plugin name from file stem
+            let cname = path.file_stem().and_then(|s| s.to_str()).unwrap_or("inproc").to_string();
 
-            // Resolve call symbol
-            let call_sym: Symbol<PluginCallJsonFn> = lib.get(b"plugin_call_json\0").map_err(|e| {
+            // Resolve mainstage_register and let the plugin register handlers via C ABI.
+            let reg_sym: Symbol<RegisterFn> = lib.get(b"mainstage_register\0").map_err(|e| {
                 format!(
-                    "missing symbol 'plugin_call_json' in {}: {}. Ensure the plugin exports 'plugin_call_json' and follows the ABI (func, args_json) -> char*.",
+                    "missing symbol 'mainstage_register' in {}: {}. Ensure the plugin exports 'mainstage_register' with extern \"C\" and #[no_mangle].",
                     path.display(), e
                 )
             })?;
-            let call_fn = *call_sym;
+            let reg_fn = *reg_sym;
+            // Collect handlers via a C ABI registrar callback.
+            #[derive(Default)]
+            struct HostCtx {
+                handlers: HashMap<String, Box<dyn Fn(JsonValue) -> JsonValue + Send + Sync>>,
+                free_fn: Option<CFreeFn>,
+            }
+            let mut host_ctx = HostCtx::default();
+            // Optional plugin-provided free function to release returned C strings.
+            let plugin_free_sym: Symbol<CFreeFn> = lib.get(b"mainstage_free\0").map_err(|e| {
+                format!(
+                    "missing symbol 'mainstage_free' in {}: {}. In-process plugins must export 'mainstage_free' to release returned C strings.",
+                    path.display(), e
+                )
+            })?;
+            host_ctx.free_fn = Some(*plugin_free_sym);
+            // Context is a raw pointer to our handlers map.
+            #[allow(clippy::not_unsafe_ptr_arg_deref)]
+            unsafe extern "C" fn host_registrar(ctx: *mut std::ffi::c_void, name: *const c_char, handler: CJsonHandler) {
+                // Safety: ctx is a &mut HostCtx passed from Rust.
+                let host = unsafe { &mut *(ctx as *mut HostCtx) };
+                let cname = if name.is_null() { "".to_string() } else {
+                    unsafe { CStr::from_ptr(name).to_string_lossy().into_owned() }
+                };
+                // Wrap the C handler in a safe Rust closure.
+                let h: CJsonHandler = handler;
+                let free_fn = host.free_fn;
+                let f = move |j: JsonValue| {
+                    let input = serde_json::to_string(&j).unwrap_or_else(|_| "null".to_string());
+                    let c_in = CString::new(input).unwrap();
+                    let out_ptr = unsafe { h(c_in.as_ptr()) };
+                    if out_ptr.is_null() {
+                        return JsonValue::Null;
+                    }
+                    let out = unsafe { CStr::from_ptr(out_ptr).to_string_lossy().into_owned() };
+                        if let Some(free_fn) = free_fn {
+                            unsafe { free_fn(out_ptr) };
+                        } else {
+                            // Fallback: attempt libc::free (may be unsafe across CRTs on Windows)
+                            unsafe { libc::free(out_ptr as *mut libc::c_void) };
+                        }
+                    serde_json::from_str::<JsonValue>(&out).unwrap_or(JsonValue::Null)
+                };
+                let name_key = cname.clone();
+                host.handlers.insert(name_key, Box::new(f));
+            }
+            let ctx_ptr = &mut host_ctx as *mut _ as *mut std::ffi::c_void;
+            reg_fn(ctx_ptr, host_registrar);
             /// Try to guess the binary architecture from file headers (PE/ELF/Mach-O).
             fn guess_binary_arch(path: &Path) -> Result<String, String> {
                 use std::io::Read;
@@ -158,18 +180,10 @@ impl InProcessPlugin {
                 Err("unknown binary format".to_string())
             }
 
-            // Optional free symbol
-            let free_fn = match lib.get::<PluginFreeFn>(b"plugin_free\0") {
-                Ok(s) => Some(*s),
-                Err(_) => None,
-            };
-
             Ok(InProcessPlugin {
                 _lib: Arc::new(lib),
                 name: cname,
-                _name_fn: name_fn,
-                call_fn,
-                free_fn,
+                handlers: host_ctx.handlers,
             })
         }
     }
@@ -182,32 +196,12 @@ impl Plugin for InProcessPlugin {
     }
 
     async fn call(&self, func: &str, args: Vec<VmValue>) -> Result<VmValue, String> {
-        // Serialize args to JSON array
+        // Serialize args to JSON array and invoke registered handler.
         let j = values_to_json_array(&args);
-        let args_json = serde_json::to_string(&j).map_err(|e| format!("serialize args: {}", e))?;
-        let cfunc = CString::new(func).map_err(|e| format!("func name: {}", e))?;
-        let cargs = CString::new(args_json).map_err(|e| format!("args json: {}", e))?;
-
-        unsafe {
-            let out_ptr = (self.call_fn)(cfunc.as_ptr(), cargs.as_ptr());
-            if out_ptr.is_null() {
-                return Err("plugin returned null".into());
-            }
-            let out_cstr = CStr::from_ptr(out_ptr);
-            let out_str = out_cstr.to_string_lossy().into_owned();
-
-            // free memory
-            if let Some(free_sym) = &self.free_fn {
-                free_sym(out_ptr);
-            } else {
-                libc::free(out_ptr as *mut libc::c_void);
-            }
-
-            let json_val: JsonValue = serde_json::from_str(&out_str)
-                .map_err(|e| format!("invalid json from plugin: {}", e))?;
-            let vm_val = json_to_value(&json_val);
-            Ok(vm_val)
-        }
+        let handler = self.handlers.get(func).ok_or_else(|| format!("function not found: {}", func))?;
+        let out_json: JsonValue = handler(j);
+        let vm_val = json_to_value(&out_json);
+        Ok(vm_val)
     }
 
     fn metadata(&self) -> PluginMetadata {

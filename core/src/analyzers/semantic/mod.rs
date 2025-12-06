@@ -240,6 +240,87 @@ pub fn analyze_semantic_rules(ast: &mut AstNode, manifests: Option<&HashMap<Stri
             }
         }
 
+        // Collect star imports and plugin function mappings from manifests.
+        if let Some(mmap) = manifests {
+            // Walk AST to find Import nodes
+            fn collect_imports(node: &crate::ast::AstNode, imports: &mut Vec<(String, String)>) {
+                use crate::ast::AstNodeKind;
+                match node.get_kind() {
+                    AstNodeKind::Import { module, alias } => {
+                        imports.push((module.clone(), alias.clone()));
+                    }
+                    AstNodeKind::Script { body } | AstNodeKind::Block { statements: body } => {
+                        for b in body {
+                            collect_imports(b, imports);
+                        }
+                    }
+                    AstNodeKind::If { condition, body } => {
+                        collect_imports(condition, imports);
+                        collect_imports(body, imports);
+                    }
+                    AstNodeKind::IfElse { condition, if_body, else_body } => {
+                        collect_imports(condition, imports);
+                        collect_imports(if_body, imports);
+                        collect_imports(else_body, imports);
+                    }
+                    AstNodeKind::ForIn { iterable, body, .. } => {
+                        collect_imports(iterable, imports);
+                        collect_imports(body, imports);
+                    }
+                    AstNodeKind::ForTo { initializer, limit, body } => {
+                        collect_imports(initializer, imports);
+                        collect_imports(limit, imports);
+                        collect_imports(body, imports);
+                    }
+                    AstNodeKind::While { condition, body } => {
+                        collect_imports(condition, imports);
+                        collect_imports(body, imports);
+                    }
+                    AstNodeKind::Stage { args, body, .. } => {
+                        if let Some(a) = args { collect_imports(a, imports); }
+                        collect_imports(body, imports);
+                    }
+                    AstNodeKind::Assignment { target, value } => {
+                        collect_imports(target, imports);
+                        collect_imports(value, imports);
+                    }
+                    AstNodeKind::UnaryOp { expr, .. } => collect_imports(expr, imports),
+                    AstNodeKind::BinaryOp { left, right, .. } => { collect_imports(left, imports); collect_imports(right, imports); }
+                    _ => {}
+                }
+            }
+            let mut imports: Vec<(String, String)> = Vec::new();
+            collect_imports(ast, &mut imports);
+            for (module_raw, alias_raw) in imports.into_iter() {
+                let module = module_raw.trim().trim_matches('"').to_string();
+                let alias = alias_raw.trim().to_string();
+                // Some parser builds incorrectly set alias to the module name for star imports.
+                // Treat alias==module (possibly quoted) as star-import for robustness.
+                let alias_unquoted = alias.trim_matches('"');
+                let is_star = alias == "*" || alias_unquoted == module;
+                if is_star {
+                    analysis.star_imports.push(module.clone());
+                    if let Some(desc) = mmap.get(&module) {
+                        let plugin_name = desc.manifest.name.clone();
+                        for f in &desc.manifest.functions {
+                            // Build qualified name from explicit domain if provided, else use the name as-is.
+                            let qualified = if let Some(dom) = &f.domain {
+                                format!("{}.{}", dom, f.name)
+                            } else {
+                                f.name.clone()
+                            };
+                            // Bare name is the final segment.
+                            let bare = match qualified.rsplit_once('.') { Some((_, tail)) => tail.to_string(), None => qualified.clone() };
+                            analysis.plugin_func_mappings.push((bare, plugin_name.clone(), qualified));
+                        }
+                    } else {
+                        log::warn!("analyzer: no manifest descriptor found for star import module '{}'", module);
+                    }
+                }
+            }
+            log::debug!("analyzer: total plugin function mappings: {}", analysis.plugin_func_mappings.len());
+        }
+
         // Start traversal from script root
         collect_from_node(ast, None, &mut analysis, &func_name_to_node);
 

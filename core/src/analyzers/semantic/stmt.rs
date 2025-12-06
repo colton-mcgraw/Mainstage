@@ -164,19 +164,25 @@ fn analyze_statement(
             // an external object in the symbol table with function symbols.
             if let Some(map) = manifests {
                 if let Some(desc) = map.get(&mod_name) {
-                    // Insert module/object symbol under the alias name
-                    tbl.insert_symbol(crate::analyzers::semantic::symbol::Symbol::new_object(
-                        alias.clone(),
-                        None,
-                        node.location.clone(),
-                        node.span.clone(),
-                    ));
+                    let star_import = alias == "*";
+                    if !star_import {
+                        // Insert module/object symbol under the alias name
+                        tbl.insert_symbol(crate::analyzers::semantic::symbol::Symbol::new_object(
+                            alias.clone(),
+                            None,
+                            node.location.clone(),
+                            node.span.clone(),
+                        ));
+                    }
 
-                    // For each function in the manifest, insert a function symbol
-                    // into the symbol table that is a member of the imported module.
+                    // For each function in the manifest, insert function symbols.
                     for f in &desc.manifest.functions {
-                        // Use a dotted name for module qualification in the table
-                        let full_name = format!("{}.{}", alias, f.name);
+                        // If star import, insert bare function name; otherwise qualified with alias.
+                        let full_name = if star_import {
+                            f.name.clone()
+                        } else {
+                            format!("{}.{}", alias, f.name)
+                        };
                         let mut sym = crate::analyzers::semantic::symbol::Symbol::new(
                             full_name.clone(),
                             SymbolKind::Function,
@@ -208,6 +214,18 @@ fn analyze_statement(
                     }
                 } else {
                     // Manifest not found: emit a diagnostic but still create a placeholder
+                    if alias != "*" {
+                        tbl.insert_symbol(crate::analyzers::semantic::symbol::Symbol::new_object(
+                            alias.clone(),
+                            None,
+                            node.location.clone(),
+                            node.span.clone(),
+                        ));
+                    }
+                }
+            } else {
+                // No manifests available: register placeholder object symbol for the alias
+                if alias != "*" {
                     tbl.insert_symbol(crate::analyzers::semantic::symbol::Symbol::new_object(
                         alias.clone(),
                         None,
@@ -215,14 +233,6 @@ fn analyze_statement(
                         node.span.clone(),
                     ));
                 }
-            } else {
-                // No manifests available: register placeholder object symbol for the alias
-                tbl.insert_symbol(crate::analyzers::semantic::symbol::Symbol::new_object(
-                    alias.clone(),
-                    None,
-                    node.location.clone(),
-                    node.span.clone(),
-                ));
             }
         }
         AstNodeKind::Null => {

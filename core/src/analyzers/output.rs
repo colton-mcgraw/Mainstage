@@ -21,6 +21,11 @@ pub struct AnalyzerOutput {
     pub entry_point: NodeId,
     pub diagnostics: Vec<DiagnosticInfo>,
     pub version: u32,
+    /// Imported modules using star import (e.g., import "stdlib" as *)
+    pub star_imports: Vec<String>,
+    /// Plugin function mappings discovered from manifests to support lowering of
+    /// bare calls. Each entry is (bare_name, plugin_name, qualified_func_name).
+    pub plugin_func_mappings: Vec<(String, String, String)>,
 }
 
 impl AnalyzerOutput {
@@ -33,6 +38,8 @@ impl AnalyzerOutput {
             entry_point: 0,
             diagnostics: Vec::new(),
             version: 1,
+            star_imports: Vec::new(),
+            plugin_func_mappings: Vec::new(),
         }
     }
 }

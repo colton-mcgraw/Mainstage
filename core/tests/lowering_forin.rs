@@ -49,7 +49,7 @@ fn dump_lowered_forin_ir() {
     let script = AstNode::new(AstNodeKind::Script { body: vec![workspace, stage_node] }, None, None);
 
     // Lower to IR using public wrapper
-    let ir_mod = mainstage_core::ir::lower_ast_to_ir(&script, "", false, None);
+    let ir_mod = mainstage_core::ir::lower_ast_to_ir(&script, false, None);
 
     // Print the IR for inspection
     println!("Lowered IR:\n{}", ir_mod);
