@@ -224,6 +224,16 @@
     }
     ,
     {
+      "domain": "util",
+      "name": "echo_typed",
+      "args": [
+        { "name": "value", "kind": "Any" }
+      ],
+      "returns": { "name": "result", "kind": "Any" },
+      "description": "Return the input value unchanged (typed ABI test)."
+    }
+    ,
+    {
       "domain": "util.array",
       "name": "empty",
       "args": [ ],

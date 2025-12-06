@@ -119,10 +119,19 @@ pub fn lower_expr_to_reg_with_builder(
                         for a in args.iter() { let builder_arg = builder.as_mut().map(|b| &mut **b); let _ = lower_expr_to_reg_with_builder(a, ir_mod, _ctx, builder_arg); }
                         if let Some(b) = builder.as_mut() { let r = b.alloc_reg(); b.emit_op(IROp::LConst { dest: r, value: crate::ir::value::Value::Null }); return r; } else { let r = ir_mod.alloc_reg(); ir_mod.emit_op(IROp::LConst { dest: r, value: crate::ir::value::Value::Null }); return r; }
                     }
-                    // If not a stdlib bare name, but symbol exists, lower as stage call label
-                    if _ctx.symbols.get(name).is_some() {
-                        // Without a stage label resolution here, evaluate args and return Null
-                        // until stage call mapping is implemented.
+                    // If not a stdlib bare name, but symbol exists, lower as stage call.
+                    if let Some(&fid) = _ctx.symbols.get(name) {
+                        let label_idx = (fid as usize).saturating_sub(1);
+                        // Emit CallLabel with args and return dest register
+                        if let Some(b) = builder.as_mut() {
+                            let dest = b.alloc_reg();
+                            b.emit_op(IROp::CallLabel { dest, label_index: label_idx, args: regs.clone() });
+                            return dest;
+                        } else {
+                            let dest = ir_mod.alloc_reg();
+                            ir_mod.emit_op(IROp::CallLabel { dest, label_index: label_idx, args: regs.clone() });
+                            return dest;
+                        }
                     }
             }
             // Member-style callee: resolve nested domain names like util.array.append
