@@ -8,22 +8,49 @@
   "kind": "inprocess",
   "functions": [
     {
+      "domain": "util",
       "name": "ask",
       "args": [{ "name": "question", "kind": "String" }],
       "returns": { "name": "answer", "kind": "String" },
       "description": "Prompt the user with a question and return their input."
     },
     {
+      "domain": "util",
+      "name": "echo_typed",
+      "args": [{ "name": "value", "kind": "Any" }],
+      "returns": { "name": "result", "kind": "Any" },
+      "description": "Return the input value unchanged (typed ABI test)."
+    },
+    {
+      "domain": "util",
+      "name": "fmt",
+      "args": [
+        { "name": "format", "kind": "String" },
+        { "name": "args", "kind": "Array<Any>", "optional": true }
+      ],
+      "returns": { "name": "result", "kind": "String" },
+      "description": "Format a string using the given format and arguments."
+    },
+    {
+      "domain": "util",
       "name": "say",
       "args": [{ "name": "message", "kind": "Any" }],
       "description": "Output a message to the user."
     },
+
     {
       "domain": "env",
       "name": "get",
       "args": [{ "name": "key", "kind": "String" }],
       "returns": { "name": "value", "kind": "String", "optional": true },
       "description": "Retrieve the value of an environment variable by its key."
+    },
+    {
+      "domain": "env",
+      "name": "list",
+      "args": [],
+      "returns": { "name": "env", "kind": "Array<Object>" },
+      "description": "Return environment variables as a list of { key:String, value:String }."
     },
     {
       "domain": "env",
@@ -34,22 +61,16 @@
       ],
       "description": "Set the value of an environment variable by its key."
     },
+
     {
       "domain": "fs",
-      "name": "read",
-      "args": [{ "name": "path", "kind": "String" }],
-      "returns": { "name": "content", "kind": "String", "optional": true },
-      "description": "Read the content of a file at the given path."
-    },
-    {
-      "domain": "fs",
-      "name": "write",
+      "name": "copy",
       "args": [
-        { "name": "path", "kind": "String" },
-        { "name": "content", "kind": "String" }
+        { "name": "from", "kind": "String" },
+        { "name": "to", "kind": "String" }
       ],
       "returns": { "name": "success", "kind": "Bool" },
-      "description": "Write content to a file at the given path. Creates or overwrites the file."
+      "description": "Copy a file or directory from one path to another."
     },
     {
       "domain": "fs",
@@ -67,6 +88,16 @@
     },
     {
       "domain": "fs",
+      "name": "glob",
+      "args": [
+        { "name": "pattern", "kind": "Array<String>" },
+        { "name": "recursive", "kind": "Bool", "optional": true }
+      ],
+      "returns": { "name": "matches", "kind": "Array<String>" },
+      "description": "Find paths matching one or more glob patterns; accepts a single string or an array of strings. Supports recursive search when enabled."
+    },
+    {
+      "domain": "fs",
       "name": "list_dir",
       "args": [{ "name": "path", "kind": "String" }],
       "returns": { "name": "entries", "kind": "Array<String>" },
@@ -81,10 +112,57 @@
     },
     {
       "domain": "fs",
-      "name": "remove_dir",
-      "args": [{ "name": "path", "kind": "String" }],
+      "name": "move",
+      "args": [
+        { "name": "from", "kind": "String" },
+        { "name": "to", "kind": "String" }
+      ],
       "returns": { "name": "success", "kind": "Bool" },
-      "description": "Remove a directory at the given path."
+      "description": "Move or rename a file or directory."
+    },
+    {
+      "domain": "fs",
+      "name": "read",
+      "args": [{ "name": "path", "kind": "String" }],
+      "returns": { "name": "content", "kind": "String", "optional": true },
+      "description": "Read the content of a file at the given path."
+    },
+    {
+      "domain": "fs",
+      "name": "stat",
+      "args": [{ "name": "path", "kind": "String" }],
+      "returns": { "name": "meta", "kind": "Object" },
+      "description": "Get basic metadata for a path: { size:Int, modified:String, is_dir:Bool }."
+    },
+    {
+      "domain": "fs",
+      "name": "write",
+      "args": [
+        { "name": "path", "kind": "String" },
+        { "name": "content", "kind": "String" }
+      ],
+      "returns": { "name": "success", "kind": "Bool" },
+      "description": "Write content to a file at the given path. Creates or overwrites the file."
+    },
+
+    {
+      "domain": "proc",
+      "name": "exec",
+      "args": [
+        { "name": "command", "kind": "String" },
+        { "name": "args", "kind": "Array<String>", "optional": true },
+        { "name": "cwd", "kind": "String", "optional": true },
+        { "name": "env", "kind": "Object", "optional": true },
+        { "name": "timeout", "kind": "Int", "optional": true }
+      ],
+      "returns": { "name": "result", "kind": "Object" },
+      "description": "Run a process and capture { code:Int, stdout:String, stderr:String }."
+    },
+    {
+      "domain": "proc",
+      "name": "exit",
+      "args": [{ "name": "code", "kind": "Int", "optional": true }],
+      "description": "Exit the program with the given exit code (default is 0)."
     },
     {
       "domain": "proc",
@@ -101,106 +179,6 @@
       "description": "Set the current working directory to the given path."
     },
     {
-      "domain": "time",
-      "name": "sleep",
-      "args": [{ "name": "milliseconds", "kind": "Int" }],
-      "description": "Pause execution for the specified number of milliseconds."
-    },
-    {
-      "domain": "time",
-      "name": "current_time_millis",
-      "args": [],
-      "returns": { "name": "timestamp", "kind": "Int" },
-      "description": "Get the current time in milliseconds since the Unix epoch."
-    },
-    {
-      "domain": "rand",
-      "name": "int",
-      "args": [
-        { "name": "min", "kind": "Int" },
-        { "name": "max", "kind": "Int" }
-      ],
-      "returns": { "name": "value", "kind": "Int" },
-      "description": "Generate a random integer between min (inclusive) and max (exclusive)."
-    },
-    {
-      "domain": "rand",
-      "name": "float",
-      "args": [],
-      "returns": { "name": "value", "kind": "Float" },
-      "description": "Generate a random floating-point number between 0.0 and 1.0."
-    },
-    {
-      "domain": "proc",
-      "name": "exit",
-      "args": [{ "name": "code", "kind": "Int", "optional": true }],
-      "description": "Exit the program with the given exit code (default is 0)."
-    },
-    {
-      "domain": "fs",
-      "name": "glob",
-      "args": [
-        { "name": "pattern", "kind": "Array<String>" },
-        { "name": "recursive", "kind": "Bool", "optional": true }
-      ],
-      "returns": { "name": "matches", "kind": "Array<String>" },
-      "description": "Find paths matching one or more glob patterns; accepts a single string or an array of strings. Supports recursive search when enabled."
-    },
-    {
-      "domain": "fs",
-      "name": "copy",
-      "args": [
-        { "name": "from", "kind": "String" },
-        { "name": "to", "kind": "String" }
-      ],
-      "returns": { "name": "success", "kind": "Bool" },
-      "description": "Copy a file or directory from one path to another."
-    },
-    {
-      "domain": "fs",
-      "name": "move",
-      "args": [
-        { "name": "from", "kind": "String" },
-        { "name": "to", "kind": "String" }
-      ],
-      "returns": { "name": "success", "kind": "Bool" },
-      "description": "Move or rename a file or directory."
-    },
-    {
-      "domain": "fs",
-      "name": "stat",
-      "args": [{ "name": "path", "kind": "String" }],
-      "returns": { "name": "meta", "kind": "Object" },
-      "description": "Get basic metadata for a path: { size:Int, modified:String, is_dir:Bool }."
-    },
-    {
-      "domain": "proc",
-      "name": "which",
-      "args": [{ "name": "name", "kind": "String" }],
-      "returns": { "name": "path", "kind": "String", "optional": true },
-      "description": "Resolve an executable on PATH and return its full path if found."
-    },
-    {
-      "domain": "env",
-      "name": "list",
-      "args": [],
-      "returns": { "name": "env", "kind": "Array<Object>" },
-      "description": "Return environment variables as a list of { key:String, value:String }."
-    },
-    {
-      "domain": "proc",
-      "name": "exec",
-      "args": [
-        { "name": "command", "kind": "String" },
-        { "name": "args", "kind": "Array<String>", "optional": true },
-        { "name": "cwd", "kind": "String", "optional": true },
-        { "name": "env", "kind": "Object", "optional": true },
-        { "name": "timeout", "kind": "Int", "optional": true }
-      ],
-      "returns": { "name": "result", "kind": "Object" },
-      "description": "Run a process and capture { code:Int, stdout:String, stderr:String }."
-    },
-    {
       "domain": "proc",
       "name": "spawn",
       "args": [
@@ -213,42 +191,61 @@
       "description": "Spawn a process without waiting for it to finish."
     },
     {
-      "domain": "util",
-      "name": "fmt",
-      "args": [
-        { "name": "format", "kind": "String" },
-        { "name": "args", "kind": "Array<Any>", "optional": true }
-      ],
-      "returns": { "name": "result", "kind": "String" },
-      "description": "Format a string using the given format and arguments."
-    }
-    ,
-    {
-      "domain": "util",
-      "name": "echo_typed",
-      "args": [
-        { "name": "value", "kind": "Any" }
-      ],
-      "returns": { "name": "result", "kind": "Any" },
-      "description": "Return the input value unchanged (typed ABI test)."
-    }
-    ,
-    {
-      "domain": "util.array",
-      "name": "empty",
-      "args": [ ],
-      "returns": { "name": "result", "kind": "Array<Any>" },
-      "description": "Create a new empty array."
+      "domain": "proc",
+      "name": "which",
+      "args": [{ "name": "name", "kind": "String" }],
+      "returns": { "name": "path", "kind": "String", "optional": true },
+      "description": "Resolve an executable on PATH and return its full path if found."
     },
+
+    {
+      "domain": "rand",
+      "name": "float",
+      "args": [],
+      "returns": { "name": "value", "kind": "Float" },
+      "description": "Generate a random floating-point number between 0.0 and 1.0."
+    },
+    {
+      "domain": "rand",
+      "name": "int",
+      "args": [
+        { "name": "min", "kind": "Int" },
+        { "name": "max", "kind": "Int" }
+      ],
+      "returns": { "name": "value", "kind": "Int" },
+      "description": "Generate a random integer between min (inclusive) and max (exclusive)."
+    },
+
+    {
+      "domain": "time",
+      "name": "current_time_millis",
+      "args": [],
+      "returns": { "name": "timestamp", "kind": "Int" },
+      "description": "Get the current time in milliseconds since the Unix epoch."
+    },
+    {
+      "domain": "time",
+      "name": "sleep",
+      "args": [{ "name": "milliseconds", "kind": "Int" }],
+      "description": "Pause execution for the specified number of milliseconds."
+    },
+
     {
       "domain": "util.array",
       "name": "append",
       "args": [
         { "name": "array", "kind": "Array<Any>" },
-        { "name": "item",  "kind": "Any" }
+        { "name": "item", "kind": "Any" }
       ],
       "returns": { "name": "result", "kind": "Array<Any>" },
       "description": "Append an item to an array and return the new array."
+    },
+    {
+      "domain": "util.array",
+      "name": "empty",
+      "args": [],
+      "returns": { "name": "result", "kind": "Array<Any>" },
+      "description": "Create a new empty array."
     },
     {
       "domain": "util.array",
@@ -263,11 +260,69 @@
     {
       "domain": "util.array",
       "name": "length",
-      "args": [
-        { "name": "array", "kind": "Array<Any>" }
-      ],
+      "args": [{ "name": "array", "kind": "Array<Any>" }],
       "returns": { "name": "result", "kind": "Int" },
       "description": "Return the number of elements in the array."
+    }
+    ,
+    {
+      "domain": "path",
+      "name": "normalize",
+      "args": [{ "name": "path", "kind": "String" }],
+      "returns": { "name": "result", "kind": "String" },
+      "description": "Normalize a path by collapsing components without filesystem access."
+    },
+    {
+      "domain": "path",
+      "name": "resolve",
+      "args": [
+        { "name": "base", "kind": "String" },
+        { "name": "relative", "kind": "String" }
+      ],
+      "returns": { "name": "result", "kind": "String" },
+      "description": "Resolve a relative path against a base path."
+    },
+    {
+      "domain": "path",
+      "name": "relativize",
+      "args": [
+        { "name": "from", "kind": "String" },
+        { "name": "to", "kind": "String" }
+      ],
+      "returns": { "name": "result", "kind": "String" },
+      "description": "Compute a relative path from one path to another."
+    },
+    {
+      "domain": "json",
+      "name": "parse",
+      "args": [{ "name": "text", "kind": "String" }],
+      "returns": { "name": "value", "kind": "Any" },
+      "description": "Parse JSON text into a typed value (null/bool/int/float/string/array/object)."
+    },
+    {
+      "domain": "json",
+      "name": "stringify",
+      "args": [{ "name": "value", "kind": "Any" }],
+      "returns": { "name": "text", "kind": "String" },
+      "description": "Serialize a typed value into JSON text."
+    },
+    {
+      "domain": "string",
+      "name": "trim",
+      "args": [{ "name": "text", "kind": "String" }],
+      "returns": { "name": "result", "kind": "String" },
+      "description": "Trim leading and trailing whitespace."
+    },
+    {
+      "domain": "string",
+      "name": "replace", 
+      "args": [
+        { "name": "text", "kind": "String" },
+        { "name": "from", "kind": "String" },
+        { "name": "to", "kind": "String" }
+      ],
+      "returns": { "name": "result", "kind": "String" },
+      "description": "Replace all occurrences of a substring with another."
     }
   ]
 }

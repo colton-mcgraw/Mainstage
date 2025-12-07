@@ -24,6 +24,7 @@ impl Plugin for TestPlugin {
     }
 
     fn metadata(&self) -> mainstage_core::vm::plugin::PluginMetadata { mainstage_core::vm::plugin::PluginMetadata::default() }
+    fn as_any(&self) -> &dyn std::any::Any { self }
 }
 
 fn write_u32_le(buf: &mut Vec<u8>, v: u32) {

@@ -7,6 +7,7 @@
 
 use crate::vm::value::Value;
 use async_trait::async_trait;
+use std::any::Any;
 
 #[async_trait]
 pub trait Plugin: Send + Sync {
@@ -20,6 +21,9 @@ pub trait Plugin: Send + Sync {
 
     /// Optional metadata for capabilities, versioning, etc.
     fn metadata(&self) -> PluginMetadata { PluginMetadata::default() }
+
+    /// Downcast support for runtime inspection when available.
+    fn as_any(&self) -> &dyn Any;
 }
 
 #[derive(Default)]
@@ -153,6 +157,18 @@ impl PluginRegistry {
 
     pub fn list_functions(&self, plugin_name: &str) -> Option<Vec<String>> {
         self.descriptors.get(plugin_name).map(|d| d.manifest.functions.iter().map(|f| f.name.clone()).collect())
+    }
+
+    /// List functions registered by a runtime plugin instance, if supported.
+    /// Returns None when the plugin is not loaded or does not expose listings.
+    pub fn list_runtime_functions(&self, plugin_name: &str) -> Option<Vec<String>> {
+        if let Some(p) = self.plugins.get(plugin_name) {
+            // In-process plugins expose registered function names.
+            if let Some(ip) = p.as_any().downcast_ref::<crate::vm::inprocess::InProcessPlugin>() {
+                return Some(ip.list_registered_functions());
+            }
+        }
+        None
     }
 
     pub fn unregister(&mut self, name: &str) {

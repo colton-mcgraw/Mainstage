@@ -271,6 +271,16 @@ impl InProcessPlugin {
             })
         }
     }
+
+    /// Return the union of registered JSON and typed handler names.
+    pub fn list_registered_functions(&self) -> Vec<String> {
+        let mut names: std::collections::HashSet<String> = std::collections::HashSet::new();
+        for k in self.handlers.keys() { names.insert(k.clone()); }
+        for k in self.typed_handlers.keys() { names.insert(k.clone()); }
+        let mut out: Vec<String> = names.into_iter().collect();
+        out.sort();
+        out
+    }
 }
 
 #[async_trait]
@@ -433,4 +443,6 @@ impl Plugin for InProcessPlugin {
     fn metadata(&self) -> PluginMetadata {
         PluginMetadata::default()
     }
+
+    fn as_any(&self) -> &dyn std::any::Any { self }
 }

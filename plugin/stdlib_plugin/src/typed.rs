@@ -662,11 +662,183 @@ pub unsafe fn register_typed_impl(ctx: *mut std::ffi::c_void, registrar: CTypedR
         0
     }
 
+    // --- Path ---
+    unsafe extern "C" fn path_normalize_typed(args: *const CValue, argc: usize, out: *mut CValue) -> i32 {
+        if out.is_null() { return -1; }
+        if args.is_null() || argc == 0 { let cs = CString::new("").unwrap(); let dup = dup_cstr(&cs); unsafe { (*out).tag = CTag::String; (*out).s = CStrView { ptr: dup, len: 0 } }; return 0; }
+        let a0 = unsafe { *args };
+        if a0.tag != CTag::String || a0.s.ptr.is_null() { let cs = CString::new("").unwrap(); let dup = dup_cstr(&cs); unsafe { (*out).tag = CTag::String; (*out).s = CStrView { ptr: dup, len: 0 } }; return 0; }
+        let p = unsafe { std::ffi::CStr::from_ptr(a0.s.ptr).to_string_lossy().into_owned() };
+        let mut buf = std::path::PathBuf::new();
+        for comp in std::path::Path::new(&p).components() { buf.push(comp.as_os_str()); }
+        let s = buf.to_string_lossy().into_owned();
+        let cs = CString::new(s).unwrap(); let dup = dup_cstr(&cs);
+        unsafe { (*out).tag = CTag::String; (*out).s = CStrView { ptr: dup, len: cs.as_bytes().len() } };
+        0
+    }
+
+    unsafe extern "C" fn path_resolve_typed(args: *const CValue, argc: usize, out: *mut CValue) -> i32 {
+        if out.is_null() { return -1; }
+        if args.is_null() || argc < 2 { let cs = CString::new("").unwrap(); let dup = dup_cstr(&cs); unsafe { (*out).tag = CTag::String; (*out).s = CStrView { ptr: dup, len: 0 } }; return 0; }
+        let a0 = unsafe { *args }; let a1 = unsafe { *args.add(1) };
+        if a0.tag != CTag::String || a1.tag != CTag::String || a0.s.ptr.is_null() || a1.s.ptr.is_null() { let cs = CString::new("").unwrap(); let dup = dup_cstr(&cs); unsafe { (*out).tag = CTag::String; (*out).s = CStrView { ptr: dup, len: 0 } }; return 0; }
+        let base = unsafe { std::ffi::CStr::from_ptr(a0.s.ptr).to_string_lossy().into_owned() };
+        let rel = unsafe { std::ffi::CStr::from_ptr(a1.s.ptr).to_string_lossy().into_owned() };
+        let s = std::path::Path::new(&base).join(&rel).to_string_lossy().into_owned();
+        let cs = CString::new(s).unwrap(); let dup = dup_cstr(&cs);
+        unsafe { (*out).tag = CTag::String; (*out).s = CStrView { ptr: dup, len: cs.as_bytes().len() } };
+        0
+    }
+
+    unsafe extern "C" fn path_relativize_typed(args: *const CValue, argc: usize, out: *mut CValue) -> i32 {
+        if out.is_null() { return -1; }
+        if args.is_null() || argc < 2 { let cs = CString::new("").unwrap(); let dup = dup_cstr(&cs); unsafe { (*out).tag = CTag::String; (*out).s = CStrView { ptr: dup, len: 0 } }; return 0; }
+        let a0 = unsafe { *args }; let a1 = unsafe { *args.add(1) };
+        if a0.tag != CTag::String || a1.tag != CTag::String || a0.s.ptr.is_null() || a1.s.ptr.is_null() { let cs = CString::new("").unwrap(); let dup = dup_cstr(&cs); unsafe { (*out).tag = CTag::String; (*out).s = CStrView { ptr: dup, len: 0 } }; return 0; }
+        let from = unsafe { std::ffi::CStr::from_ptr(a0.s.ptr).to_string_lossy().into_owned() };
+        let to = unsafe { std::ffi::CStr::from_ptr(a1.s.ptr).to_string_lossy().into_owned() };
+        let from_p = std::path::Path::new(&from);
+        let to_p = std::path::Path::new(&to);
+        let rel = match to_p.strip_prefix(from_p) { Ok(p) => p.to_path_buf(), Err(_) => to_p.to_path_buf() };
+        let s = rel.to_string_lossy().into_owned();
+        let cs = CString::new(s).unwrap(); let dup = dup_cstr(&cs);
+        unsafe { (*out).tag = CTag::String; (*out).s = CStrView { ptr: dup, len: cs.as_bytes().len() } };
+        0
+    }
+
+    // --- JSON ---
+    fn json_to_cvalue(v: &serde_json::Value) -> CValue {
+        match v {
+            serde_json::Value::Null => CValue { tag: CTag::Null, b: false, i: 0, f: 0.0, s: CStrView { ptr: std::ptr::null(), len: 0 }, arr: CArrayView { ptr: std::ptr::null(), len: 0 }, obj: CObjectView { ptr: std::ptr::null(), len: 0 } },
+            serde_json::Value::Bool(b) => CValue { tag: CTag::Bool, b: *b, i: 0, f: 0.0, s: CStrView { ptr: std::ptr::null(), len: 0 }, arr: CArrayView { ptr: std::ptr::null(), len: 0 }, obj: CObjectView { ptr: std::ptr::null(), len: 0 } },
+            serde_json::Value::Number(n) => {
+                if let Some(i) = n.as_i64() { CValue { tag: CTag::Int, b: false, i, f: 0.0, s: CStrView { ptr: std::ptr::null(), len: 0 }, arr: CArrayView { ptr: std::ptr::null(), len: 0 }, obj: CObjectView { ptr: std::ptr::null(), len: 0 } } }
+                else { CValue { tag: CTag::Float, b: false, i: 0, f: n.as_f64().unwrap_or(0.0), s: CStrView { ptr: std::ptr::null(), len: 0 }, arr: CArrayView { ptr: std::ptr::null(), len: 0 }, obj: CObjectView { ptr: std::ptr::null(), len: 0 } } }
+            }
+            serde_json::Value::String(s) => { let cs = CString::new(s.as_str()).unwrap(); let dup = dup_cstr(&cs); CValue { tag: CTag::String, b: false, i: 0, f: 0.0, s: CStrView { ptr: dup, len: cs.as_bytes().len() }, arr: CArrayView { ptr: std::ptr::null(), len: 0 }, obj: CObjectView { ptr: std::ptr::null(), len: 0 } } }
+            serde_json::Value::Array(arr) => {
+                let n = arr.len();
+                if n == 0 { CValue { tag: CTag::Array, b: false, i: 0, f: 0.0, s: CStrView { ptr: std::ptr::null(), len: 0 }, arr: CArrayView { ptr: std::ptr::null(), len: 0 }, obj: CObjectView { ptr: std::ptr::null(), len: 0 } } }
+                else {
+                    let bytes = std::mem::size_of::<CValue>() * n;
+                    let ptr = unsafe { libc::malloc(bytes) as *mut CValue };
+                    if ptr.is_null() { CValue { tag: CTag::Array, b: false, i: 0, f: 0.0, s: CStrView { ptr: std::ptr::null(), len: 0 }, arr: CArrayView { ptr: std::ptr::null(), len: 0 }, obj: CObjectView { ptr: std::ptr::null(), len: 0 } } }
+                    else {
+                        for i in 0..n { let cv = json_to_cvalue(&arr[i]); unsafe { *ptr.add(i) = cv; } }
+                        CValue { tag: CTag::Array, b: false, i: 0, f: 0.0, s: CStrView { ptr: std::ptr::null(), len: 0 }, arr: CArrayView { ptr, len: n }, obj: CObjectView { ptr: std::ptr::null(), len: 0 } }
+                    }
+                }
+            }
+            serde_json::Value::Object(obj) => {
+                let n = obj.len();
+                if n == 0 { CValue { tag: CTag::Object, b: false, i: 0, f: 0.0, s: CStrView { ptr: std::ptr::null(), len: 0 }, arr: CArrayView { ptr: std::ptr::null(), len: 0 }, obj: CObjectView { ptr: std::ptr::null(), len: 0 } } }
+                else {
+                    let bytes = std::mem::size_of::<CObjectEntry>() * n;
+                    let ptr = unsafe { libc::malloc(bytes) as *mut CObjectEntry };
+                    if ptr.is_null() { CValue { tag: CTag::Object, b: false, i: 0, f: 0.0, s: CStrView { ptr: std::ptr::null(), len: 0 }, arr: CArrayView { ptr: std::ptr::null(), len: 0 }, obj: CObjectView { ptr: std::ptr::null(), len: 0 } } }
+                    else {
+                        for (i, (k, v)) in obj.iter().enumerate() {
+                            let kcs = CString::new(k.as_str()).unwrap(); let kdup = dup_cstr(&kcs);
+                            let vv = json_to_cvalue(v);
+                            unsafe { *ptr.add(i) = CObjectEntry { key: CStrView { ptr: kdup, len: kcs.as_bytes().len() }, value: vv } };
+                        }
+                        CValue { tag: CTag::Object, b: false, i: 0, f: 0.0, s: CStrView { ptr: std::ptr::null(), len: 0 }, arr: CArrayView { ptr: std::ptr::null(), len: 0 }, obj: CObjectView { ptr, len: n } }
+                    }
+                }
+            }
+        }
+    }
+
+    unsafe fn cvalue_to_json(v: &CValue) -> serde_json::Value {
+        match v.tag {
+            CTag::Null => serde_json::Value::Null,
+            CTag::Bool => serde_json::Value::Bool(v.b),
+            CTag::Int => serde_json::Value::Number(serde_json::Number::from(v.i)),
+            CTag::Float => serde_json::Value::Number(serde_json::Number::from_f64(v.f).unwrap_or_else(|| serde_json::Number::from_f64(0.0).unwrap())),
+            CTag::String => {
+                if v.s.ptr.is_null() { serde_json::Value::String(String::new()) }
+                else { let s = std::ffi::CStr::from_ptr(v.s.ptr).to_string_lossy().into_owned(); serde_json::Value::String(s) }
+            }
+            CTag::Array => {
+                if v.arr.ptr.is_null() || v.arr.len == 0 { serde_json::Value::Array(vec![]) }
+                else {
+                    let mut a = Vec::with_capacity(v.arr.len);
+                    for i in 0..v.arr.len { let e = &*v.arr.ptr.add(i); a.push(unsafe { cvalue_to_json(e) }); }
+                    serde_json::Value::Array(a)
+                }
+            }
+            CTag::Object => {
+                if v.obj.ptr.is_null() || v.obj.len == 0 { serde_json::Value::Object(serde_json::Map::new()) }
+                else {
+                    let mut m = serde_json::Map::new();
+                    for i in 0..v.obj.len {
+                        let entry = &*v.obj.ptr.add(i);
+                        let k = if entry.key.ptr.is_null() { String::new() } else { std::ffi::CStr::from_ptr(entry.key.ptr).to_string_lossy().into_owned() };
+                        let val = unsafe { cvalue_to_json(&entry.value) };
+                        m.insert(k, val);
+                    }
+                    serde_json::Value::Object(m)
+                }
+            }
+        }
+    }
+
+    unsafe extern "C" fn json_parse_typed(args: *const CValue, argc: usize, out: *mut CValue) -> i32 {
+        if out.is_null() { return -1; }
+        if args.is_null() || argc == 0 { unsafe { (*out).tag = CTag::Null; } return 0; }
+        let a0 = unsafe { *args };
+        if a0.tag != CTag::String || a0.s.ptr.is_null() { unsafe { (*out).tag = CTag::Null; } return 0; }
+        let s = unsafe { std::ffi::CStr::from_ptr(a0.s.ptr).to_string_lossy().into_owned() };
+        match serde_json::from_str::<serde_json::Value>(&s) {
+            Ok(v) => { let cv = json_to_cvalue(&v); unsafe { *out = cv; } }
+            Err(_) => unsafe { (*out).tag = CTag::Null; },
+        }
+        0
+    }
+
+    unsafe extern "C" fn json_stringify_typed(args: *const CValue, argc: usize, out: *mut CValue) -> i32 {
+        if out.is_null() { return -1; }
+        if args.is_null() || argc == 0 { let cs = CString::new("null").unwrap(); let dup = dup_cstr(&cs); unsafe { (*out).tag = CTag::String; (*out).s = CStrView { ptr: dup, len: cs.as_bytes().len() } }; return 0; }
+        let a0 = unsafe { *args };
+        let v = unsafe { cvalue_to_json(&a0) };
+        let s = serde_json::to_string(&v).unwrap_or_else(|_| "null".into());
+        let cs = CString::new(s).unwrap(); let dup = dup_cstr(&cs);
+        unsafe { (*out).tag = CTag::String; (*out).s = CStrView { ptr: dup, len: cs.as_bytes().len() } };
+        0
+    }
+
+    // --- String ---
+    unsafe extern "C" fn string_trim_typed(args: *const CValue, argc: usize, out: *mut CValue) -> i32 {
+        if out.is_null() { return -1; }
+        if args.is_null() || argc == 0 { let cs = CString::new("").unwrap(); let dup = dup_cstr(&cs); unsafe { (*out).tag = CTag::String; (*out).s = CStrView { ptr: dup, len: 0 } }; return 0; }
+        let a0 = unsafe { *args };
+        if a0.tag != CTag::String || a0.s.ptr.is_null() { let cs = CString::new("").unwrap(); let dup = dup_cstr(&cs); unsafe { (*out).tag = CTag::String; (*out).s = CStrView { ptr: dup, len: 0 } }; return 0; }
+        let s = unsafe { std::ffi::CStr::from_ptr(a0.s.ptr).to_string_lossy().into_owned() };
+        let t = s.trim().to_string();
+        let cs = CString::new(t).unwrap(); let dup = dup_cstr(&cs);
+        unsafe { (*out).tag = CTag::String; (*out).s = CStrView { ptr: dup, len: cs.as_bytes().len() } };
+        0
+    }
+
+    unsafe extern "C" fn string_replace_typed(args: *const CValue, argc: usize, out: *mut CValue) -> i32 {
+        if out.is_null() { return -1; }
+        if args.is_null() || argc < 3 { let cs = CString::new("").unwrap(); let dup = dup_cstr(&cs); unsafe { (*out).tag = CTag::String; (*out).s = CStrView { ptr: dup, len: 0 } }; return 0; }
+        let a0 = unsafe { *args }; let a1 = unsafe { *args.add(1) }; let a2 = unsafe { *args.add(2) };
+        if a0.tag != CTag::String || a1.tag != CTag::String || a2.tag != CTag::String || a0.s.ptr.is_null() || a1.s.ptr.is_null() || a2.s.ptr.is_null() { let cs = CString::new("").unwrap(); let dup = dup_cstr(&cs); unsafe { (*out).tag = CTag::String; (*out).s = CStrView { ptr: dup, len: 0 } }; return 0; }
+        let s = unsafe { std::ffi::CStr::from_ptr(a0.s.ptr).to_string_lossy().into_owned() };
+        let from = unsafe { std::ffi::CStr::from_ptr(a1.s.ptr).to_string_lossy().into_owned() };
+        let to = unsafe { std::ffi::CStr::from_ptr(a2.s.ptr).to_string_lossy().into_owned() };
+        let r = s.replace(&from, &to);
+        let cs = CString::new(r).unwrap(); let dup = dup_cstr(&cs);
+        unsafe { (*out).tag = CTag::String; (*out).s = CStrView { ptr: dup, len: cs.as_bytes().len() } };
+        0
+    }
+
     macro_rules! treg { ($n:expr, $f:expr) => {{ let name = CString::new($n).unwrap(); unsafe { registrar(ctx, name.as_ptr(), $f) }; }} }
 
     treg!("util.echo_typed", util_echo_typed);
-    treg!("say", util_say_typed);
-    treg!("ask", util_ask_typed);
+    treg!("util.say", util_say_typed);
+    treg!("util.ask", util_ask_typed);
     treg!("env.get", env_get_typed);
     treg!("fs.read", fs_read_typed);
     treg!("fs.write", fs_write_typed);
@@ -692,4 +864,12 @@ pub unsafe fn register_typed_impl(ctx: *mut std::ffi::c_void, registrar: CTypedR
     treg!("util.array.empty", util_array_empty_typed);
     treg!("util.array.append", util_array_append_typed);
     treg!("util.array.extend", util_array_extend_typed);
+    // New domains
+    treg!("path.normalize", path_normalize_typed);
+    treg!("path.resolve", path_resolve_typed);
+    treg!("path.relativize", path_relativize_typed);
+    treg!("json.parse", json_parse_typed);
+    treg!("json.stringify", json_stringify_typed);
+    treg!("string.trim", string_trim_typed);
+    treg!("string.replace", string_replace_typed);
 }

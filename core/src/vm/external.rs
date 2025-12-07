@@ -143,4 +143,6 @@ impl Plugin for ExternalPlugin {
 
         Ok(Self::json_to_value(&json))
     }
+
+    fn as_any(&self) -> &dyn std::any::Any { self }
 }
