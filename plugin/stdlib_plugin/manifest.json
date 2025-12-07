@@ -23,19 +23,16 @@
     },
     {
       "domain": "util",
-      "name": "fmt",
-      "args": [
-        { "name": "format", "kind": "String" },
-        { "name": "args", "kind": "Array<Any>", "optional": true }
-      ],
-      "returns": { "name": "result", "kind": "String" },
-      "description": "Format a string using the given format and arguments."
-    },
-    {
-      "domain": "util",
       "name": "say",
       "args": [{ "name": "message", "kind": "Any" }],
       "description": "Output a message to the user."
+    },
+
+    {
+      "domain": "util",
+      "name": "echo",
+      "args": [{ "name": "message", "kind": "Any" }],
+      "description": "Echo a message to the user (no return)."
     },
 
     {
@@ -78,6 +75,13 @@
       "args": [{ "name": "path", "kind": "String" }],
       "returns": { "name": "success", "kind": "Bool" },
       "description": "Delete the file at the given path."
+    },
+    {
+      "domain": "fs",
+      "name": "remove_dir",
+      "args": [{ "name": "path", "kind": "String" }],
+      "returns": { "name": "success", "kind": "Bool" },
+      "description": "Remove the directory at the given path."
     },
     {
       "domain": "fs",
@@ -163,32 +167,6 @@
       "name": "exit",
       "args": [{ "name": "code", "kind": "Int", "optional": true }],
       "description": "Exit the program with the given exit code (default is 0)."
-    },
-    {
-      "domain": "proc",
-      "name": "get_cwd",
-      "args": [],
-      "returns": { "name": "cwd", "kind": "String" },
-      "description": "Get the current working directory."
-    },
-    {
-      "domain": "proc",
-      "name": "set_cwd",
-      "args": [{ "name": "path", "kind": "String" }],
-      "returns": { "name": "success", "kind": "Bool" },
-      "description": "Set the current working directory to the given path."
-    },
-    {
-      "domain": "proc",
-      "name": "spawn",
-      "args": [
-        { "name": "command", "kind": "String" },
-        { "name": "args", "kind": "Array<String>", "optional": true },
-        { "name": "cwd", "kind": "String", "optional": true },
-        { "name": "env", "kind": "Object", "optional": true }
-      ],
-      "returns": { "name": "process", "kind": "Object" },
-      "description": "Spawn a process without waiting for it to finish."
     },
     {
       "domain": "proc",
