@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 which = "8.0.0"
+libc = "0.2"
 
 [package.metadata]
 # Shared helpers for plugin crates (MSVC env capture, compiler helpers)

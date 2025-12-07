@@ -2,6 +2,10 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+pub mod typed;
+
+pub use typed::*;
+
 /// Ensure MSVC environment for a given `cl.exe` path by attempting multiple discovery strategies.
 /// Returns an environment map suitable for passing to `Command::envs` if successful.
 pub fn ensure_msvc_env(cl_path: &Path) -> Option<HashMap<String, String>> {
@@ -36,10 +40,8 @@ pub fn ensure_msvc_env(cl_path: &Path) -> Option<HashMap<String, String>> {
 
         // Try each candidate; if we can capture env, return it
         for c in candidates.into_iter() {
-            if c.exists() {
-                if let Some(envs) = capture_env_from_vcvars(&c) {
+            if c.exists() && let Some(envs) = capture_env_from_vcvars(c) {
                     return Some(envs);
-                }
             }
         }
 
@@ -101,13 +103,11 @@ fn find_vcvars_via_vswhere() -> Option<HashMap<String, String>> {
     // Preferred invocation: ask for latest installation path
     let vswhere_args = ["-latest", "-products", "*", "-requires", "Microsoft.VisualStudio.Component.VC.Tools.x86.x64", "-property", "installationPath"];
     let try_vswhere = |exe: &str| -> Option<String> {
-        let out = Command::new(exe).args(&vswhere_args).output();
-        if let Ok(o) = out {
-            if o.status.success() || !o.stdout.is_empty() {
-                let s = String::from_utf8_lossy(&o.stdout).to_string();
-                let s = s.trim();
-                if !s.is_empty() { return Some(s.to_string()); }
-            }
+        let out = Command::new(exe).args(vswhere_args).output();
+        if let Ok(o) = out && (o.status.success() || !o.stdout.is_empty()) {
+            let s = String::from_utf8_lossy(&o.stdout).to_string();
+            let s = s.trim();
+            if !s.is_empty() { return Some(s.to_string()); }
         }
         None
     };
@@ -118,25 +118,23 @@ fn find_vcvars_via_vswhere() -> Option<HashMap<String, String>> {
     }
 
     // Common hardcoded location for vswhere on Windows
-    let program_files_x86 = std::env::var_os("ProgramFiles(x86)").map(|s| PathBuf::from(s));
+    let program_files_x86 = std::env::var_os("ProgramFiles(x86)").map(PathBuf::from);
     if let Some(mut pf) = program_files_x86 {
         pf.push("Microsoft Visual Studio/Installer/vswhere.exe");
-        if pf.exists() {
-            if let Some(p) = try_vswhere(&pf.to_string_lossy()) {
+        if pf.exists() && let Some(p) = try_vswhere(&pf.to_string_lossy()) {
                 candidates.push(PathBuf::from(p));
-            }
         }
     }
 
     // If vswhere produced installation paths, try vcvars in those installations
     for inst in candidates.into_iter() {
         let vcvars = inst.join("VC/Auxiliary/Build/vcvarsall.bat");
-        if vcvars.exists() {
-            if let Some(envs) = capture_env_from_vcvars(&vcvars) { return Some(envs); }
+        if vcvars.exists() && let Some(envs) = capture_env_from_vcvars(vcvars) { 
+            return Some(envs);
         }
         let vcvars2 = inst.join("VC\\Auxiliary\\Build\\vcvarsall.bat");
-        if vcvars2.exists() {
-            if let Some(envs) = capture_env_from_vcvars(&vcvars2) { return Some(envs); }
+        if vcvars2.exists() && let Some(envs) = capture_env_from_vcvars(vcvars2) { 
+            return Some(envs); 
         }
     }
 
@@ -144,26 +142,24 @@ fn find_vcvars_via_vswhere() -> Option<HashMap<String, String>> {
 }
 
 #[cfg(target_os = "windows")]
-fn capture_env_from_vcvars(vcvars: &PathBuf) -> Option<HashMap<String, String>> {
+fn capture_env_from_vcvars(vcvars: PathBuf) -> Option<HashMap<String, String>> {
     // Try a few common architectures
     let archs = ["x64", "x86_amd64", "x86"];
     for arch in archs.iter() {
         // cmd /C "call "<vcvars>" <arch> && set"
         let cmdline = format!("call \"{}\" {} && set", vcvars.display(), arch);
-        let output = Command::new("cmd").args(&["/C", &cmdline]).output();
-        if let Ok(o) = output {
-            if o.status.success() || !o.stdout.is_empty() {
-                let out = String::from_utf8_lossy(&o.stdout).to_string();
-                let mut map = HashMap::new();
-                for line in out.lines() {
-                    if let Some(idx) = line.find('=') {
-                        let k = &line[..idx];
-                        let v = &line[idx+1..];
-                        map.insert(k.to_string(), v.to_string());
-                    }
+        let output = Command::new("cmd").args(["/C", &cmdline]).output();
+        if let Ok(o) = output && (o.status.success() || !o.stdout.is_empty()) {
+            let out = String::from_utf8_lossy(&o.stdout).to_string();
+            let mut map = HashMap::new();
+            for line in out.lines() {
+                if let Some(idx) = line.find('=') {
+                    let k = &line[..idx];
+                    let v = &line[idx+1..];
+                    map.insert(k.to_string(), v.to_string());
                 }
-                if !map.is_empty() { return Some(map); }
             }
+            if !map.is_empty() { return Some(map); }
         }
     }
     None

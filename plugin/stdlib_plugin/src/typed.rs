@@ -1,35 +1,9 @@
 use std::ffi::CString;
-use std::os::raw::{c_char, c_void};
 use crate::domains;
 use crate::util::dup_cstr;
+use common::typed::{CTag, CValue, CStrView, CArrayView, CObjectEntry, CObjectView, CTypedRegistrar};
 
-#[repr(C)]
-#[derive(Clone, Copy, PartialEq, Eq)]
-#[allow(dead_code)]
-pub enum CTag { Null=0, Bool=1, Int=2, Float=3, String=4, Array=5, Object=6 }
-
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub struct CStrView { pub ptr: *const c_char, pub len: usize }
-
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub struct CArrayView { pub ptr: *const CValue, pub len: usize }
-
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub struct CObjectEntry { pub key: CStrView, pub value: CValue }
-
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub struct CObjectView { pub ptr: *const CObjectEntry, pub len: usize }
-
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub struct CValue { pub tag: CTag, pub b: bool, pub i: i64, pub f: f64, pub s: CStrView, pub arr: CArrayView, pub obj: CObjectView }
-
-pub type CTypedHandler = unsafe extern "C" fn(args: *const CValue, argc: usize, out: *mut CValue) -> i32;
-pub type CTypedRegistrar = unsafe extern "C" fn(ctx: *mut c_void, name: *const c_char, handler: CTypedHandler);
+// Types moved to crate common::typed
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn mainstage_free_value(val: *const CValue) {
@@ -46,8 +20,8 @@ pub unsafe extern "C" fn mainstage_free_value(val: *const CValue) {
                         let elem = &*v.arr.ptr.add(i);
                         mainstage_free_value(elem as *const CValue);
                     }
-                }
-                unsafe { libc::free(v.arr.ptr as *mut libc::c_void) };
+                    libc::free(v.arr.ptr as *mut libc::c_void) 
+                };
             }
         }
         CTag::Object => {

@@ -18,6 +18,16 @@
       "description": "Compile sources. Returns { ok: bool, path?: string, error?: string }"
     },
     {
+      "name": "link",
+      "args": [
+        { "name": "objects", "kind": "Array<String>"                   },
+        { "name": "flags",   "kind": "Array<String>", "optional": true },
+        { "name": "output",  "kind": "String"                           }
+      ],
+      "returns": { "name": "result", "kind": "Object" },
+      "description": "Link object files into executable. Returns { ok: bool, path?: string, error?: string }"
+    },
+    {
       "name": "list_compilers",
       "args": [],
       "returns": { "name": "compilers", "kind": "Array<Object>" },

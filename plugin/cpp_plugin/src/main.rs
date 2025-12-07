@@ -1,7 +1,6 @@
 use std::io::{self, Read};
 use std::path::PathBuf;
 use std::process::Command;
-use std::collections::HashMap;
 
 fn main() {
     let mut args = std::env::args().skip(1);
@@ -27,7 +26,7 @@ fn main() {
         let found = find_available_compilers();
         let mut out: Vec<serde_json::Value> = Vec::new();
         for (name, path) in found.into_iter() {
-            let version = get_compiler_version(&path).unwrap_or_default();
+            let version = get_compiler_version(path.clone()).unwrap_or_default();
             out.push(serde_json::json!({ "name": name, "path": path.to_string_lossy(), "version": version }));
         }
         println!("{}", serde_json::to_string(&out).unwrap_or("[]".to_string()));
@@ -44,28 +43,18 @@ fn main() {
         match &json["args"] {
             serde_json::Value::Array(a) => {
                 // args array: [sources, flags?, compiler?]
-                if let Some(sv) = a.get(0) {
-                    if let serde_json::Value::Array(sa) = sv {
-                        sources = sa.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect();
-                    }
+                if let Some(sv) = a.first() && let serde_json::Value::Array(sa) = sv {
+                    sources = sa.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect();
                 }
-                if let Some(fv) = a.get(1) {
-                    if let serde_json::Value::Array(fa) = fv {
-                        flags = fa.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect();
-                    }
+                if let Some(fv) = a.get(1) && let serde_json::Value::Array(fa) = fv {
+                    flags = fa.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect();
                 }
-                if let Some(cv) = a.get(2) {
-                    if let Some(s) = cv.as_str() { compiler = Some(s.to_string()); }
-                }
+                if let Some(cv) = a.get(2) && let Some(s) = cv.as_str() { compiler = Some(s.to_string()); }
             }
             serde_json::Value::Object(map) => {
-                if let Some(sv) = map.get("sources") {
-                    if let serde_json::Value::Array(sa) = sv { sources = sa.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect(); }
-                }
-                if let Some(fv) = map.get("flags") {
-                    if let serde_json::Value::Array(fa) = fv { flags = fa.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect(); }
-                }
-                if let Some(cv) = map.get("compiler") { if let Some(s) = cv.as_str() { compiler = Some(s.to_string()); } }
+                if let Some(sv) = map.get("sources") && let serde_json::Value::Array(sa) = sv { sources = sa.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect(); }
+                if let Some(fv) = map.get("flags") && let serde_json::Value::Array(fa) = fv { flags = fa.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect(); }
+                if let Some(cv) = map.get("compiler") && let Some(s) = cv.as_str() { compiler = Some(s.to_string()); }
             }
             _ => {}
         }
@@ -106,13 +95,11 @@ fn compile_cpp_sources_with(sources: Vec<String>, flags: Vec<String>, compiler_h
     let out_name = if cfg!(target_os = "windows") { "output_binary.exe" } else { "output_binary" };
 
     // Build command
-    let mut cmd = build_compile_command(&compiler_name, &compiler_path, &sources, &flags, out_name);
+    let mut cmd = build_compile_command(&compiler_name, compiler_path.clone(), &sources, &flags, out_name);
 
     // If MSVC, try to populate env via vcvars before running
-    if cfg!(target_os = "windows") && (compiler_name == "cl" || compiler_name.to_lowercase().contains("cl")) {
-        if let Some(envs) = common::ensure_msvc_env(compiler_path.as_path()) {
-            cmd.envs(envs.into_iter());
-        }
+    if cfg!(target_os = "windows") && (compiler_name == "cl" || compiler_name.to_lowercase().contains("cl")) && let Some(envs) = common::ensure_msvc_env(compiler_path.as_path()) {
+        cmd.envs(envs);
     }
 
     // Execute
@@ -140,23 +127,16 @@ fn find_available_compilers() -> Vec<(String, PathBuf)> {
 }
 
 fn select_compiler(hint: Option<String>) -> Option<(String, PathBuf)> {
-    if let Some(h) = hint {
-        if let Ok(p) = which::which(&h) {
-            return Some((h, p));
-        }
+    if let Some(h) = hint && let Ok(p) = which::which(&h) {
+        return Some((h, p));
     }
     find_available_compilers().into_iter().next()
 }
 
-fn get_compiler_version(path: &PathBuf) -> Option<String> {
+fn get_compiler_version(path: PathBuf) -> Option<String> {
     common::get_compiler_version(path.as_path())
 }
 
-fn build_compile_command(name: &str, path: &PathBuf, sources: &[String], flags: &[String], out_name: &str) -> Command {
+fn build_compile_command(name: &str, path: PathBuf, sources: &[String], flags: &[String], out_name: &str) -> Command {
     common::build_compile_command(name, path.as_path(), sources, flags, out_name)
-}
-
-// Delegate MSVC env capture to shared crate
-fn ensure_msvc_env(cl_path: &PathBuf) -> Option<HashMap<String, String>> {
-    common::ensure_msvc_env(cl_path.as_path())
 }

@@ -4,6 +4,7 @@ mod typed;
 
 use std::ffi::CString;
 use std::os::raw::{c_char, c_void};
+use common::typed::CTypedRegistrar;
 use std::ptr;
 use std::collections::HashSet;
 
@@ -20,7 +21,7 @@ pub struct CArrayView { pub ptr: *const CValue, pub len: usize }
 
 #[repr(C)]
 #[derive(Clone, Copy)]
-pub struct CValue { pub tag: typed::CTag, pub b: bool, pub i: i64, pub f: f64, pub s: CStrView, pub arr: CArrayView, pub obj: typed::CObjectView }
+pub struct CValue { pub tag: common::typed::CTag, pub b: bool, pub i: i64, pub f: f64, pub s: CStrView, pub arr: CArrayView, pub obj: common::typed::CObjectView }
 
 type CJsonHandler = unsafe extern "C" fn(args_json: *const c_char) -> *mut c_char;
 type CRegistrar = unsafe extern "C" fn(ctx: *mut c_void, name: *const c_char, handler: CJsonHandler);
@@ -294,6 +295,6 @@ pub unsafe extern "C" fn mainstage_register(ctx: *mut c_void, registrar: CRegist
 /// The caller must ensure that the provided context and registrar function
 /// are valid and adhere to the expected calling conventions.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn mainstage_register_typed(ctx: *mut std::ffi::c_void, registrar: typed::CTypedRegistrar) {
+pub unsafe extern "C" fn mainstage_register_typed(ctx: *mut std::ffi::c_void, registrar: CTypedRegistrar) {
     unsafe { typed::register_typed_impl(ctx, registrar) }
 }
