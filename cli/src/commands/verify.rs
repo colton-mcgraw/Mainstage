@@ -5,6 +5,9 @@ pub fn handle(
     sub_m: &ArgMatches,
     manifests: &std::collections::HashMap<String, mainstage_core::vm::plugin::PluginDescriptor>,
 ) {
+    // Options: --json (bool), --strict (bool)
+    let emit_json = sub_m.get_flag("json");
+    let strict = sub_m.get_flag("strict");
     let module = sub_m.get_one::<String>("module").map(|s| s.to_string());
     let mut results: Vec<String> = Vec::new();
     let mut checked = 0usize;
@@ -232,12 +235,28 @@ pub fn handle(
         }
     }
 
-    for line in results.iter() {
-        info!("{}", line);
-    }
-    if mismatched > 0 {
-        error!("{} of {} plugin(s) mismatched", mismatched, checked);
+    if emit_json {
+        // Emit machine-readable summary
+        // Structure: { checked: N, mismatched: M, results: [ "module: msg", ... ] }
+        let obj = serde_json::json!({
+            "checked": checked,
+            "mismatched": mismatched,
+            "results": results,
+        });
+        println!("{}", obj.to_string());
     } else {
-        info!("Verified {} plugin(s)", checked);
+        for line in results.iter() {
+            info!("{}", line);
+        }
+        if mismatched > 0 {
+            error!("{} of {} plugin(s) mismatched", mismatched, checked);
+        } else {
+            info!("Verified {} plugin(s)", checked);
+        }
+    }
+
+    if strict && mismatched > 0 {
+        // Non-zero exit on mismatch when --strict provided
+        std::process::exit(2);
     }
 }

@@ -1,19 +1,15 @@
+import "stdlib" as *;
 workspace mainstage_example
 {
-    files = example_stage("data/*.txt");
-    for file in files
-    {
-        process_file(file);
-    }
+    example_stage(example_project.test_value);
 }
 
-stage example_stage(path)
+project example_project
 {
-    files = read(path);
-    return files;
+    test_value = 1;
 }
 
-stage process_file(content)
+stage example_stage(content)
 {
     say("-------------------------");
     say(content);

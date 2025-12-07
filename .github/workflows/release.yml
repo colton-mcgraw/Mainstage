@@ -13,13 +13,32 @@ jobs:
         uses: actions/checkout@v4
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+      - name: Cache build target
+        uses: actions/cache@v4
+        with:
+          path: |
+            core/target
+            cli/target
+            plugin/**/target
+          key: ${{ runner.os }}-target-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-target-
       - name: Build CLI (Release)
         working-directory: cli
-        run: cargo build --release --bin mainstage-cli
+        run: cargo build --release
       - name: Package artifact
         shell: pwsh
         run: |
-          Copy-Item -Force ./cli/target/release/mainstage-cli.exe ./mainstage.exe
+          Copy-Item -Force ./cli/target/release/mainstage.exe ./mainstage.exe
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
@@ -33,11 +52,30 @@ jobs:
         uses: actions/checkout@v4
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+      - name: Cache build target
+        uses: actions/cache@v4
+        with:
+          path: |
+            core/target
+            cli/target
+            plugin/**/target
+          key: ${{ runner.os }}-target-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-target-
       - name: Build CLI (Release)
         working-directory: cli
-        run: cargo build --release --bin mainstage-cli
+        run: cargo build --release
       - name: Package artifact
-        run: cp ./cli/target/release/mainstage-cli ./mainstage
+        run: cp ./cli/target/release/mainstage ./mainstage
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
@@ -51,11 +89,30 @@ jobs:
         uses: actions/checkout@v4
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+      - name: Cache build target
+        uses: actions/cache@v4
+        with:
+          path: |
+            core/target
+            cli/target
+            plugin/**/target
+          key: ${{ runner.os }}-target-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-target-
       - name: Build CLI (Release)
         working-directory: cli
-        run: cargo build --release --bin mainstage-cli
+        run: cargo build --release
       - name: Package artifact
-        run: cp ./cli/target/release/mainstage-cli ./mainstage
+        run: cp ./cli/target/release/mainstage ./mainstage
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:

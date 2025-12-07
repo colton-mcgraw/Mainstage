@@ -6,6 +6,7 @@
 //! plugin discovery, and exposes subcommands for common developer workflows.
 //!
 use clap::{Arg, ArgMatches, Command};
+use clap_complete::{generate, shells};
 use console::style;
 use log::{Level, error, info};
 use mainstage_core::VM;
@@ -30,7 +31,7 @@ fn main() {
         })
         .init();
 
-    let cli = Command::new("MainStage")
+    let cli = Command::new("mainstage")
         .version("0.1.0")
         .author("Colton McGraw <https://github.com/ColtMcG1>")
         .about("A CLI for MainStage");
@@ -62,6 +63,28 @@ fn main() {
     );
 
     let matches = cli.get_matches();
+
+    // Handle completion early to avoid any non-script output contaminating the generated script.
+    if let Some(("completion", sub_m)) = matches.subcommand() {
+        let shell = sub_m.get_one::<String>("shell").expect("shell required");
+        let mut cmd = setup_cli(Command::new("mainstage"))
+            .arg(
+                Arg::new("plugin-dir")
+                    .short('P')
+                    .long("plugin-dir")
+                    .value_parser(clap::value_parser!(String))
+                    .value_name("DIR")
+                    .global(true),
+            );
+        match shell.as_str() {
+            "powershell" => generate(shells::PowerShell, &mut cmd, "mainstage", &mut std::io::stdout()),
+            "bash" => generate(shells::Bash, &mut cmd, "mainstage", &mut std::io::stdout()),
+            "zsh" => generate(shells::Zsh, &mut cmd, "mainstage", &mut std::io::stdout()),
+            "fish" => generate(shells::Fish, &mut cmd, "mainstage", &mut std::io::stdout()),
+            _ => error!("Unsupported shell: {}", shell),
+        }
+        return;
+    }
 
     // VM plugin discovery (CLI may override the directory)
     // Resolve plugin-dir against the original CLI CWD, independent of later CWD changes.
@@ -97,6 +120,7 @@ fn setup_cli(cli: Command) -> Command {
     // Subcommands registered via command modules
     let cli = cli.subcommand(
         Command::new("build")
+            .alias("b")
             .about("Build the specified script file")
             .arg(
                 Arg::new("file")
@@ -130,6 +154,7 @@ fn setup_cli(cli: Command) -> Command {
     )
     .subcommand(
         Command::new("run")
+            .alias("r")
             .about("Run a script file")
             .arg(
                 Arg::new("file")
@@ -154,6 +179,7 @@ fn setup_cli(cli: Command) -> Command {
     )
     .subcommand(
         Command::new("inspect")
+            .alias("i")
             .about("Disassemble a .msx file")
             .arg(
                 Arg::new("file")
@@ -171,14 +197,39 @@ fn setup_cli(cli: Command) -> Command {
             ),
     )
     .subcommand(
-        Command::new("verify-manifest")
+        Command::new("verify")
             .about("Verify plugin manifests against runtime-registered functions")
+            .alias("verify-manifest")
             .arg(
                 Arg::new("module")
                     .help("Optional plugin module name to verify; verifies all when omitted")
                     .value_parser(clap::value_parser!(String))
                     .value_name("MODULE")
                     .required(false)
+                    .index(1)
+            )
+            .arg(
+                Arg::new("json")
+                    .help("Emit machine-readable JSON summary of verification results")
+                    .long("json")
+                    .action(clap::ArgAction::SetTrue)
+            )
+            .arg(
+                Arg::new("strict")
+                    .help("Exit with non-zero status when mismatches are found")
+                    .long("strict")
+                    .action(clap::ArgAction::SetTrue)
+            )
+    )
+    .subcommand(
+        Command::new("completion")
+            .about("Generate shell completion scripts")
+            .arg(
+                Arg::new("shell")
+                    .help("Shell to generate completion for: powershell|bash|zsh|fish")
+                    .required(true)
+                    .value_parser(["powershell", "bash", "zsh", "fish"])
+                    .value_name("SHELL")
                     .index(1)
             )
     );
@@ -196,7 +247,18 @@ fn dispatch_commands(
 
         Some(("run", sub_m)) => commands::run::handle(sub_m, manifests, matches),
         Some(("inspect", sub_m)) => commands::inspect::handle(sub_m),
-        Some(("verify-manifest", sub_m)) => commands::verify::handle(sub_m, manifests),
+        Some(("verify", sub_m)) => commands::verify::handle(sub_m, manifests),
+        Some(("completion", sub_m)) => {
+            let shell = sub_m.get_one::<String>("shell").expect("shell required");
+            let mut cmd = setup_cli(Command::new("mainstage"));
+            match shell.as_str() {
+                "powershell" => generate(shells::PowerShell, &mut cmd, "mainstage", &mut std::io::stdout()),
+                "bash" => generate(shells::Bash, &mut cmd, "mainstage", &mut std::io::stdout()),
+                "zsh" => generate(shells::Zsh, &mut cmd, "mainstage", &mut std::io::stdout()),
+                "fish" => generate(shells::Fish, &mut cmd, "mainstage", &mut std::io::stdout()),
+                _ => error!("Unsupported shell: {}", shell),
+            }
+        }
         _ => {
             error!("No valid subcommand was used. Use --help for more information.");
         }
