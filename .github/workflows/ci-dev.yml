@@ -34,7 +34,7 @@ jobs:
 
       - name: Build CLI
         working-directory: cli
-        run: cargo build --release --bin mainstage-cli
+        run: cargo build --release
 
       - name: Build all plugins
         shell: bash
