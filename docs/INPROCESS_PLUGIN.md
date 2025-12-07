@@ -56,6 +56,24 @@ Add a manifest entry to tell the host this is an in-process plugin and what libr
 - `entry`: base name of the library (no extension). The host will try platform-specific filenames: `rust_inproc.dll` (Windows), `librust_inproc.so` (Linux), `librust_inproc.dylib` (macOS), and also plain `rust_inproc`.
 - `kind: "inprocess"` signals the registry to prefer trying an in-process load.
 
+Runtime Function Names
+----------------------
+
+- Functions are registered with fully-qualified names of the form `domain.name` (e.g., `fs.read`, `env.set`).
+- The CLI verifier normalizes manifest and runtime names and also compares unqualified names to be tolerant of minor discrepancies.
+
+Verifying Your Plugin
+---------------------
+
+Run the CLI verifier to compare your manifest with the runtime-registered functions:
+
+```
+cargo run -- verify-manifest <module-name> --plugin-dir <path-to-plugins>
+```
+
+- The verifier attempts to locate your built plugin artifacts under typical Cargo paths, including `target/debug` and `target/release`.
+- On Windows, `.dll` and `.exe` naming variants are also probed based on your `entry` name.
+
 Rust example (cdylib)
 ---------------------
 

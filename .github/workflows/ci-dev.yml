@@ -1,0 +1,54 @@
+name: CI (dev branch)
+
+on:
+  push:
+    branches: [ nightly, dev ]
+  pull_request:
+    branches: [ nightly, dev ]
+
+jobs:
+  build-and-test:
+    name: Build and Test (matrix)
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Show Rust version
+        run: rustc -V; cargo -V
+
+      - name: Build core
+        working-directory: core
+        run: cargo build --all-features
+
+      - name: Test core
+        working-directory: core
+        run: cargo test --all-features --verbose
+
+      - name: Build CLI
+        working-directory: cli
+        run: cargo build --release --bin mainstage-cli
+
+      - name: Build all plugins
+        shell: bash
+        run: |
+          set -e
+          for d in plugin/*; do
+            if [ -f "$d/Cargo.toml" ]; then
+              (cd "$d" && cargo build --release)
+            fi
+          done
+        if: runner.os != 'Windows'
+
+      - name: Build all plugins (Windows)
+        shell: pwsh
+        run: |
+          Get-ChildItem ./plugin -Directory | Where-Object { Test-Path (Join-Path $_.FullName 'Cargo.toml') } | ForEach-Object { cargo build --release --manifest-path (Join-Path $_.FullName 'Cargo.toml') }
+        if: runner.os == 'Windows'

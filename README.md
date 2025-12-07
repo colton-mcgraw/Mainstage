@@ -77,6 +77,38 @@ Or to run tests by category, use the provided script:
 ```
 
 - Replace `[CategoryName]` with the desired test category (e.g., `lowering`, `opt`, `ir`, etc.).
+- 
+### Verify Plugin Manifests
+
+Use the verifier to check that a plugin's manifest functions match what the plugin actually registers at runtime.
+
+```
+cargo run -- verify-manifest <module-name> --plugin-dir <path-to-plugins>
+```
+
+- The verifier loads in-process plugins and lists registered functions.
+- It compares manifest functions using fully-qualified names (`domain.name`).
+- To be resilient, it also matches unqualified names (e.g., `ask`) against qualified manifest entries (e.g., `util.ask`).
+- If the plugin library cannot be found or is not in-process, the tool reports it cannot verify.
+
+Common Windows build output paths searched: `target/debug/` and `target/release/` under the plugin crate.
+
+### Stdlib Functions (current)
+
+The `stdlib` plugin currently exposes functions across these domains:
+
+- `env`: `env.get`, `env.list`, `env.set`
+- `fs`: `fs.copy`, `fs.delete`, `fs.remove_dir`, `fs.exists`, `fs.glob`, `fs.list_dir`, `fs.make_dir`, `fs.move`, `fs.read`, `fs.stat`, `fs.write`
+- `json`: `json.parse`, `json.stringify`
+- `path`: `path.normalize`, `path.resolve`, `path.relativize`
+- `proc`: `proc.exec`, `proc.exit`, `proc.which`
+- `rand`: `rand.float`, `rand.int`
+- `string`: `string.trim`, `string.replace`
+- `time`: `time.current_time_millis`, `time.sleep`
+- `util`: `util.ask`, `util.say`, `util.echo`, `util.echo_typed`
+- `util.array`: `util.array.append`, `util.array.empty`, `util.array.extend`, `util.array.length`
+
+Note: Some previously planned functions (e.g., `util.fmt`, `proc.get_cwd`, `proc.set_cwd`, `proc.spawn`) are not currently implemented and have been removed from the manifest. The verifier will flag any drift between manifest and runtime.
 
 ## Contributing
 

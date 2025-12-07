@@ -1,0 +1,81 @@
+name: Release Binaries
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: Build CLI (Release)
+        working-directory: cli
+        run: cargo build --release --bin mainstage-cli
+      - name: Package artifact
+        shell: pwsh
+        run: |
+          Copy-Item -Force ./cli/target/release/mainstage-cli.exe ./mainstage.exe
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: mainstage-windows-x86_64
+          path: mainstage.exe
+
+  build-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: Build CLI (Release)
+        working-directory: cli
+        run: cargo build --release --bin mainstage-cli
+      - name: Package artifact
+        run: cp ./cli/target/release/mainstage-cli ./mainstage
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: mainstage-linux-x86_64
+          path: mainstage
+
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: Build CLI (Release)
+        working-directory: cli
+        run: cargo build --release --bin mainstage-cli
+      - name: Package artifact
+        run: cp ./cli/target/release/mainstage-cli ./mainstage
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: mainstage-macos-x86_64
+          path: mainstage
+
+  publish-release:
+    needs: [build-windows, build-linux, build-macos]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/mainstage-windows-x86_64/mainstage.exe
+            dist/mainstage-linux-x86_64/mainstage
+            dist/mainstage-macos-x86_64/mainstage
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
