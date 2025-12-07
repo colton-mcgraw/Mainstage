@@ -118,12 +118,12 @@ fn compute_binop(op: &IROp, v1: &Value, v2: &Value) -> Option<Value> {
     }
 }
 
+/// TODO: implement interprocedural substitution
 fn interproc_substitute(ir: &mut IrModule) {
     // Interprocedural substitution not yet implemented; reserve the
     // function for future work and keep it a no-op so the optimizer
     // can be enabled for the local constant-fold pass.
     let _ = ir; // silence unused variable warnings
-    return;
 }
 
 fn remove_noop_jumps_and_reindex(ir: &mut IrModule) {

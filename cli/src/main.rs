@@ -118,7 +118,7 @@ fn main() {
 /// It defines subcommands for analyzing scripts and generating reports.
 fn setup_cli(cli: Command) -> Command {
     // Subcommands registered via command modules
-    let cli = cli.subcommand(
+    cli.subcommand(
         Command::new("build")
             .alias("b")
             .about("Build the specified script file")
@@ -232,8 +232,7 @@ fn setup_cli(cli: Command) -> Command {
                     .value_name("SHELL")
                     .index(1)
             )
-    );
-    cli
+    )
 }
 
 /// Dispatches the command based on the parsed arguments.

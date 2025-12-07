@@ -70,9 +70,8 @@ pub fn glob(pattern: String, recursive: Option<bool>) -> Vec<String> {
     };
     for e in walker {
         let p = e.path();
-        if let Some(name) = p.file_name().map(|s| s.to_string_lossy().to_string()) {
-            if glob_match(&name, &pat) { out.push(p.to_string_lossy().to_string()); }
-        }
+        if let Some(name) = p.file_name().map(|s| s.to_string_lossy().to_string()) 
+        && glob_match(&name, &pat) { out.push(p.to_string_lossy().to_string()); }
     }
     out
 }
@@ -152,8 +151,10 @@ pub fn exec(command: String, args: Option<Vec<String>>, cwd: Option<String>, env
     let mut cmd = Command::new(command);
     if let Some(a) = args { cmd.args(a); }
     if let Some(c) = cwd { cmd.current_dir(c); }
-    if let Some(e) = env {
-        if let Some(obj) = e.as_object() { for (k, v) in obj.iter() { if let Some(s) = v.as_str() { cmd.env(k, s); } } }
+    if let Some(e) = env && let Some(obj) = e.as_object() { 
+        for (k, v) in obj.iter() { 
+            if let Some(s) = v.as_str() { cmd.env(k, s); } 
+        }
     }
     cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
     let out = match cmd.output() { Ok(o) => o, Err(e) => { return ExecResult { code: -1, stdout: String::new(), stderr: e.to_string() } } };

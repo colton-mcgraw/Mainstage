@@ -50,7 +50,7 @@ pub(crate) fn ensure_reg(regs: &mut Vec<Value>, idx: usize) {
     }
 }
 
-pub(crate) fn take_args(regs: &Vec<Value>, args: &[usize]) -> Vec<Value> {
+pub(crate) fn take_args(regs: &[Value], args: &[usize]) -> Vec<Value> {
     let mut out = Vec::with_capacity(args.len());
     for &r in args.iter() {
         if r < regs.len() {
@@ -127,7 +127,7 @@ pub(crate) fn dispatch_op(state: &mut ExecState) -> Result<(), String> {
             }
             state.pc += 1;
         }
-        Op::Label { .. } => {
+        Op::Label => {
             state.pc += 1;
         }
         Op::Add { dest, a, b } => {

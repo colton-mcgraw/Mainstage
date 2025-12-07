@@ -4,10 +4,7 @@
 //! projects, stages, imports) and populate the `SymbolTable`. The analysis may
 //! consult optional plugin manifests to register imported module symbols.
 
-use super::{
-    symbol::{SymbolKind},
-    table::SymbolTable,
-};
+use super::{symbol::SymbolKind, table::SymbolTable};
 use crate::analyzers::semantic::symbol::Symbol;
 use crate::ast::{AstNode, AstNodeKind};
 use crate::error::{Level, MainstageErrorExt};
@@ -63,7 +60,6 @@ pub(crate) fn analyze_script_statements(
     Ok(())
 }
 
-
 fn analyze_statement(
     node: &mut AstNode,
     tbl: &mut SymbolTable,
@@ -71,7 +67,6 @@ fn analyze_statement(
 ) -> Result<(), Box<dyn MainstageErrorExt>> {
     match &mut node.kind {
         AstNodeKind::Workspace { name, body } => {
-
             // ensure body is not empty
             check_for_empty_block(body)?;
 
@@ -89,7 +84,6 @@ fn analyze_statement(
             tbl.exit_scope();
         }
         AstNodeKind::Project { name, body } => {
-
             // ensure body is not empty
             check_for_empty_block(body)?;
 
@@ -108,10 +102,9 @@ fn analyze_statement(
         }
 
         AstNodeKind::Stage { name, args, body } => {
-
             // ensure body is not empty
             check_for_empty_block(body)?;
-            
+
             // Build parameter symbol list (do not insert yet)
             let params_symbols = if let Some(params_node) = args {
                 analyze_parameters(params_node, tbl)?
@@ -194,16 +187,26 @@ fn analyze_statement(
                         // Set return type if provided by manifest (map simple kinds)
                         let return_kind = if let Some(ret) = &f.returns {
                             match ret.kind.as_deref() {
-                                Some("Integer") => crate::analyzers::semantic::kind::InferredKind::integer(),
-                                Some("Float") => crate::analyzers::semantic::kind::InferredKind::float(),
-                                Some("String") => crate::analyzers::semantic::kind::InferredKind::string(),
-                                Some("Boolean") => crate::analyzers::semantic::kind::InferredKind::boolean(),
-                                Some("Object") => crate::analyzers::semantic::kind::InferredKind::new(
-                                    crate::analyzers::semantic::kind::Kind::Object,
-                                    crate::analyzers::semantic::kind::Origin::Unknown,
-                                    node.location.clone(),
-                                    node.span.clone(),
-                                ),
+                                Some("Integer") => {
+                                    crate::analyzers::semantic::kind::InferredKind::integer()
+                                }
+                                Some("Float") => {
+                                    crate::analyzers::semantic::kind::InferredKind::float()
+                                }
+                                Some("String") => {
+                                    crate::analyzers::semantic::kind::InferredKind::string()
+                                }
+                                Some("Boolean") => {
+                                    crate::analyzers::semantic::kind::InferredKind::boolean()
+                                }
+                                Some("Object") => {
+                                    crate::analyzers::semantic::kind::InferredKind::new(
+                                        crate::analyzers::semantic::kind::Kind::Object,
+                                        crate::analyzers::semantic::kind::Origin::Unknown,
+                                        node.location.clone(),
+                                        node.span.clone(),
+                                    )
+                                }
                                 _ => crate::analyzers::semantic::kind::InferredKind::dynamic(),
                             }
                         } else {
@@ -256,21 +259,19 @@ fn analyze_statement(
     Ok(())
 }
 
-fn check_for_empty_block(
-    block_node: &AstNode,
-) -> Result<(), Box<dyn MainstageErrorExt>> {
-    if let AstNodeKind::Block { statements } = &block_node.kind {
-        if statements.is_empty() {
-            return Err(Box::new(
-                crate::analyzers::semantic::err::SemanticError::with(
-                    Level::Error,
-                    "Block cannot be empty.".to_string(),
-                    "mainstage.analyzers.semantic.stmt.check_for_empty_block".to_string(),
-                    block_node.location.clone(),
-                    block_node.span.clone(),
-                ),
-            ));
-        }
+fn check_for_empty_block(block_node: &AstNode) -> Result<(), Box<dyn MainstageErrorExt>> {
+    if let AstNodeKind::Block { statements } = &block_node.kind
+        && statements.is_empty()
+    {
+        return Err(Box::new(
+            crate::analyzers::semantic::err::SemanticError::with(
+                Level::Error,
+                "Block cannot be empty.".to_string(),
+                "mainstage.analyzers.semantic.stmt.check_for_empty_block".to_string(),
+                block_node.location.clone(),
+                block_node.span.clone(),
+            ),
+        ));
     }
     Ok(())
 }

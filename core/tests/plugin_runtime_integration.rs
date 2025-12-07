@@ -2,13 +2,15 @@ use std::sync::{Arc, Mutex};
 use mainstage_core::vm::{VM, plugin::Plugin, value::Value};
 use async_trait::async_trait;
 
+type CalledArgs = Vec<(String, Vec<Value>)>;
+
 struct TestPlugin {
     name: String,
-    called: Arc<Mutex<Vec<(String, Vec<Value>)>>>,
+    called: Arc<Mutex<CalledArgs>>,
 }
 
 impl TestPlugin {
-    fn new(name: &str, called: Arc<Mutex<Vec<(String, Vec<Value>)>>>) -> Self {
+    fn new(name: &str, called: Arc<Mutex<CalledArgs>>) -> Self {
         Self { name: name.to_string(), called }
     }
 }

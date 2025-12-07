@@ -78,7 +78,7 @@ fn parse_statement_rule(
         _ => Err(Box::<dyn MainstageErrorExt>::from(Box::new(
             crate::ast::err::SyntaxError::with(
                 crate::Level::Error,
-                format!("Unexpected statement type: {:?}", next_rule.as_rule()).into(),
+                format!("Unexpected statement type: {:?}", next_rule.as_rule()),
                 "mainstage.stmt.parse_statement_rule".into(),
                 location,
                 span,
@@ -213,7 +213,7 @@ fn parse_assignment_statement_rule(
         }
 
         _ => {
-            return Err(Box::<dyn MainstageErrorExt>::from(Box::new(
+            Err(Box::<dyn MainstageErrorExt>::from(Box::new(
                 crate::ast::err::SyntaxError::with(
                     crate::Level::Error,
                     "Expected assignment operator.".into(),
@@ -221,7 +221,7 @@ fn parse_assignment_statement_rule(
                     location,
                     span,
                 ),
-            )));
+            )))
         }
     }
 }
@@ -297,7 +297,7 @@ fn parse_declaration_rule(
             let identifier_pair = rules::fetch_next_pair(&mut inner_pairs, &location, &span)?;
             let mut args_pair = None;
             let mut body_pair = None;
-            while let Some(pair) = inner_pairs.next() {
+            for pair in inner_pairs {
                 match pair.as_rule() {
                     Rule::arguments => {
                         args_pair = Some(pair);

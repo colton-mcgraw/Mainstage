@@ -103,7 +103,7 @@ impl Value {
 }
 
 /// Helpers to marshall Vec<Value> into serde_json::Value (array)
-pub fn values_to_json_array(vals: &Vec<Value>) -> serde_json::Value {
+pub fn values_to_json_array(vals: &[Value]) -> serde_json::Value {
     serde_json::Value::Array(vals.iter().map(|v| v.to_json()).collect())
 }
 

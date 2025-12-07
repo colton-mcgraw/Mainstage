@@ -40,7 +40,7 @@ pub struct ExecParsed {
 pub fn parse_exec_args(j: *const c_char) -> ExecParsed {
     let args = parse_args(j);
     let cmd = args
-        .get(0)
+        .first()
         .and_then(|v| v.as_str())
         .map(|s| s.to_string())
         .unwrap_or_default();

@@ -8,7 +8,6 @@
 use crate::ir::module::IrModule;
 use crate::ir::op::IROp;
 use crate::ir::value::Value;
-use crate::ir::value::Value::*;
 use std::collections::HashMap;
 
 /// Constant-fold simple, localizable IR ops.
@@ -37,7 +36,10 @@ pub(crate) fn constant_fold(ir: &mut IrModule) {
                 // If the local has a known constant value, fold into LConst.
                 if let Some(v) = local_const_map.get(local_index).cloned() {
                     const_map.insert(*dest, v.clone());
-                    new_ops.push(IROp::LConst { dest: *dest, value: v });
+                    new_ops.push(IROp::LConst {
+                        dest: *dest,
+                        value: v,
+                    });
                 } else {
                     const_map.remove(dest);
                     new_ops.push(op);
@@ -67,37 +69,37 @@ pub(crate) fn constant_fold(ir: &mut IrModule) {
                 }
                 let maybe_v1 = const_map.get(src1).cloned();
                 let maybe_v2 = const_map.get(src2).cloned();
-                if let (Some(v1), Some(v2)) = (maybe_v1, maybe_v2) {
-                    if let Some(res) = super::compute_binop(&op, &v1, &v2) {
-                        let d = *dest;
-                        const_map.insert(d, res.clone());
-                        new_ops.push(IROp::LConst { dest: d, value: res });
-                        continue;
-                    }
+                if let (Some(v1), Some(v2)) = (maybe_v1, maybe_v2)
+                    && let Some(res) = super::compute_binop(&op, &v1, &v2)
+                {
+                    let d = *dest;
+                    const_map.insert(d, res.clone());
+                    new_ops.push(IROp::LConst {
+                        dest: d,
+                        value: res,
+                    });
+                    continue;
                 }
                 const_map.remove(dest);
                 new_ops.push(op);
             }
             IROp::Not { dest, src } => {
-                if let Some(v) = const_map.get(src).cloned() {
-                    match v {
-                        Bool(b) => {
-                            let d = *dest;
-                            const_map.insert(d, Bool(!b));
-                            new_ops.push(IROp::LConst { dest: d, value: Bool(!b) });
-                            continue;
-                        }
-                        _ => {}
-                    }
+                if let Some(v) = const_map.get(src).cloned()
+                    && let Value::Bool(b) = v
+                {
+                    let d = *dest;
+                    const_map.insert(d, Value::Bool(!b));
+                    new_ops.push(IROp::LConst {
+                        dest: d,
+                        value: Value::Bool(!b),
+                    });
+                    continue;
                 }
                 const_map.remove(dest);
                 new_ops.push(op);
             }
             // ops that write to a destination register should invalidate that register
-            IROp::Inc { .. }
-            | IROp::Dec { .. }
-            | IROp::CallLabel { .. }
-            | IROp::CLoad { .. } => {
+            IROp::Inc { .. } | IROp::Dec { .. } | IROp::CallLabel { .. } | IROp::CLoad { .. } => {
                 let d = match &op {
                     IROp::Inc { dest } => *dest,
                     IROp::Dec { dest } => *dest,

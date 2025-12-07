@@ -1,5 +1,5 @@
-use std::path::PathBuf;
 use mainstage_core::{ast, ir, script::Script};
+use std::path::PathBuf;
 
 // Sample script content (mirrors `cli/samples/e2e/2.ms`)
 const SAMPLE: &str = r#"[entrypoint]
@@ -54,12 +54,18 @@ fn calllabel_args_are_present_after_lowering() {
     // Ensure every CallLabel op has at least one arg (calls from workspace/stages)
     let mut found = false;
     for op in ir_mod.ops.iter() {
-        match op {
-            mainstage_core::ir::op::IROp::CallLabel { dest: _, label_index: _, args } => {
-                found = true;
-                assert!(!args.is_empty(), "CallLabel emitted with no args: {}", ir_str);
-            }
-            _ => {}
+        if let mainstage_core::ir::op::IROp::CallLabel {
+            dest: _,
+            label_index: _,
+            args,
+        } = op
+        {
+            found = true;
+            assert!(
+                !args.is_empty(),
+                "CallLabel emitted with no args: {}",
+                ir_str
+            );
         }
     }
     assert!(found, "No CallLabel ops found in lowered IR: {}", ir_str);

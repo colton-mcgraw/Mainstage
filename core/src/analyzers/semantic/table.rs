@@ -36,7 +36,6 @@ impl SymbolTable {
     }
 
     /// ------- Scope Helpers -------
-
     pub fn enter_scope(&mut self) {
         self.symbols.push(HashMap::new());
         self.object_contexts.push(None);
@@ -47,10 +46,7 @@ impl SymbolTable {
         // emitting unused-variable warnings for symbols declared here because
         // they are treated as object fields (they'll be referenced via member
         // access) rather than local variables.
-        let skip_warnings = match self.object_contexts.last() {
-            Some(Some(_)) => true,
-            _ => false,
-        };
+        let skip_warnings = matches!(self.object_contexts.last(), Some(Some(_)));
 
         if !skip_warnings {
             // Before popping the current scope, emit warnings for any variables
@@ -111,7 +107,6 @@ impl SymbolTable {
     }
 
     /// ------- Symbol Helpers -------
-
     pub fn insert_symbol(&mut self, symbol: Symbol) {
         if let Some(current_scope) = self.symbols.last_mut() {
             current_scope
@@ -130,5 +125,11 @@ impl SymbolTable {
             }
         }
         None
+    }
+}
+
+impl Default for SymbolTable {
+    fn default() -> Self {
+        Self::new()
     }
 }

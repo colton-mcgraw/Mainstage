@@ -4,15 +4,16 @@
 //! forms to infer kinds (`InferredKind`), perform basic type checks, and
 //! update the `SymbolTable` with inferred types and usage information.
 
-use super::symbol::{Symbol};
 use super::kind::{InferredKind, Kind, Origin};
+use super::symbol::Symbol;
 pub(crate) fn analyze_assignment(
     node: &mut crate::ast::AstNode,
     tbl: &mut crate::analyzers::semantic::table::SymbolTable,
 ) -> Result<InferredKind, Box<dyn crate::error::MainstageErrorExt>> {
     if let crate::ast::AstNodeKind::Assignment { target, value } = &mut node.kind {
         // infer the value kind
-        let value_kind = super::node::analyze_node(value, tbl)?.unwrap_or_else(|| InferredKind::dynamic());
+        let value_kind =
+            super::node::analyze_node(value, tbl)?.unwrap_or_else(InferredKind::dynamic);
 
         // target must be identifier for now
         if let crate::ast::AstNodeKind::Identifier { name } = &mut target.kind {
@@ -52,7 +53,8 @@ pub(crate) fn analyze_assignment(
                                             "Incompatible assignment: variable '{}' has type {} but assigned value has type {}",
                                             name, existing_clone, value_kind
                                         ),
-                                        "mainstage.analyzers.semantic.expr.analyze_assignment".to_string(),
+                                        "mainstage.analyzers.semantic.expr.analyze_assignment"
+                                            .to_string(),
                                         node.location.clone(),
                                         node.span.clone(),
                                     ),
@@ -77,18 +79,21 @@ pub(crate) fn analyze_assignment(
 
             Ok(value_kind)
         } else {
-            return Err(Box::new(
+            Err(Box::new(
                 crate::analyzers::semantic::err::SemanticError::with(
                     crate::error::Level::Error,
-                    format!("Assignment target must be an identifier, found: {}", target.kind),
+                    format!(
+                        "Assignment target must be an identifier, found: {}",
+                        target.kind
+                    ),
                     "mainstage.analyzers.semantic.expr.analyze_assignment".to_string(),
                     node.location.clone(),
                     node.span.clone(),
                 ),
-            ));
+            ))
         }
     } else {
-        return Err(Box::new(
+        Err(Box::new(
             crate::analyzers::semantic::err::SemanticError::with(
                 crate::error::Level::Error,
                 format!("Expected Assignment node, found: {}", node.kind),
@@ -96,31 +101,31 @@ pub(crate) fn analyze_assignment(
                 node.location.clone(),
                 node.span.clone(),
             ),
-        ));
+        ))
     }
 }
 
 pub(crate) fn analyze_block(
-     node: &mut crate::ast::AstNode,
-     tbl: &mut crate::analyzers::semantic::table::SymbolTable,
- ) -> Result<(), Box<dyn crate::error::MainstageErrorExt>> {
-     if let crate::ast::AstNodeKind::Block { statements } = &mut node.kind {
-         for stmt in statements.iter_mut() {
-             super::node::analyze_node(stmt, tbl)?;
-         }
-     } else {
-         return Err(Box::new(
-             crate::analyzers::semantic::err::SemanticError::with(
-                 crate::error::Level::Error,
-                 format!("Expected Block node, found: {}", node.kind),
-                 "mainstage.analyzers.semantic.expr.analyze_block".to_string(),
-                 node.location.clone(),
-                 node.span.clone(),
-             ),
-         ));
-     }
-     Ok(())
- }
+    node: &mut crate::ast::AstNode,
+    tbl: &mut crate::analyzers::semantic::table::SymbolTable,
+) -> Result<(), Box<dyn crate::error::MainstageErrorExt>> {
+    if let crate::ast::AstNodeKind::Block { statements } = &mut node.kind {
+        for stmt in statements.iter_mut() {
+            super::node::analyze_node(stmt, tbl)?;
+        }
+    } else {
+        return Err(Box::new(
+            crate::analyzers::semantic::err::SemanticError::with(
+                crate::error::Level::Error,
+                format!("Expected Block node, found: {}", node.kind),
+                "mainstage.analyzers.semantic.expr.analyze_block".to_string(),
+                node.location.clone(),
+                node.span.clone(),
+            ),
+        ));
+    }
+    Ok(())
+}
 /// Analyze an identifier usage and return its inferred kind (or Dynamic if unknown).
 pub(crate) fn analyze_identifier(
     node: &mut crate::ast::AstNode,
@@ -136,8 +141,12 @@ pub(crate) fn analyze_identifier(
                 let mut ik = k.clone();
                 ik.origin = Origin::Expression;
                 // update location/span to usage site if available
-                if node.location.is_some() { ik.location = node.location.clone(); }
-                if node.span.is_some() { ik.span = node.span.clone(); }
+                if node.location.is_some() {
+                    ik.location = node.location.clone();
+                }
+                if node.span.is_some() {
+                    ik.span = node.span.clone();
+                }
                 return Ok(ik);
             }
         }
@@ -148,7 +157,7 @@ pub(crate) fn analyze_identifier(
         // in the current scope as needed.
         Ok(InferredKind::dynamic())
     } else {
-        return Err(Box::new(
+        Err(Box::new(
             crate::analyzers::semantic::err::SemanticError::with(
                 crate::error::Level::Error,
                 format!("Expected Identifier node, found: {}", node.kind),
@@ -156,7 +165,7 @@ pub(crate) fn analyze_identifier(
                 node.location.clone(),
                 node.span.clone(),
             ),
-        ));
+        ))
     }
 }
 
@@ -169,41 +178,68 @@ pub(crate) fn analyze_expression(
     match &mut node.kind {
         crate::ast::AstNodeKind::Integer { .. } => {
             let mut ik = InferredKind::integer();
-            if let Some(loc) = node.location.clone() { ik = ik.with_location(loc); }
-            if let Some(span) = node.span.clone() { ik = ik.with_span(span); }
+            if let Some(loc) = node.location.clone() {
+                ik = ik.with_location(loc);
+            }
+            if let Some(span) = node.span.clone() {
+                ik = ik.with_span(span);
+            }
             Ok(ik)
         }
         crate::ast::AstNodeKind::Float { .. } => {
             let mut ik = InferredKind::float();
-            if let Some(loc) = node.location.clone() { ik = ik.with_location(loc); }
-            if let Some(span) = node.span.clone() { ik = ik.with_span(span); }
+            if let Some(loc) = node.location.clone() {
+                ik = ik.with_location(loc);
+            }
+            if let Some(span) = node.span.clone() {
+                ik = ik.with_span(span);
+            }
             Ok(ik)
         }
         crate::ast::AstNodeKind::String { .. } => {
             let mut ik = InferredKind::string();
-            if let Some(loc) = node.location.clone() { ik = ik.with_location(loc); }
-            if let Some(span) = node.span.clone() { ik = ik.with_span(span); }
+            if let Some(loc) = node.location.clone() {
+                ik = ik.with_location(loc);
+            }
+            if let Some(span) = node.span.clone() {
+                ik = ik.with_span(span);
+            }
             Ok(ik)
         }
         crate::ast::AstNodeKind::Bool { .. } => {
             let mut ik = InferredKind::boolean();
-            if let Some(loc) = node.location.clone() { ik = ik.with_location(loc); }
-            if let Some(span) = node.span.clone() { ik = ik.with_span(span); }
+            if let Some(loc) = node.location.clone() {
+                ik = ik.with_location(loc);
+            }
+            if let Some(span) = node.span.clone() {
+                ik = ik.with_span(span);
+            }
             Ok(ik)
         }
-        crate::ast::AstNodeKind::Null => Ok(InferredKind::new(Kind::Null, Origin::Expression, node.location.clone(), node.span.clone())),
+        crate::ast::AstNodeKind::Null => Ok(InferredKind::new(
+            Kind::Null,
+            Origin::Expression,
+            node.location.clone(),
+            node.span.clone(),
+        )),
         crate::ast::AstNodeKind::List { elements } => {
             // Infer element type: lists must be homogeneous (single element type).
             if elements.is_empty() {
                 // empty list -> element type dynamic
-                let out = InferredKind::new(Kind::Array, Origin::Expression, node.location.clone(), node.span.clone())
-                    .with_element(InferredKind::dynamic());
+                let out = InferredKind::new(
+                    Kind::Array,
+                    Origin::Expression,
+                    node.location.clone(),
+                    node.span.clone(),
+                )
+                .with_element(InferredKind::dynamic());
                 return Ok(out);
             }
 
             let mut elem_type: Option<InferredKind> = None;
             for el in elements.iter_mut() {
-                let k = super::node::analyze_node(el, tbl)?.unwrap_or_else(|| InferredKind::dynamic());
+                let k =
+                    super::node::analyze_node(el, tbl)?.unwrap_or_else(InferredKind::dynamic);
                 if let Some(prev) = elem_type {
                     let unified = prev.unify(&k);
                     // If unify is dynamic but both operands were concrete and incompatible -> error
@@ -224,9 +260,14 @@ pub(crate) fn analyze_expression(
                 }
             }
 
-            let element_kind = elem_type.unwrap_or_else(|| InferredKind::dynamic());
-            let out = InferredKind::new(Kind::Array, Origin::Expression, node.location.clone(), node.span.clone())
-                .with_element(element_kind);
+            let element_kind = elem_type.unwrap_or_else(InferredKind::dynamic);
+            let out = InferredKind::new(
+                Kind::Array,
+                Origin::Expression,
+                node.location.clone(),
+                node.span.clone(),
+            )
+            .with_element(element_kind);
             Ok(out)
         }
         crate::ast::AstNodeKind::Identifier { .. } => analyze_identifier(node, tbl),
@@ -271,26 +312,31 @@ pub(crate) fn analyze_expression(
             }
 
             // For non-identifier callees, analyze normally and return dynamic
-            let _c = super::node::analyze_node(callee, tbl)?.unwrap_or_else(|| InferredKind::dynamic());
+            let _c =
+                super::node::analyze_node(callee, tbl)?.unwrap_or_else(InferredKind::dynamic);
             Ok(InferredKind::dynamic())
         }
         crate::ast::AstNodeKind::UnaryOp { op, expr } => {
-            let operand = super::node::analyze_node(expr, tbl)?.unwrap_or_else(|| InferredKind::dynamic());
+            let operand =
+                super::node::analyze_node(expr, tbl)?.unwrap_or_else(InferredKind::dynamic);
             use crate::ast::kind::UnaryOperator;
             match op {
                 UnaryOperator::Plus | UnaryOperator::Minus => {
                     if operand.is_numeric() || operand.is_dynamic() {
                         Ok(operand)
                     } else {
-                        return Err(Box::new(
+                        Err(Box::new(
                             crate::analyzers::semantic::err::SemanticError::with(
                                 crate::error::Level::Error,
-                                format!("Unary operator requires numeric operand, found {}", operand),
+                                format!(
+                                    "Unary operator requires numeric operand, found {}",
+                                    operand
+                                ),
                                 "mainstage.analyzers.semantic.expr.analyze_expression".to_string(),
                                 node.location.clone(),
                                 node.span.clone(),
                             ),
-                        ));
+                        ))
                     }
                 }
                 UnaryOperator::Not => Ok(InferredKind::boolean()),
@@ -298,8 +344,10 @@ pub(crate) fn analyze_expression(
             }
         }
         crate::ast::AstNodeKind::BinaryOp { left, op, right } => {
-            let l = super::node::analyze_node(left, tbl)?.unwrap_or_else(|| InferredKind::dynamic());
-            let r = super::node::analyze_node(right, tbl)?.unwrap_or_else(|| InferredKind::dynamic());
+            let l =
+                super::node::analyze_node(left, tbl)?.unwrap_or_else(InferredKind::dynamic);
+            let r =
+                super::node::analyze_node(right, tbl)?.unwrap_or_else(InferredKind::dynamic);
             use crate::ast::kind::BinaryOperator;
 
             // If either side is dynamic, unify will return dynamic and allow
@@ -310,12 +358,19 @@ pub(crate) fn analyze_expression(
             // Heuristic: if unify produced Dynamic but both operands were concrete
             // and operator is arithmetic, treat as error (e.g., Array + Integer)
             match op {
-                BinaryOperator::Add | BinaryOperator::Sub | BinaryOperator::Mul | BinaryOperator::Div | BinaryOperator::Mod => {
+                BinaryOperator::Add
+                | BinaryOperator::Sub
+                | BinaryOperator::Mul
+                | BinaryOperator::Div
+                | BinaryOperator::Mod => {
                     if unified.is_dynamic() && !l.is_dynamic() && !r.is_dynamic() {
                         return Err(Box::new(
                             crate::analyzers::semantic::err::SemanticError::with(
                                 crate::error::Level::Error,
-                                format!("Incompatible operands for binary operator {:?}: {} and {}", op, l, r),
+                                format!(
+                                    "Incompatible operands for binary operator {:?}: {} and {}",
+                                    op, l, r
+                                ),
                                 "mainstage.analyzers.semantic.expr.analyze_expression".to_string(),
                                 node.location.clone(),
                                 node.span.clone(),
@@ -325,37 +380,42 @@ pub(crate) fn analyze_expression(
                     Ok(unified)
                 }
                 // Comparison operators yield boolean
-                BinaryOperator::Eq | BinaryOperator::Ne | BinaryOperator::Lt | BinaryOperator::Le | BinaryOperator::Gt | BinaryOperator::Ge => Ok(InferredKind::boolean()),
+                BinaryOperator::Eq
+                | BinaryOperator::Ne
+                | BinaryOperator::Lt
+                | BinaryOperator::Le
+                | BinaryOperator::Gt
+                | BinaryOperator::Ge => Ok(InferredKind::boolean()),
             }
         }
         crate::ast::AstNodeKind::Member { object, property } => {
             // Evaluate object expression; if it's a simple identifier resolving to
             // an object symbol, look up the property.
-            if let crate::ast::AstNodeKind::Identifier { name } = &mut object.kind {
-                if let Some(obj_sym) = tbl.get_latest_symbol_mut(name) {
-                    // Record that the object itself was referenced (e.g. `prj` in `prj.sources`).
-                    obj_sym.increment_ref_count();
-                    obj_sym.record_usage(object.location.clone(), object.span.clone());
-                    // Try to find the property on the object
-                    if let Some(prop_mut) = obj_sym.get_property_mut(property) {
-                        // record usage on the property symbol
-                        prop_mut.increment_ref_count();
-                        prop_mut.record_usage(object.location.clone(), object.span.clone());
-                        if let Some(t) = prop_mut.inferred_type() {
-                            return Ok(t.clone());
-                        }
-                        return Ok(InferredKind::dynamic());
-                    } else {
-                        // Property not present yet; create placeholder property symbol
-                        let placeholder = Symbol::new_variable(
-                            property.clone(),
-                            Some(InferredKind::dynamic()),
-                            node.location.clone(),
-                            node.span.clone(),
-                        );
-                        obj_sym.insert_property(property.clone(), placeholder);
-                        return Ok(InferredKind::dynamic());
+            if let crate::ast::AstNodeKind::Identifier { name } = &mut object.kind
+                && let Some(obj_sym) = tbl.get_latest_symbol_mut(name)
+            {
+                // Record that the object itself was referenced (e.g. `prj` in `prj.sources`).
+                obj_sym.increment_ref_count();
+                obj_sym.record_usage(object.location.clone(), object.span.clone());
+                // Try to find the property on the object
+                if let Some(prop_mut) = obj_sym.get_property_mut(property) {
+                    // record usage on the property symbol
+                    prop_mut.increment_ref_count();
+                    prop_mut.record_usage(object.location.clone(), object.span.clone());
+                    if let Some(t) = prop_mut.inferred_type() {
+                        return Ok(t.clone());
                     }
+                    return Ok(InferredKind::dynamic());
+                } else {
+                    // Property not present yet; create placeholder property symbol
+                    let placeholder = Symbol::new_variable(
+                        property.clone(),
+                        Some(InferredKind::dynamic()),
+                        node.location.clone(),
+                        node.span.clone(),
+                    );
+                    obj_sym.insert_property(property.clone(), placeholder);
+                    return Ok(InferredKind::dynamic());
                 }
             }
             // For non-identifier objects or unresolved object, analyze the object
@@ -366,15 +426,16 @@ pub(crate) fn analyze_expression(
         crate::ast::AstNodeKind::Index { object, index } => {
             // If the object is a plain identifier, mark it referenced so parameters
             // like `prj` are not reported as unused when only member/index reads occur.
-            if let crate::ast::AstNodeKind::Identifier { name } = &mut object.kind {
-                if let Some(obj_sym) = tbl.get_latest_symbol_mut(name) {
-                    obj_sym.increment_ref_count();
-                    obj_sym.record_usage(object.location.clone(), object.span.clone());
-                }
+            if let crate::ast::AstNodeKind::Identifier { name } = &mut object.kind
+                && let Some(obj_sym) = tbl.get_latest_symbol_mut(name)
+            {
+                obj_sym.increment_ref_count();
+                obj_sym.record_usage(object.location.clone(), object.span.clone());
             }
 
             // Evaluate object expression and if it's an array, return element kind
-            let obj_kind = super::node::analyze_node(object, tbl)?.unwrap_or_else(|| InferredKind::dynamic());
+            let obj_kind =
+                super::node::analyze_node(object, tbl)?.unwrap_or_else(InferredKind::dynamic);
             if obj_kind.kind == crate::analyzers::semantic::kind::Kind::Array {
                 if let Some(elem) = obj_kind.element_kind() {
                     return Ok(elem.clone());
@@ -388,7 +449,10 @@ pub(crate) fn analyze_expression(
         _ => Err(Box::new(
             crate::analyzers::semantic::err::SemanticError::with(
                 crate::error::Level::Error,
-                format!("Unsupported expression node for analyze_expression: {}", node.kind),
+                format!(
+                    "Unsupported expression node for analyze_expression: {}",
+                    node.kind
+                ),
                 "mainstage.analyzers.semantic.expr.analyze_expression".to_string(),
                 node.location.clone(),
                 node.span.clone(),
@@ -403,7 +467,7 @@ pub(crate) fn analyze_if(
     tbl: &mut crate::analyzers::semantic::table::SymbolTable,
 ) -> Result<Option<InferredKind>, Box<dyn crate::error::MainstageErrorExt>> {
     if let crate::ast::AstNodeKind::If { condition, body } = &mut node.kind {
-        let cond = super::node::analyze_node(condition, tbl)?.unwrap_or_else(|| InferredKind::dynamic());
+        let cond = super::node::analyze_node(condition, tbl)?.unwrap_or_else(InferredKind::dynamic);
         // condition must be boolean-compatible
         if !InferredKind::boolean().is_compatible_with(&cond) && !cond.is_dynamic() {
             return Err(Box::new(
@@ -423,7 +487,7 @@ pub(crate) fn analyze_if(
         tbl.exit_scope();
         Ok(None)
     } else {
-        return Err(Box::new(
+        Err(Box::new(
             crate::analyzers::semantic::err::SemanticError::with(
                 crate::error::Level::Error,
                 format!("Expected If node, found: {}", node.kind),
@@ -431,7 +495,7 @@ pub(crate) fn analyze_if(
                 node.location.clone(),
                 node.span.clone(),
             ),
-        ));
+        ))
     }
 }
 
@@ -440,8 +504,13 @@ pub(crate) fn analyze_ifelse(
     node: &mut crate::ast::AstNode,
     tbl: &mut crate::analyzers::semantic::table::SymbolTable,
 ) -> Result<Option<InferredKind>, Box<dyn crate::error::MainstageErrorExt>> {
-    if let crate::ast::AstNodeKind::IfElse { condition, if_body, else_body } = &mut node.kind {
-        let cond = super::node::analyze_node(condition, tbl)?.unwrap_or_else(|| InferredKind::dynamic());
+    if let crate::ast::AstNodeKind::IfElse {
+        condition,
+        if_body,
+        else_body,
+    } = &mut node.kind
+    {
+        let cond = super::node::analyze_node(condition, tbl)?.unwrap_or_else(InferredKind::dynamic);
         if !InferredKind::boolean().is_compatible_with(&cond) && !cond.is_dynamic() {
             return Err(Box::new(
                 crate::analyzers::semantic::err::SemanticError::with(
@@ -464,7 +533,7 @@ pub(crate) fn analyze_ifelse(
 
         Ok(None)
     } else {
-        return Err(Box::new(
+        Err(Box::new(
             crate::analyzers::semantic::err::SemanticError::with(
                 crate::error::Level::Error,
                 format!("Expected IfElse node, found: {}", node.kind),
@@ -472,7 +541,7 @@ pub(crate) fn analyze_ifelse(
                 node.location.clone(),
                 node.span.clone(),
             ),
-        ));
+        ))
     }
 }
 
@@ -481,9 +550,15 @@ pub(crate) fn analyze_forin(
     node: &mut crate::ast::AstNode,
     tbl: &mut crate::analyzers::semantic::table::SymbolTable,
 ) -> Result<Option<InferredKind>, Box<dyn crate::error::MainstageErrorExt>> {
-    if let crate::ast::AstNodeKind::ForIn { iterator, iterable, body } = &mut node.kind {
+    if let crate::ast::AstNodeKind::ForIn {
+        iterator,
+        iterable,
+        body,
+    } = &mut node.kind
+    {
         // evaluate iterable
-        let iter_kind = super::node::analyze_node(iterable, tbl)?.unwrap_or_else(|| InferredKind::dynamic());
+        let iter_kind =
+            super::node::analyze_node(iterable, tbl)?.unwrap_or_else(InferredKind::dynamic);
 
         // infer element kind
         let elem_kind = if iter_kind.kind == crate::analyzers::semantic::kind::Kind::Array {
@@ -510,7 +585,7 @@ pub(crate) fn analyze_forin(
         tbl.exit_scope();
         Ok(None)
     } else {
-        return Err(Box::new(
+        Err(Box::new(
             crate::analyzers::semantic::err::SemanticError::with(
                 crate::error::Level::Error,
                 format!("Expected ForIn node, found: {}", node.kind),
@@ -518,7 +593,7 @@ pub(crate) fn analyze_forin(
                 node.location.clone(),
                 node.span.clone(),
             ),
-        ));
+        ))
     }
 }
 
@@ -527,12 +602,18 @@ pub(crate) fn analyze_forto(
     node: &mut crate::ast::AstNode,
     tbl: &mut crate::analyzers::semantic::table::SymbolTable,
 ) -> Result<Option<InferredKind>, Box<dyn crate::error::MainstageErrorExt>> {
-    if let crate::ast::AstNodeKind::ForTo { initializer, limit, body } = &mut node.kind {
+    if let crate::ast::AstNodeKind::ForTo {
+        initializer,
+        limit,
+        body,
+    } = &mut node.kind
+    {
         tbl.enter_scope();
         // initializer may create the loop variable
         super::node::analyze_node(initializer, tbl)?;
 
-        let limit_kind = super::node::analyze_node(limit, tbl)?.unwrap_or_else(|| InferredKind::dynamic());
+        let limit_kind =
+            super::node::analyze_node(limit, tbl)?.unwrap_or_else(InferredKind::dynamic);
         if !limit_kind.is_numeric() && !limit_kind.is_dynamic() {
             return Err(Box::new(
                 crate::analyzers::semantic::err::SemanticError::with(
@@ -549,7 +630,7 @@ pub(crate) fn analyze_forto(
         tbl.exit_scope();
         Ok(None)
     } else {
-        return Err(Box::new(
+        Err(Box::new(
             crate::analyzers::semantic::err::SemanticError::with(
                 crate::error::Level::Error,
                 format!("Expected ForTo node, found: {}", node.kind),
@@ -557,7 +638,7 @@ pub(crate) fn analyze_forto(
                 node.location.clone(),
                 node.span.clone(),
             ),
-        ));
+        ))
     }
 }
 
@@ -567,7 +648,7 @@ pub(crate) fn analyze_while(
     tbl: &mut crate::analyzers::semantic::table::SymbolTable,
 ) -> Result<Option<InferredKind>, Box<dyn crate::error::MainstageErrorExt>> {
     if let crate::ast::AstNodeKind::While { condition, body } = &mut node.kind {
-        let cond = super::node::analyze_node(condition, tbl)?.unwrap_or_else(|| InferredKind::dynamic());
+        let cond = super::node::analyze_node(condition, tbl)?.unwrap_or_else(InferredKind::dynamic);
         if !InferredKind::boolean().is_compatible_with(&cond) && !cond.is_dynamic() {
             return Err(Box::new(
                 crate::analyzers::semantic::err::SemanticError::with(
@@ -585,7 +666,7 @@ pub(crate) fn analyze_while(
         tbl.exit_scope();
         Ok(None)
     } else {
-        return Err(Box::new(
+        Err(Box::new(
             crate::analyzers::semantic::err::SemanticError::with(
                 crate::error::Level::Error,
                 format!("Expected While node, found: {}", node.kind),
@@ -593,7 +674,7 @@ pub(crate) fn analyze_while(
                 node.location.clone(),
                 node.span.clone(),
             ),
-        ));
+        ))
     }
 }
 
@@ -605,11 +686,16 @@ pub(crate) fn analyze_return(
 ) -> Result<Option<InferredKind>, Box<dyn crate::error::MainstageErrorExt>> {
     if let crate::ast::AstNodeKind::Return { value } = &mut node.kind {
         if let Some(v) = value {
-            let k = super::node::analyze_node(v, tbl)?.unwrap_or_else(|| InferredKind::dynamic());
+            let k = super::node::analyze_node(v, tbl)?.unwrap_or_else(InferredKind::dynamic);
             return Ok(Some(k));
         } else {
             // explicit return with no value -> Void
-            return Ok(Some(InferredKind::new(Kind::Void, Origin::Expression, node.location.clone(), node.span.clone())));
+            return Ok(Some(InferredKind::new(
+                Kind::Void,
+                Origin::Expression,
+                node.location.clone(),
+                node.span.clone(),
+            )));
         }
     }
 
@@ -647,7 +733,10 @@ pub(crate) fn collect_returns(
                             return Err(Box::new(
                                 crate::analyzers::semantic::err::SemanticError::with(
                                     crate::error::Level::Error,
-                                    format!("Conflicting return types in block: {} vs {}", existing, k),
+                                    format!(
+                                        "Conflicting return types in block: {} vs {}",
+                                        existing, k
+                                    ),
                                     "mainstage.analyzers.semantic.expr.collect_returns".to_string(),
                                     node.location.clone(),
                                     node.span.clone(),
@@ -663,7 +752,11 @@ pub(crate) fn collect_returns(
             Ok(ret_kind)
         }
         AstNodeKind::If { condition: _, body } => collect_returns(body, tbl),
-        AstNodeKind::IfElse { condition: _, if_body, else_body } => {
+        AstNodeKind::IfElse {
+            condition: _,
+            if_body,
+            else_body,
+        } => {
             let a = collect_returns(if_body, tbl)?;
             let b = collect_returns(else_body, tbl)?;
             match (a, b) {

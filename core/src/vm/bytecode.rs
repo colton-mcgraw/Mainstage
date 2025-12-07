@@ -10,9 +10,13 @@ use std::io::Cursor;
 
 use crate::vm::{op::Op, value::Value};
 
+pub type BytecodeImage = Vec<Op>;
+pub type LabelPosMap = HashMap<usize, String>;
+pub type LabelByNameMap = HashMap<String, usize>;
+
 pub(crate) fn parse_ops(
     bytes: &[u8],
-) -> Result<(Vec<Op>, HashMap<usize, String>, HashMap<String, usize>), String> {
+) -> Result<(BytecodeImage, LabelPosMap, LabelByNameMap), String> {
     use std::io::Read;
     let mut cur = Cursor::new(bytes);
 

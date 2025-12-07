@@ -3,7 +3,7 @@ use mainstage_core::vm::value::Value as VmValue;
 fn values_equal(a: &VmValue, b: &VmValue) -> bool {
     match (a, b) {
         (VmValue::Int(ai), VmValue::Int(bi)) => ai == bi,
-        (VmValue::Float(af), VmValue::Float(bf)) => (af - bf).abs() < std::f64::EPSILON,
+        (VmValue::Float(af), VmValue::Float(bf)) => (af - bf).abs() < f64::EPSILON,
         (VmValue::Bool(ab), VmValue::Bool(bb)) => ab == bb,
         (VmValue::Str(asv), VmValue::Str(bsv)) => asv == bsv,
         (VmValue::Symbol(a2), VmValue::Symbol(b2)) => a2 == b2,

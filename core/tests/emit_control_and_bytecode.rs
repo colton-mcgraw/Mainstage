@@ -39,6 +39,5 @@ stage caller() { callee("arg"); }
     let ir_mod = ir::lower_ast_to_ir(&ast, false, None);
 
     // Ensure lowering produced some IR ops (either in module or function bodies)
-    let has_any_ops = ir_mod.len() > 0;
-    assert!(has_any_ops, "expected IR ops to be produced for stage call script");
+    assert!(!ir_mod.ops.is_empty(), "expected IR ops to be produced for stage call script");
 }

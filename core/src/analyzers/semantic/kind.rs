@@ -37,17 +37,12 @@ impl fmt::Display for Kind {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum Origin {
     Expression,
     Coerced,
+    #[default]
     Unknown,
-}
-
-impl Default for Origin {
-    fn default() -> Self {
-        Origin::Unknown
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

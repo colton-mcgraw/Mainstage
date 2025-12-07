@@ -5,12 +5,12 @@
 //! registration symbol (`mainstage_register`) so the plugin can register
 //! handlers directly without a JSON bridge.
 
-use std::io::Seek;
-use std::path::Path;
-use std::sync::Arc;
 use std::collections::HashMap;
 use std::ffi::{CStr, CString};
+use std::io::Seek;
 use std::os::raw::c_char;
+use std::path::Path;
+use std::sync::Arc;
 
 use crate::vm::plugin::{Plugin, PluginMetadata};
 use crate::vm::value::{Value as VmValue, json_to_value, values_to_json_array};
@@ -23,7 +23,8 @@ type CJsonHandler = unsafe extern "C" fn(input_json: *const c_char) -> *mut c_ch
 type CFreeFn = unsafe extern "C" fn(ptr: *mut c_char);
 
 // Core provides a C ABI registrar callback: plugin calls this per function.
-type CRegistrar = unsafe extern "C" fn(ctx: *mut std::ffi::c_void, name: *const c_char, handler: CJsonHandler);
+type CRegistrar =
+    unsafe extern "C" fn(ctx: *mut std::ffi::c_void, name: *const c_char, handler: CJsonHandler);
 
 // Symbol signature the plugin must export.
 type RegisterFn = unsafe extern "C" fn(ctx: *mut std::ffi::c_void, registrar: CRegistrar);
@@ -82,8 +83,10 @@ struct CValue {
     obj: CObjectView,
 }
 
-type CTypedHandler = unsafe extern "C" fn(args: *const CValue, argc: usize, out: *mut CValue) -> i32;
-type CTypedRegistrar = unsafe extern "C" fn(ctx: *mut std::ffi::c_void, name: *const c_char, handler: CTypedHandler);
+type CTypedHandler =
+    unsafe extern "C" fn(args: *const CValue, argc: usize, out: *mut CValue) -> i32;
+type CTypedRegistrar =
+    unsafe extern "C" fn(ctx: *mut std::ffi::c_void, name: *const c_char, handler: CTypedHandler);
 type TypedRegisterFn = unsafe extern "C" fn(ctx: *mut std::ffi::c_void, registrar: CTypedRegistrar);
 type CFreeValueFn = unsafe extern "C" fn(val: *const CValue);
 
@@ -124,7 +127,11 @@ impl InProcessPlugin {
             })?;
 
             // Determine a default plugin name from file stem
-            let cname = path.file_stem().and_then(|s| s.to_str()).unwrap_or("inproc").to_string();
+            let cname = path
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("inproc")
+                .to_string();
 
             // Resolve mainstage_register and let the plugin register handlers via C ABI.
             let reg_sym: Symbol<RegisterFn> = lib.get(b"mainstage_register\0").map_err(|e| {
@@ -150,16 +157,23 @@ impl InProcessPlugin {
             })?;
             host_ctx.free_fn = Some(*plugin_free_sym);
             // Optional deep free for typed values (arrays/objects)
-            let free_value_fn: Option<CFreeValueFn> = match lib.get::<CFreeValueFn>(b"mainstage_free_value\0") {
-                Ok(sym) => Some(*sym),
-                Err(_) => None,
-            };
+            let free_value_fn: Option<CFreeValueFn> =
+                match lib.get::<CFreeValueFn>(b"mainstage_free_value\0") {
+                    Ok(sym) => Some(*sym),
+                    Err(_) => None,
+                };
             // Context is a raw pointer to our handlers map.
             #[allow(clippy::not_unsafe_ptr_arg_deref)]
-            unsafe extern "C" fn host_registrar(ctx: *mut std::ffi::c_void, name: *const c_char, handler: CJsonHandler) {
+            unsafe extern "C" fn host_registrar(
+                ctx: *mut std::ffi::c_void,
+                name: *const c_char,
+                handler: CJsonHandler,
+            ) {
                 // Safety: ctx is a &mut HostCtx passed from Rust.
                 let host = unsafe { &mut *(ctx as *mut HostCtx) };
-                let cname = if name.is_null() { "".to_string() } else {
+                let cname = if name.is_null() {
+                    "".to_string()
+                } else {
                     unsafe { CStr::from_ptr(name).to_string_lossy().into_owned() }
                 };
                 // Wrap the C handler in a safe Rust closure.
@@ -173,12 +187,12 @@ impl InProcessPlugin {
                         return JsonValue::Null;
                     }
                     let out = unsafe { CStr::from_ptr(out_ptr).to_string_lossy().into_owned() };
-                        if let Some(free_fn) = free_fn {
-                            unsafe { free_fn(out_ptr) };
-                        } else {
-                            // Fallback: attempt libc::free (may be unsafe across CRTs on Windows)
-                            unsafe { libc::free(out_ptr as *mut libc::c_void) };
-                        }
+                    if let Some(free_fn) = free_fn {
+                        unsafe { free_fn(out_ptr) };
+                    } else {
+                        // Fallback: attempt libc::free (may be unsafe across CRTs on Windows)
+                        unsafe { libc::free(out_ptr as *mut libc::c_void) };
+                    }
                     serde_json::from_str::<JsonValue>(&out).unwrap_or(JsonValue::Null)
                 };
                 let name_key = cname.clone();
@@ -192,9 +206,17 @@ impl InProcessPlugin {
             if let Ok(tsym) = lib.get::<TypedRegisterFn>(b"mainstage_register_typed\0") {
                 let typed_reg_fn = *tsym;
                 #[allow(clippy::not_unsafe_ptr_arg_deref)]
-                unsafe extern "C" fn host_typed_registrar(ctx: *mut std::ffi::c_void, name: *const c_char, handler: CTypedHandler) {
+                unsafe extern "C" fn host_typed_registrar(
+                    ctx: *mut std::ffi::c_void,
+                    name: *const c_char,
+                    handler: CTypedHandler,
+                ) {
                     let map = unsafe { &mut *(ctx as *mut HashMap<String, CTypedHandler>) };
-                    let cname = if name.is_null() { "".to_string() } else { unsafe { CStr::from_ptr(name).to_string_lossy().into_owned() } };
+                    let cname = if name.is_null() {
+                        "".to_string()
+                    } else {
+                        unsafe { CStr::from_ptr(name).to_string_lossy().into_owned() }
+                    };
                     map.insert(cname, handler);
                 }
                 let map_ptr = &mut typed_handlers as *mut _ as *mut std::ffi::c_void;
@@ -275,8 +297,12 @@ impl InProcessPlugin {
     /// Return the union of registered JSON and typed handler names.
     pub fn list_registered_functions(&self) -> Vec<String> {
         let mut names: std::collections::HashSet<String> = std::collections::HashSet::new();
-        for k in self.handlers.keys() { names.insert(k.clone()); }
-        for k in self.typed_handlers.keys() { names.insert(k.clone()); }
+        for k in self.handlers.keys() {
+            names.insert(k.clone());
+        }
+        for k in self.typed_handlers.keys() {
+            names.insert(k.clone());
+        }
         let mut out: Vec<String> = names.into_iter().collect();
         out.sort();
         out
@@ -307,47 +333,206 @@ impl Plugin for InProcessPlugin {
                 Ok(CStrView { ptr, len })
             }
 
-            fn vm_to_cvalue(v: &VmValue, buf: &mut Vec<CString>, allocs: &mut Vec<*mut libc::c_void>) -> Result<CValue, String> {
+            fn vm_to_cvalue(
+                v: &VmValue,
+                buf: &mut Vec<CString>,
+                allocs: &mut Vec<*mut libc::c_void>,
+            ) -> Result<CValue, String> {
                 Ok(match v {
-                    VmValue::Null => CValue { tag: CTag::Null, b: false, i: 0, f: 0.0, s: CStrView { ptr: std::ptr::null(), len: 0 }, arr: CArrayView { ptr: std::ptr::null(), len: 0 }, obj: CObjectView { ptr: std::ptr::null(), len: 0 } },
-                    VmValue::Bool(b) => CValue { tag: CTag::Bool, b: *b, i: 0, f: 0.0, s: CStrView { ptr: std::ptr::null(), len: 0 }, arr: CArrayView { ptr: std::ptr::null(), len: 0 }, obj: CObjectView { ptr: std::ptr::null(), len: 0 } },
-                    VmValue::Int(i) => CValue { tag: CTag::Int, b: false, i: *i, f: 0.0, s: CStrView { ptr: std::ptr::null(), len: 0 }, arr: CArrayView { ptr: std::ptr::null(), len: 0 }, obj: CObjectView { ptr: std::ptr::null(), len: 0 } },
-                    VmValue::Float(fv) => CValue { tag: CTag::Float, b: false, i: 0, f: *fv, s: CStrView { ptr: std::ptr::null(), len: 0 }, arr: CArrayView { ptr: std::ptr::null(), len: 0 }, obj: CObjectView { ptr: std::ptr::null(), len: 0 } },
+                    VmValue::Null => CValue {
+                        tag: CTag::Null,
+                        b: false,
+                        i: 0,
+                        f: 0.0,
+                        s: CStrView {
+                            ptr: std::ptr::null(),
+                            len: 0,
+                        },
+                        arr: CArrayView {
+                            ptr: std::ptr::null(),
+                            len: 0,
+                        },
+                        obj: CObjectView {
+                            ptr: std::ptr::null(),
+                            len: 0,
+                        },
+                    },
+                    VmValue::Bool(b) => CValue {
+                        tag: CTag::Bool,
+                        b: *b,
+                        i: 0,
+                        f: 0.0,
+                        s: CStrView {
+                            ptr: std::ptr::null(),
+                            len: 0,
+                        },
+                        arr: CArrayView {
+                            ptr: std::ptr::null(),
+                            len: 0,
+                        },
+                        obj: CObjectView {
+                            ptr: std::ptr::null(),
+                            len: 0,
+                        },
+                    },
+                    VmValue::Int(i) => CValue {
+                        tag: CTag::Int,
+                        b: false,
+                        i: *i,
+                        f: 0.0,
+                        s: CStrView {
+                            ptr: std::ptr::null(),
+                            len: 0,
+                        },
+                        arr: CArrayView {
+                            ptr: std::ptr::null(),
+                            len: 0,
+                        },
+                        obj: CObjectView {
+                            ptr: std::ptr::null(),
+                            len: 0,
+                        },
+                    },
+                    VmValue::Float(fv) => CValue {
+                        tag: CTag::Float,
+                        b: false,
+                        i: 0,
+                        f: *fv,
+                        s: CStrView {
+                            ptr: std::ptr::null(),
+                            len: 0,
+                        },
+                        arr: CArrayView {
+                            ptr: std::ptr::null(),
+                            len: 0,
+                        },
+                        obj: CObjectView {
+                            ptr: std::ptr::null(),
+                            len: 0,
+                        },
+                    },
                     VmValue::Str(s) | VmValue::Symbol(s) => {
                         let sv = str_view_from(s, buf)?;
-                        CValue { tag: CTag::String, b: false, i: 0, f: 0.0, s: sv, arr: CArrayView { ptr: std::ptr::null(), len: 0 }, obj: CObjectView { ptr: std::ptr::null(), len: 0 } }
+                        CValue {
+                            tag: CTag::String,
+                            b: false,
+                            i: 0,
+                            f: 0.0,
+                            s: sv,
+                            arr: CArrayView {
+                                ptr: std::ptr::null(),
+                                len: 0,
+                            },
+                            obj: CObjectView {
+                                ptr: std::ptr::null(),
+                                len: 0,
+                            },
+                        }
                     }
                     VmValue::Array(a) => {
                         let n = a.len();
-                        if n == 0 { CValue { tag: CTag::Array, b: false, i: 0, f: 0.0, s: CStrView { ptr: std::ptr::null(), len: 0 }, arr: CArrayView { ptr: std::ptr::null(), len: 0 }, obj: CObjectView { ptr: std::ptr::null(), len: 0 } } }
-                        else {
+                        if n == 0 {
+                            CValue {
+                                tag: CTag::Array,
+                                b: false,
+                                i: 0,
+                                f: 0.0,
+                                s: CStrView {
+                                    ptr: std::ptr::null(),
+                                    len: 0,
+                                },
+                                arr: CArrayView {
+                                    ptr: std::ptr::null(),
+                                    len: 0,
+                                },
+                                obj: CObjectView {
+                                    ptr: std::ptr::null(),
+                                    len: 0,
+                                },
+                            }
+                        } else {
                             let bytes = std::mem::size_of::<CValue>() * n;
                             let ptr = unsafe { libc::malloc(bytes) as *mut CValue };
-                            if ptr.is_null() { return Err("malloc failed for array".to_string()); }
-                            allocs.push(ptr as *mut libc::c_void);
-                            for i in 0..n {
-                                let cv = vm_to_cvalue(&a[i], buf, allocs)?;
-                                unsafe { *ptr.add(i) = cv; }
+                            if ptr.is_null() {
+                                return Err("malloc failed for array".to_string());
                             }
-                            CValue { tag: CTag::Array, b: false, i: 0, f: 0.0, s: CStrView { ptr: std::ptr::null(), len: 0 }, arr: CArrayView { ptr, len: n }, obj: CObjectView { ptr: std::ptr::null(), len: 0 } }
+                            allocs.push(ptr as *mut libc::c_void);
+                            for (i, item) in a.iter().enumerate().take(n) {
+                                let cv = vm_to_cvalue(item, buf, allocs)?;
+                                unsafe {
+                                    *ptr.add(i) = cv;
+                                }
+                            }
+                            CValue {
+                                tag: CTag::Array,
+                                b: false,
+                                i: 0,
+                                f: 0.0,
+                                s: CStrView {
+                                    ptr: std::ptr::null(),
+                                    len: 0,
+                                },
+                                arr: CArrayView { ptr, len: n },
+                                obj: CObjectView {
+                                    ptr: std::ptr::null(),
+                                    len: 0,
+                                },
+                            }
                         }
                     }
                     VmValue::Object(m) => {
                         let n = m.len();
-                        if n == 0 { CValue { tag: CTag::Object, b: false, i: 0, f: 0.0, s: CStrView { ptr: std::ptr::null(), len: 0 }, arr: CArrayView { ptr: std::ptr::null(), len: 0 }, obj: CObjectView { ptr: std::ptr::null(), len: 0 } } }
-                        else {
+                        if n == 0 {
+                            CValue {
+                                tag: CTag::Object,
+                                b: false,
+                                i: 0,
+                                f: 0.0,
+                                s: CStrView {
+                                    ptr: std::ptr::null(),
+                                    len: 0,
+                                },
+                                arr: CArrayView {
+                                    ptr: std::ptr::null(),
+                                    len: 0,
+                                },
+                                obj: CObjectView {
+                                    ptr: std::ptr::null(),
+                                    len: 0,
+                                },
+                            }
+                        } else {
                             let bytes = std::mem::size_of::<CObjectEntry>() * n;
                             let ptr = unsafe { libc::malloc(bytes) as *mut CObjectEntry };
-                            if ptr.is_null() { return Err("malloc failed for object".to_string()); }
+                            if ptr.is_null() {
+                                return Err("malloc failed for object".to_string());
+                            }
                             allocs.push(ptr as *mut libc::c_void);
-                            let mut i = 0usize;
-                            for (k, v) in m.iter() {
+                            for (i, (k, v)) in m.iter().enumerate() {
                                 let ksv = str_view_from(k, buf)?;
                                 let cv = vm_to_cvalue(v, buf, allocs)?;
-                                unsafe { *ptr.add(i) = CObjectEntry { key: ksv, value: cv }; }
-                                i += 1;
+                                unsafe {
+                                    *ptr.add(i) = CObjectEntry {
+                                        key: ksv,
+                                        value: cv,
+                                    };
+                                }
                             }
-                            CValue { tag: CTag::Object, b: false, i: 0, f: 0.0, s: CStrView { ptr: std::ptr::null(), len: 0 }, arr: CArrayView { ptr: std::ptr::null(), len: 0 }, obj: CObjectView { ptr, len: n } }
+                            CValue {
+                                tag: CTag::Object,
+                                b: false,
+                                i: 0,
+                                f: 0.0,
+                                s: CStrView {
+                                    ptr: std::ptr::null(),
+                                    len: 0,
+                                },
+                                arr: CArrayView {
+                                    ptr: std::ptr::null(),
+                                    len: 0,
+                                },
+                                obj: CObjectView { ptr, len: n },
+                            }
                         }
                     }
                 })
@@ -357,13 +542,35 @@ impl Plugin for InProcessPlugin {
             for a in &args {
                 match vm_to_cvalue(a, &mut string_bufs, &mut alloc_ptrs) {
                     Ok(cv) => cargs.push(cv),
-                    Err(_) => { convertible = false; break; }
+                    Err(_) => {
+                        convertible = false;
+                        break;
+                    }
                 }
             }
             if convertible {
-                let mut out: CValue = CValue { tag: CTag::Null, b: false, i: 0, f: 0.0, s: CStrView { ptr: std::ptr::null(), len: 0 }, arr: CArrayView { ptr: std::ptr::null(), len: 0 }, obj: CObjectView { ptr: std::ptr::null(), len: 0 } };
+                let mut out: CValue = CValue {
+                    tag: CTag::Null,
+                    b: false,
+                    i: 0,
+                    f: 0.0,
+                    s: CStrView {
+                        ptr: std::ptr::null(),
+                        len: 0,
+                    },
+                    arr: CArrayView {
+                        ptr: std::ptr::null(),
+                        len: 0,
+                    },
+                    obj: CObjectView {
+                        ptr: std::ptr::null(),
+                        len: 0,
+                    },
+                };
                 let rc = unsafe { th(cargs.as_ptr(), cargs.len(), &mut out as *mut CValue) };
-                if rc != 0 { return Err(format!("typed handler returned error code {}", rc)); }
+                if rc != 0 {
+                    return Err(format!("typed handler returned error code {}", rc));
+                }
                 // Convert result back to VmValue; deep-free arrays/objects via plugin when available
                 fn convert_value(val: &CValue) -> Result<VmValue, String> {
                     Ok(match val.tag {
@@ -375,7 +582,9 @@ impl Plugin for InProcessPlugin {
                             if val.s.ptr.is_null() || val.s.len == 0 {
                                 VmValue::Str(String::new())
                             } else {
-                                let s = unsafe { CStr::from_ptr(val.s.ptr).to_string_lossy().into_owned() };
+                                let s = unsafe {
+                                    CStr::from_ptr(val.s.ptr).to_string_lossy().into_owned()
+                                };
                                 VmValue::Str(s)
                             }
                         }
@@ -401,7 +610,11 @@ impl Plugin for InProcessPlugin {
                                     let key = if entry.key.ptr.is_null() || entry.key.len == 0 {
                                         String::new()
                                     } else {
-                                        unsafe { CStr::from_ptr(entry.key.ptr).to_string_lossy().into_owned() }
+                                        unsafe {
+                                            CStr::from_ptr(entry.key.ptr)
+                                                .to_string_lossy()
+                                                .into_owned()
+                                        }
                                     };
                                     let v = convert_value(&entry.value)?;
                                     map.insert(key, v);
@@ -415,8 +628,10 @@ impl Plugin for InProcessPlugin {
                 // Free memory: strings freed individually only for top-level String; arrays/objects deep-free via plugin
                 match out.tag {
                     CTag::String => {
-                        if !out.s.ptr.is_null() {
-                            if let Some(f) = self.free_fn { unsafe { f(out.s.ptr as *mut c_char) }; }
+                        if !out.s.ptr.is_null()
+                            && let Some(f) = self.free_fn
+                        {
+                            unsafe { f(out.s.ptr as *mut c_char) };
                         }
                     }
                     CTag::Array | CTag::Object => {
@@ -427,14 +642,19 @@ impl Plugin for InProcessPlugin {
                     _ => {}
                 }
                 // Free argument allocations owned by core (arrays/objects)
-                for p in alloc_ptrs { unsafe { libc::free(p) }; }
+                for p in alloc_ptrs {
+                    unsafe { libc::free(p) };
+                }
                 return Ok(result);
             }
         }
 
         // JSON fallback path remains the default.
         let j = values_to_json_array(&args);
-        let handler = self.handlers.get(func).ok_or_else(|| format!("function not found: {}", func))?;
+        let handler = self
+            .handlers
+            .get(func)
+            .ok_or_else(|| format!("function not found: {}", func))?;
         let out_json: JsonValue = handler(j);
         let vm_val = json_to_value(&out_json);
         Ok(vm_val)
@@ -444,5 +664,7 @@ impl Plugin for InProcessPlugin {
         PluginMetadata::default()
     }
 
-    fn as_any(&self) -> &dyn std::any::Any { self }
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
 }

@@ -12,6 +12,7 @@ use std::collections::HashMap;
 /// A per-function lowering helper that provides a function-local virtual
 /// register allocator, a local slot map, and an op buffer. After lowering a
 /// function, its ops can be finalized into the parent `IrModule`.
+#[derive(Debug, Clone, Default)]
 pub struct FunctionBuilder {
     next_reg: usize,
     next_local: usize,
@@ -128,9 +129,9 @@ impl FunctionBuilder {
 
                 IROp::Inc { dest } | IROp::Dec { dest } => { let od=*dest; if od < local_reg_count { *dest += reg_base; } }
 
-                IROp::Jump { target } => { *target = base_op_index + *target; }
-                IROp::BrTrue { cond, target } => { let oc=*cond; if oc < local_reg_count { *cond += reg_base; } *target = base_op_index + *target; }
-                IROp::BrFalse { cond, target } => { let oc=*cond; if oc < local_reg_count { *cond += reg_base; } *target = base_op_index + *target; }
+                IROp::Jump { target } => { *target += base_op_index; }
+                IROp::BrTrue { cond, target } => { let oc=*cond; if oc < local_reg_count { *cond += reg_base; } *target += base_op_index; }
+                IROp::BrFalse { cond, target } => { let oc=*cond; if oc < local_reg_count { *cond += reg_base; } *target += base_op_index; }
 
                 IROp::AllocClosure { dest } => { let od=*dest; if od < local_reg_count { *dest += reg_base; } }
                 IROp::CStore { closure, field: _, src } => { let oc=*closure; if oc < local_reg_count { *closure += reg_base; } let os=*src; if os < local_reg_count { *src += reg_base; } }

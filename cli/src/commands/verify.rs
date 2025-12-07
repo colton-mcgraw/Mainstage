@@ -243,7 +243,7 @@ pub fn handle(
             "mismatched": mismatched,
             "results": results,
         });
-        println!("{}", obj.to_string());
+        println!("{}", obj);
     } else {
         for line in results.iter() {
             info!("{}", line);

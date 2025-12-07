@@ -25,6 +25,10 @@ pub struct CValue { pub tag: typed::CTag, pub b: bool, pub i: i64, pub f: f64, p
 type CJsonHandler = unsafe extern "C" fn(args_json: *const c_char) -> *mut c_char;
 type CRegistrar = unsafe extern "C" fn(ctx: *mut c_void, name: *const c_char, handler: CJsonHandler);
 
+/// # Safety
+/// This function is unsafe because it involves raw pointers and FFI.
+/// The caller must ensure that the provided context and registrar function
+/// are valid and adhere to the expected calling conventions.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn mainstage_register(ctx: *mut c_void, registrar: CRegistrar) {
     unsafe extern "C" fn util_echo(args_json: *const c_char) -> *mut c_char {
@@ -54,7 +58,7 @@ pub unsafe extern "C" fn mainstage_register(ctx: *mut c_void, registrar: CRegist
     unsafe extern "C" fn util_array_append(args_json: *const c_char) -> *mut c_char {
         let mut arr: Vec<serde_json::Value> = Vec::new();
         let args = parse_args(args_json);
-        if let Some(a0) = args.get(0) { if let Some(a) = a0.as_array() { arr = a.clone(); } }
+        if let Some(a0) = args.first() && let Some(a) = a0.as_array() { arr = a.clone(); }
         if let Some(v) = args.get(1) { arr.push(v.clone()); }
         let json = serde_json::to_string(&arr).unwrap_or("[]".to_string());
         CString::new(json).unwrap().into_raw()
@@ -63,15 +67,15 @@ pub unsafe extern "C" fn mainstage_register(ctx: *mut c_void, registrar: CRegist
     unsafe extern "C" fn util_array_extend(args_json: *const c_char) -> *mut c_char {
         let args = parse_args(args_json);
         let mut arr: Vec<serde_json::Value> = Vec::new();
-        if let Some(a0) = args.get(0) { if let Some(a) = a0.as_array() { arr = a.clone(); } }
-        if let Some(a1) = args.get(1) { if let Some(ext) = a1.as_array() { arr.extend(ext.clone()); } }
+        if let Some(a0) = args.first() && let Some(a) = a0.as_array() { arr = a.clone(); }
+        if let Some(a1) = args.get(1) && let Some(ext) = a1.as_array() { arr.extend(ext.clone()); }
         let json = serde_json::to_string(&arr).unwrap_or("[]".to_string());
         CString::new(json).unwrap().into_raw()
     }
 
     unsafe extern "C" fn util_array_length(args_json: *const c_char) -> *mut c_char {
         let args = parse_args(args_json);
-        let len = args.get(0).and_then(|v| v.as_array()).map(|a| a.len()).unwrap_or(0);
+        let len = args.first().and_then(|v| v.as_array()).map(|a| a.len()).unwrap_or(0);
         CString::new(len.to_string()).unwrap().into_raw()
     }
 
@@ -136,7 +140,7 @@ pub unsafe extern "C" fn mainstage_register(ctx: *mut c_void, registrar: CRegist
         let args = parse_args(args_json);
         let recursive = args.get(1).and_then(|v| v.as_bool()).unwrap_or(false);
         let mut set: HashSet<String> = HashSet::new();
-        if let Some(first) = args.get(0) {
+        if let Some(first) = args.first() {
             if let Some(arr) = first.as_array() {
                 for v in arr {
                     if let Some(pat) = v.as_str() {
@@ -211,7 +215,7 @@ pub unsafe extern "C" fn mainstage_register(ctx: *mut c_void, registrar: CRegist
 
     unsafe extern "C" fn time_sleep(args_json: *const c_char) -> *mut c_char {
         let args = parse_args(args_json);
-        let ms = args.get(0).and_then(|v| v.as_i64()).unwrap_or(0);
+        let ms = args.first().and_then(|v| v.as_i64()).unwrap_or(0);
         d::sleep(ms);
         CString::new("").unwrap().into_raw()
     }
@@ -248,7 +252,7 @@ pub unsafe extern "C" fn mainstage_register(ctx: *mut c_void, registrar: CRegist
 
     unsafe extern "C" fn proc_exit(args_json: *const c_char) -> *mut c_char {
         let args = parse_args(args_json);
-        let code = args.get(0).and_then(|v| v.as_i64());
+        let code = args.first().and_then(|v| v.as_i64());
         d::exit(code);
         CString::new("").unwrap().into_raw()
     }
@@ -285,6 +289,10 @@ pub unsafe extern "C" fn mainstage_register(ctx: *mut c_void, registrar: CRegist
     reg!("proc.exit", proc_exit);
 }
 
+/// # Safety
+/// This function is unsafe because it involves raw pointers and FFI.
+/// The caller must ensure that the provided context and registrar function
+/// are valid and adhere to the expected calling conventions.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn mainstage_register_typed(ctx: *mut std::ffi::c_void, registrar: typed::CTypedRegistrar) {
     unsafe { typed::register_typed_impl(ctx, registrar) }

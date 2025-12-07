@@ -31,22 +31,34 @@ pub fn lower_expr_to_reg_helper(
     match expr.get_kind() {
         AstNodeKind::String { value } => {
             let r = ir_mod.alloc_reg();
-            ir_mod.emit_op(IROp::LConst { dest: r, value: crate::ir::value::Value::Str(value.clone()) });
+            ir_mod.emit_op(IROp::LConst {
+                dest: r,
+                value: crate::ir::value::Value::Str(value.clone()),
+            });
             r
         }
         AstNodeKind::Integer { value } => {
             let r = ir_mod.alloc_reg();
-            ir_mod.emit_op(IROp::LConst { dest: r, value: crate::ir::value::Value::Int(*value) });
+            ir_mod.emit_op(IROp::LConst {
+                dest: r,
+                value: crate::ir::value::Value::Int(*value),
+            });
             r
         }
         AstNodeKind::Float { value } => {
             let r = ir_mod.alloc_reg();
-            ir_mod.emit_op(IROp::LConst { dest: r, value: crate::ir::value::Value::Float(*value) });
+            ir_mod.emit_op(IROp::LConst {
+                dest: r,
+                value: crate::ir::value::Value::Float(*value),
+            });
             r
         }
         AstNodeKind::Bool { value } => {
             let r = ir_mod.alloc_reg();
-            ir_mod.emit_op(IROp::LConst { dest: r, value: crate::ir::value::Value::Bool(*value) });
+            ir_mod.emit_op(IROp::LConst {
+                dest: r,
+                value: crate::ir::value::Value::Bool(*value),
+            });
             r
         }
         AstNodeKind::Identifier { name } => {
@@ -60,20 +72,26 @@ pub fn lower_expr_to_reg_helper(
                 // (workspace/project), return its runtime register directly
                 // so property access targets the real object rather than a
                 // Symbol value.
-                if let Some(obj_id) = ctx.symbols.get(name).copied() {
-                    if let Some(reg) = ctx.get_object_reg_by_objid(obj_id) {
-                        return reg;
-                    }
+                if let Some(obj_id) = ctx.symbols.get(name).copied()
+                    && let Some(reg) = ctx.get_object_reg_by_objid(obj_id)
+                {
+                    return reg;
                 }
             }
             let r = ir_mod.alloc_reg();
-            ir_mod.emit_op(IROp::LConst { dest: r, value: crate::ir::value::Value::Symbol(name.clone()) });
+            ir_mod.emit_op(IROp::LConst {
+                dest: r,
+                value: crate::ir::value::Value::Symbol(name.clone()),
+            });
             r
         }
-        
+
         _ => {
             let r = ir_mod.alloc_reg();
-            ir_mod.emit_op(IROp::LConst { dest: r, value: crate::ir::value::Value::Null });
+            ir_mod.emit_op(IROp::LConst {
+                dest: r,
+                value: crate::ir::value::Value::Null,
+            });
             r
         }
     }
@@ -93,51 +111,92 @@ pub fn lower_expr_to_reg_with_builder(
             if let AstNodeKind::Identifier { name } = callee.get_kind() {
                 // Lower bare identifier calls either when present in symbols
                 // or when matching a known stdlib function name.
-                    let mut regs = Vec::new();
+                let mut regs = Vec::new();
+                for a in args.iter() {
+                    let builder_arg = builder.as_deref_mut();
+                    let r = lower_expr_to_reg_with_builder(a, ir_mod, _ctx, builder_arg);
+                    regs.push(r);
+                }
+                // Consult lowering context plugin function registry for bare name calls.
+                let candidates = _ctx.lookup_plugin_func(name);
+                if candidates.len() == 1 {
+                    let (plugin_name, qualified) = candidates[0].clone();
+                    if let Some(b) = builder.as_mut() {
+                        let dest = b.alloc_reg();
+                        b.emit_op(IROp::PluginCall {
+                            dest: Some(dest),
+                            plugin_name,
+                            func_name: qualified,
+                            args: regs,
+                        });
+                        return dest;
+                    } else {
+                        let dest = ir_mod.alloc_reg();
+                        ir_mod.emit_op(IROp::PluginCall {
+                            dest: Some(dest),
+                            plugin_name,
+                            func_name: qualified,
+                            args: regs,
+                        });
+                        return dest;
+                    }
+                } else if candidates.len() > 1 {
+                    // ambiguous: require domain alias to disambiguate
+                    log::error!(
+                        "lowering: ambiguous bare function '{}' resolves to multiple plugins; specify a domain alias.",
+                        name
+                    );
+                    // evaluate args for side-effects and return Null
                     for a in args.iter() {
-                        let builder_arg = builder.as_mut().map(|b| &mut **b);
-                        let r = lower_expr_to_reg_with_builder(a, ir_mod, _ctx, builder_arg);
-                        regs.push(r);
+                        let builder_arg = builder.as_deref_mut();
+                        let _ = lower_expr_to_reg_with_builder(a, ir_mod, _ctx, builder_arg);
                     }
-                    // Consult lowering context plugin function registry for bare name calls.
-                    let candidates = _ctx.lookup_plugin_func(name);
-                    if candidates.len() == 1 {
-                        let (plugin_name, qualified) = candidates[0].clone();
-                        if let Some(b) = builder.as_mut() {
-                            let dest = b.alloc_reg();
-                            b.emit_op(IROp::PluginCall { dest: Some(dest), plugin_name, func_name: qualified, args: regs });
-                            return dest;
-                        } else {
-                            let dest = ir_mod.alloc_reg();
-                            ir_mod.emit_op(IROp::PluginCall { dest: Some(dest), plugin_name, func_name: qualified, args: regs });
-                            return dest;
-                        }
-                    } else if candidates.len() > 1 {
-                        // ambiguous: require domain alias to disambiguate
-                        log::error!("lowering: ambiguous bare function '{}' resolves to multiple plugins; specify a domain alias.", name);
-                        // evaluate args for side-effects and return Null
-                        for a in args.iter() { let builder_arg = builder.as_mut().map(|b| &mut **b); let _ = lower_expr_to_reg_with_builder(a, ir_mod, _ctx, builder_arg); }
-                        if let Some(b) = builder.as_mut() { let r = b.alloc_reg(); b.emit_op(IROp::LConst { dest: r, value: crate::ir::value::Value::Null }); return r; } else { let r = ir_mod.alloc_reg(); ir_mod.emit_op(IROp::LConst { dest: r, value: crate::ir::value::Value::Null }); return r; }
+                    if let Some(b) = builder.as_mut() {
+                        let r = b.alloc_reg();
+                        b.emit_op(IROp::LConst {
+                            dest: r,
+                            value: crate::ir::value::Value::Null,
+                        });
+                        return r;
+                    } else {
+                        let r = ir_mod.alloc_reg();
+                        ir_mod.emit_op(IROp::LConst {
+                            dest: r,
+                            value: crate::ir::value::Value::Null,
+                        });
+                        return r;
                     }
-                    // If not a stdlib bare name, but symbol exists, lower as stage call.
-                    if let Some(&fid) = _ctx.symbols.get(name) {
-                        let label_idx = (fid as usize).saturating_sub(1);
-                        // Emit CallLabel with args and return dest register
-                        if let Some(b) = builder.as_mut() {
-                            let dest = b.alloc_reg();
-                            b.emit_op(IROp::CallLabel { dest, label_index: label_idx, args: regs.clone() });
-                            return dest;
-                        } else {
-                            let dest = ir_mod.alloc_reg();
-                            ir_mod.emit_op(IROp::CallLabel { dest, label_index: label_idx, args: regs.clone() });
-                            return dest;
-                        }
+                }
+                // If not a stdlib bare name, but symbol exists, lower as stage call.
+                if let Some(&fid) = _ctx.symbols.get(name) {
+                    let label_idx = (fid as usize).saturating_sub(1);
+                    // Emit CallLabel with args and return dest register
+                    if let Some(b) = builder.as_deref_mut() {
+                        let dest = b.alloc_reg();
+                        b.emit_op(IROp::CallLabel {
+                            dest,
+                            label_index: label_idx,
+                            args: regs.clone(),
+                        });
+                        return dest;
+                    } else {
+                        let dest = ir_mod.alloc_reg();
+                        ir_mod.emit_op(IROp::CallLabel {
+                            dest,
+                            label_index: label_idx,
+                            args: regs.clone(),
+                        });
+                        return dest;
                     }
+                }
             }
             // Member-style callee: resolve nested domain names like util.array.append
             if let crate::ast::AstNodeKind::Member { .. } = callee.get_kind() {
                 // Walk the Member chain to build a qualified name.
-                fn collect_member_chain<'a>(n: &'a crate::ast::AstNode, out: &mut Vec<String>) -> Option<&'a crate::ast::AstNode> {
+                fn collect_member_chain<'a>(
+                    n: &'a crate::ast::AstNode,
+                    out: &mut Vec<String>,
+                ) -> Option<&'a crate::ast::AstNode> {
                     match n.get_kind() {
                         crate::ast::AstNodeKind::Member { object, property } => {
                             out.push(property.clone());
@@ -149,77 +208,157 @@ pub fn lower_expr_to_reg_with_builder(
                 }
 
                 let mut segments: Vec<String> = Vec::new();
-                if let Some(root) = collect_member_chain(callee, &mut segments) {
-                    if let crate::ast::AstNodeKind::Identifier { name: base } = root.get_kind() {
-                        segments.reverse();
-                        let qualified = if segments.is_empty() { base.clone() } else { format!("{}.{}", base, segments.join(".")) };
+                if let Some(root) = collect_member_chain(callee, &mut segments)
+                    && let crate::ast::AstNodeKind::Identifier { name: base } = root.get_kind()
+                {
+                    segments.reverse();
+                    let qualified = if segments.is_empty() {
+                        base.clone()
+                    } else {
+                        format!("{}.{}", base, segments.join("."))
+                    };
 
-                        // Try qualified lookup in plugin registry
-                        // If root is an alias, translate to domain-qualified using alias_to_plugin
-                        let mut resolved_plugin: Option<String> = None;
-                        let mut resolved_qualified: Option<String> = None;
-                        if let Some(pname) = _ctx.alias_to_plugin.get(base) {
-                            // rewrite qualified by replacing alias with plugin domain name
-                            let domain_pref = pname.clone();
-                            // domain_pref should match the manifest domain root (e.g., 'cpp' or 'stdlib')
-                            // segments already contains subdomains+func
-                            let dq = if segments.is_empty() { domain_pref.clone() } else { format!("{}.{}", domain_pref, segments.join(".")) };
-                            if let Some((plugin_name, func_qualified)) = _ctx.lookup_plugin_func_qualified(&dq) {
-                                resolved_plugin = Some(plugin_name);
-                                resolved_qualified = Some(func_qualified);
-                            }
-                        } else if let Some((plugin_name, func_qualified)) = _ctx.lookup_plugin_func_qualified(&qualified) {
+                    // Try qualified lookup in plugin registry
+                    // If root is an alias, translate to domain-qualified using alias_to_plugin
+                    let mut resolved_plugin: Option<String> = None;
+                    let mut resolved_qualified: Option<String> = None;
+                    if let Some(pname) = _ctx.alias_to_plugin.get(base) {
+                        // rewrite qualified by replacing alias with plugin domain name
+                        let domain_pref = pname.clone();
+                        // domain_pref should match the manifest domain root (e.g., 'cpp' or 'stdlib')
+                        // segments already contains subdomains+func
+                        let dq = if segments.is_empty() {
+                            domain_pref.clone()
+                        } else {
+                            format!("{}.{}", domain_pref, segments.join("."))
+                        };
+                        if let Some((plugin_name, func_qualified)) =
+                            _ctx.lookup_plugin_func_qualified(&dq)
+                        {
                             resolved_plugin = Some(plugin_name);
                             resolved_qualified = Some(func_qualified);
                         }
+                    } else if let Some((plugin_name, func_qualified)) =
+                        _ctx.lookup_plugin_func_qualified(&qualified)
+                    {
+                        resolved_plugin = Some(plugin_name);
+                        resolved_qualified = Some(func_qualified);
+                    }
 
-                        if let (Some(plugin_name), Some(func_qualified)) = (resolved_plugin, resolved_qualified) {
-                            // lower args
+                    if let (Some(plugin_name), Some(func_qualified)) =
+                        (resolved_plugin, resolved_qualified)
+                    {
+                        // lower args
+                        let mut regs: Vec<usize> = Vec::new();
+                        for a in args.iter() {
+                            let builder_arg = builder.as_deref_mut();
+                            let r = lower_expr_to_reg_with_builder(a, ir_mod, _ctx, builder_arg);
+                            regs.push(r);
+                        }
+                        if let Some(b) = builder.as_mut() {
+                            let dest = b.alloc_reg();
+                            b.emit_op(IROp::PluginCall {
+                                dest: Some(dest),
+                                plugin_name,
+                                func_name: func_qualified,
+                                args: regs,
+                            });
+                            return dest;
+                        } else {
+                            let dest = ir_mod.alloc_reg();
+                            ir_mod.emit_op(IROp::PluginCall {
+                                dest: Some(dest),
+                                plugin_name,
+                                func_name: func_qualified,
+                                args: regs,
+                            });
+                            return dest;
+                        }
+                    } else {
+                        // Fallback: resolve by bare function name (last segment)
+                        let bare = segments
+                            .last()
+                            .cloned()
+                            .unwrap_or_else(|| qualified.clone());
+                        let candidates = _ctx.lookup_plugin_func(&bare);
+                        if candidates.len() == 1 {
+                            let (plugin_name, func_qualified) = candidates[0].clone();
                             let mut regs: Vec<usize> = Vec::new();
                             for a in args.iter() {
-                                let builder_arg = builder.as_mut().map(|b| &mut **b);
-                                let r = lower_expr_to_reg_with_builder(a, ir_mod, _ctx, builder_arg);
+                                let builder_arg = builder.as_deref_mut();
+                                let r =
+                                    lower_expr_to_reg_with_builder(a, ir_mod, _ctx, builder_arg);
                                 regs.push(r);
                             }
                             if let Some(b) = builder.as_mut() {
                                 let dest = b.alloc_reg();
-                                b.emit_op(IROp::PluginCall { dest: Some(dest), plugin_name, func_name: func_qualified, args: regs });
+                                b.emit_op(IROp::PluginCall {
+                                    dest: Some(dest),
+                                    plugin_name,
+                                    func_name: func_qualified,
+                                    args: regs,
+                                });
                                 return dest;
                             } else {
                                 let dest = ir_mod.alloc_reg();
-                                ir_mod.emit_op(IROp::PluginCall { dest: Some(dest), plugin_name, func_name: func_qualified, args: regs });
+                                ir_mod.emit_op(IROp::PluginCall {
+                                    dest: Some(dest),
+                                    plugin_name,
+                                    func_name: func_qualified,
+                                    args: regs,
+                                });
                                 return dest;
                             }
-                        } else {
-                            // Fallback: resolve by bare function name (last segment)
-                            let bare = segments.last().cloned().unwrap_or_else(|| qualified.clone());
-                            let candidates = _ctx.lookup_plugin_func(&bare);
-                            if candidates.len() == 1 {
-                                let (plugin_name, func_qualified) = candidates[0].clone();
-                                let mut regs: Vec<usize> = Vec::new();
-                                for a in args.iter() {
-                                    let builder_arg = builder.as_mut().map(|b| &mut **b);
-                                    let r = lower_expr_to_reg_with_builder(a, ir_mod, _ctx, builder_arg);
-                                    regs.push(r);
-                                }
-                                if let Some(b) = builder.as_mut() {
-                                    let dest = b.alloc_reg();
-                                    b.emit_op(IROp::PluginCall { dest: Some(dest), plugin_name, func_name: func_qualified, args: regs });
-                                    return dest;
-                                } else {
-                                    let dest = ir_mod.alloc_reg();
-                                    ir_mod.emit_op(IROp::PluginCall { dest: Some(dest), plugin_name, func_name: func_qualified, args: regs });
-                                    return dest;
-                                }
-                            } else if candidates.len() > 1 {
-                                log::error!("lowering: ambiguous bare function '{}' resolves to multiple plugins; specify a domain alias.", bare);
-                                for a in args.iter() { let builder_arg = builder.as_mut().map(|b| &mut **b); let _ = lower_expr_to_reg_with_builder(a, ir_mod, _ctx, builder_arg); }
-                                if let Some(b) = builder.as_mut() { let r = b.alloc_reg(); b.emit_op(IROp::LConst { dest: r, value: crate::ir::value::Value::Null }); return r; } else { let r = ir_mod.alloc_reg(); ir_mod.emit_op(IROp::LConst { dest: r, value: crate::ir::value::Value::Null }); return r; }
+                        } else if candidates.len() > 1 {
+                            log::error!(
+                                "lowering: ambiguous bare function '{}' resolves to multiple plugins; specify a domain alias.",
+                                bare
+                            );
+                            for a in args.iter() {
+                                let builder_arg = builder.as_deref_mut();
+                                let _ =
+                                    lower_expr_to_reg_with_builder(a, ir_mod, _ctx, builder_arg);
+                            }
+                            if let Some(b) = builder.as_mut() {
+                                let r = b.alloc_reg();
+                                b.emit_op(IROp::LConst {
+                                    dest: r,
+                                    value: crate::ir::value::Value::Null,
+                                });
+                                return r;
                             } else {
-                                // If we cannot resolve, emit an error and return Null
-                                log::error!("lowering: unresolved function '{}': no matching plugin or script function", qualified);
-                                for a in args.iter() { let builder_arg = builder.as_mut().map(|b| &mut **b); let _ = lower_expr_to_reg_with_builder(a, ir_mod, _ctx, builder_arg); }
-                                if let Some(b) = builder.as_mut() { let r = b.alloc_reg(); b.emit_op(IROp::LConst { dest: r, value: crate::ir::value::Value::Null }); return r; } else { let r = ir_mod.alloc_reg(); ir_mod.emit_op(IROp::LConst { dest: r, value: crate::ir::value::Value::Null }); return r; }
+                                let r = ir_mod.alloc_reg();
+                                ir_mod.emit_op(IROp::LConst {
+                                    dest: r,
+                                    value: crate::ir::value::Value::Null,
+                                });
+                                return r;
+                            }
+                        } else {
+                            // If we cannot resolve, emit an error and return Null
+                            log::error!(
+                                "lowering: unresolved function '{}': no matching plugin or script function",
+                                qualified
+                            );
+                            for a in args.iter() {
+                                let builder_arg = builder.as_deref_mut();
+                                let _ =
+                                    lower_expr_to_reg_with_builder(a, ir_mod, _ctx, builder_arg);
+                            }
+                            if let Some(b) = builder.as_mut() {
+                                let r = b.alloc_reg();
+                                b.emit_op(IROp::LConst {
+                                    dest: r,
+                                    value: crate::ir::value::Value::Null,
+                                });
+                                return r;
+                            } else {
+                                let r = ir_mod.alloc_reg();
+                                ir_mod.emit_op(IROp::LConst {
+                                    dest: r,
+                                    value: crate::ir::value::Value::Null,
+                                });
+                                return r;
                             }
                         }
                     }
@@ -227,17 +366,40 @@ pub fn lower_expr_to_reg_with_builder(
             }
 
             // fallback: evaluate args for side-effects and return Null
-            for a in args.iter() { let builder_arg = builder.as_mut().map(|b| &mut **b); let _ = lower_expr_to_reg_with_builder(a, ir_mod, _ctx, builder_arg); }
-            if let Some(b) = builder.as_mut() { let r = (*b).alloc_reg(); (*b).emit_op(IROp::LConst { dest: r, value: crate::ir::value::Value::Null }); return r; } else { let r = ir_mod.alloc_reg(); ir_mod.emit_op(IROp::LConst { dest: r, value: crate::ir::value::Value::Null }); return r; }
+            for a in args.iter() {
+                let builder_arg = builder.as_deref_mut();
+                let _ = lower_expr_to_reg_with_builder(a, ir_mod, _ctx, builder_arg);
+            }
+            if let Some(b) = builder.as_mut() {
+                let r = (*b).alloc_reg();
+                (*b).emit_op(IROp::LConst {
+                    dest: r,
+                    value: crate::ir::value::Value::Null,
+                });
+                r
+            } else {
+                let r = ir_mod.alloc_reg();
+                ir_mod.emit_op(IROp::LConst {
+                    dest: r,
+                    value: crate::ir::value::Value::Null,
+                });
+                r
+            }
         }
         AstNodeKind::String { value } => {
             if let Some(b) = builder.as_mut() {
                 let r = b.alloc_reg();
-                b.emit_op(IROp::LConst { dest: r, value: crate::ir::value::Value::Str(value.clone()) });
+                b.emit_op(IROp::LConst {
+                    dest: r,
+                    value: crate::ir::value::Value::Str(value.clone()),
+                });
                 r
             } else {
                 let r = ir_mod.alloc_reg();
-                ir_mod.emit_op(IROp::LConst { dest: r, value: crate::ir::value::Value::Str(value.clone()) });
+                ir_mod.emit_op(IROp::LConst {
+                    dest: r,
+                    value: crate::ir::value::Value::Str(value.clone()),
+                });
                 r
             }
         }
@@ -247,69 +409,175 @@ pub fn lower_expr_to_reg_with_builder(
                 let r = lower_expr_to_reg_with_builder(right, ir_mod, _ctx, Some(b));
                 let dest = b.alloc_reg();
                 match op {
-                    crate::ast::BinaryOperator::Eq => b.emit_op(IROp::Eq { dest, src1: l, src2: r }),
-                    crate::ast::BinaryOperator::Ne => b.emit_op(IROp::Neq { dest, src1: l, src2: r }),
-                    crate::ast::BinaryOperator::Lt => b.emit_op(IROp::Lt { dest, src1: l, src2: r }),
-                    crate::ast::BinaryOperator::Le => b.emit_op(IROp::Lte { dest, src1: l, src2: r }),
-                    crate::ast::BinaryOperator::Gt => b.emit_op(IROp::Gt { dest, src1: l, src2: r }),
-                    crate::ast::BinaryOperator::Ge => b.emit_op(IROp::Gte { dest, src1: l, src2: r }),
-                    crate::ast::BinaryOperator::Add => b.emit_op(IROp::Add { dest, src1: l, src2: r }),
-                    crate::ast::BinaryOperator::Sub => b.emit_op(IROp::Sub { dest, src1: l, src2: r }),
-                    crate::ast::BinaryOperator::Mul => b.emit_op(IROp::Mul { dest, src1: l, src2: r }),
-                    crate::ast::BinaryOperator::Div => b.emit_op(IROp::Div { dest, src1: l, src2: r }),
-                    crate::ast::BinaryOperator::Mod => b.emit_op(IROp::Mod { dest, src1: l, src2: r }),
+                    crate::ast::BinaryOperator::Eq => b.emit_op(IROp::Eq {
+                        dest,
+                        src1: l,
+                        src2: r,
+                    }),
+                    crate::ast::BinaryOperator::Ne => b.emit_op(IROp::Neq {
+                        dest,
+                        src1: l,
+                        src2: r,
+                    }),
+                    crate::ast::BinaryOperator::Lt => b.emit_op(IROp::Lt {
+                        dest,
+                        src1: l,
+                        src2: r,
+                    }),
+                    crate::ast::BinaryOperator::Le => b.emit_op(IROp::Lte {
+                        dest,
+                        src1: l,
+                        src2: r,
+                    }),
+                    crate::ast::BinaryOperator::Gt => b.emit_op(IROp::Gt {
+                        dest,
+                        src1: l,
+                        src2: r,
+                    }),
+                    crate::ast::BinaryOperator::Ge => b.emit_op(IROp::Gte {
+                        dest,
+                        src1: l,
+                        src2: r,
+                    }),
+                    crate::ast::BinaryOperator::Add => b.emit_op(IROp::Add {
+                        dest,
+                        src1: l,
+                        src2: r,
+                    }),
+                    crate::ast::BinaryOperator::Sub => b.emit_op(IROp::Sub {
+                        dest,
+                        src1: l,
+                        src2: r,
+                    }),
+                    crate::ast::BinaryOperator::Mul => b.emit_op(IROp::Mul {
+                        dest,
+                        src1: l,
+                        src2: r,
+                    }),
+                    crate::ast::BinaryOperator::Div => b.emit_op(IROp::Div {
+                        dest,
+                        src1: l,
+                        src2: r,
+                    }),
+                    crate::ast::BinaryOperator::Mod => b.emit_op(IROp::Mod {
+                        dest,
+                        src1: l,
+                        src2: r,
+                    }),
                 }
-                return dest;
+                dest
             } else {
                 let l = lower_expr_to_reg_with_builder(left, ir_mod, _ctx, None);
                 let r = lower_expr_to_reg_with_builder(right, ir_mod, _ctx, None);
                 let dest = ir_mod.alloc_reg();
                 match op {
-                    crate::ast::BinaryOperator::Eq => ir_mod.emit_op(IROp::Eq { dest, src1: l, src2: r }),
-                    crate::ast::BinaryOperator::Ne => ir_mod.emit_op(IROp::Neq { dest, src1: l, src2: r }),
-                    crate::ast::BinaryOperator::Lt => ir_mod.emit_op(IROp::Lt { dest, src1: l, src2: r }),
-                    crate::ast::BinaryOperator::Le => ir_mod.emit_op(IROp::Lte { dest, src1: l, src2: r }),
-                    crate::ast::BinaryOperator::Gt => ir_mod.emit_op(IROp::Gt { dest, src1: l, src2: r }),
-                    crate::ast::BinaryOperator::Ge => ir_mod.emit_op(IROp::Gte { dest, src1: l, src2: r }),
-                    crate::ast::BinaryOperator::Add => ir_mod.emit_op(IROp::Add { dest, src1: l, src2: r }),
-                    crate::ast::BinaryOperator::Sub => ir_mod.emit_op(IROp::Sub { dest, src1: l, src2: r }),
-                    crate::ast::BinaryOperator::Mul => ir_mod.emit_op(IROp::Mul { dest, src1: l, src2: r }),
-                    crate::ast::BinaryOperator::Div => ir_mod.emit_op(IROp::Div { dest, src1: l, src2: r }),
-                    crate::ast::BinaryOperator::Mod => ir_mod.emit_op(IROp::Mod { dest, src1: l, src2: r }),
+                    crate::ast::BinaryOperator::Eq => ir_mod.emit_op(IROp::Eq {
+                        dest,
+                        src1: l,
+                        src2: r,
+                    }),
+                    crate::ast::BinaryOperator::Ne => ir_mod.emit_op(IROp::Neq {
+                        dest,
+                        src1: l,
+                        src2: r,
+                    }),
+                    crate::ast::BinaryOperator::Lt => ir_mod.emit_op(IROp::Lt {
+                        dest,
+                        src1: l,
+                        src2: r,
+                    }),
+                    crate::ast::BinaryOperator::Le => ir_mod.emit_op(IROp::Lte {
+                        dest,
+                        src1: l,
+                        src2: r,
+                    }),
+                    crate::ast::BinaryOperator::Gt => ir_mod.emit_op(IROp::Gt {
+                        dest,
+                        src1: l,
+                        src2: r,
+                    }),
+                    crate::ast::BinaryOperator::Ge => ir_mod.emit_op(IROp::Gte {
+                        dest,
+                        src1: l,
+                        src2: r,
+                    }),
+                    crate::ast::BinaryOperator::Add => ir_mod.emit_op(IROp::Add {
+                        dest,
+                        src1: l,
+                        src2: r,
+                    }),
+                    crate::ast::BinaryOperator::Sub => ir_mod.emit_op(IROp::Sub {
+                        dest,
+                        src1: l,
+                        src2: r,
+                    }),
+                    crate::ast::BinaryOperator::Mul => ir_mod.emit_op(IROp::Mul {
+                        dest,
+                        src1: l,
+                        src2: r,
+                    }),
+                    crate::ast::BinaryOperator::Div => ir_mod.emit_op(IROp::Div {
+                        dest,
+                        src1: l,
+                        src2: r,
+                    }),
+                    crate::ast::BinaryOperator::Mod => ir_mod.emit_op(IROp::Mod {
+                        dest,
+                        src1: l,
+                        src2: r,
+                    }),
                 }
-                return dest;
+                dest
             }
         }
         AstNodeKind::Integer { value } => {
             if let Some(b) = builder.as_mut() {
                 let r = b.alloc_reg();
-                b.emit_op(IROp::LConst { dest: r, value: crate::ir::value::Value::Int(*value) });
+                b.emit_op(IROp::LConst {
+                    dest: r,
+                    value: crate::ir::value::Value::Int(*value),
+                });
                 r
             } else {
                 let r = ir_mod.alloc_reg();
-                ir_mod.emit_op(IROp::LConst { dest: r, value: crate::ir::value::Value::Int(*value) });
+                ir_mod.emit_op(IROp::LConst {
+                    dest: r,
+                    value: crate::ir::value::Value::Int(*value),
+                });
                 r
             }
         }
         AstNodeKind::Float { value } => {
             if let Some(b) = builder.as_mut() {
                 let r = b.alloc_reg();
-                b.emit_op(IROp::LConst { dest: r, value: crate::ir::value::Value::Float(*value) });
+                b.emit_op(IROp::LConst {
+                    dest: r,
+                    value: crate::ir::value::Value::Float(*value),
+                });
                 r
             } else {
                 let r = ir_mod.alloc_reg();
-                ir_mod.emit_op(IROp::LConst { dest: r, value: crate::ir::value::Value::Float(*value) });
+                ir_mod.emit_op(IROp::LConst {
+                    dest: r,
+                    value: crate::ir::value::Value::Float(*value),
+                });
                 r
             }
         }
         AstNodeKind::Bool { value } => {
             if let Some(b) = builder.as_mut() {
                 let r = b.alloc_reg();
-                b.emit_op(IROp::LConst { dest: r, value: crate::ir::value::Value::Bool(*value) });
+                b.emit_op(IROp::LConst {
+                    dest: r,
+                    value: crate::ir::value::Value::Bool(*value),
+                });
                 r
             } else {
                 let r = ir_mod.alloc_reg();
-                ir_mod.emit_op(IROp::LConst { dest: r, value: crate::ir::value::Value::Bool(*value) });
+                ir_mod.emit_op(IROp::LConst {
+                    dest: r,
+                    value: crate::ir::value::Value::Bool(*value),
+                });
                 r
             }
         }
@@ -317,23 +585,35 @@ pub fn lower_expr_to_reg_with_builder(
             // If this identifier corresponds to a local in the function builder,
             // load it from the local slot. Otherwise represent as a Symbol const.
             if let Some(b) = builder.as_mut() {
-                    if let Some(local_idx) = b.lookup_local(name) {
-                        let r = b.alloc_reg();
-                        b.emit_op(IROp::LLocal { dest: r, local_index: local_idx });
-                        return r;
-                    } else if let Some(obj_id) = _ctx.symbols.get(name).copied() {
-                        if let Some(mod_reg) = _ctx.get_object_reg_by_objid(obj_id) {
-                            let r = b.alloc_reg();
-                            b.emit_op(IROp::LoadGlobal { dest: r, src: mod_reg });
-                            return r;
-                        }
-                    }
+                if let Some(local_idx) = b.lookup_local(name) {
                     let r = b.alloc_reg();
-                    b.emit_op(IROp::LConst { dest: r, value: crate::ir::value::Value::Symbol(name.clone()) });
-                    r
+                    b.emit_op(IROp::LLocal {
+                        dest: r,
+                        local_index: local_idx,
+                    });
+                    return r;
+                } else if let Some(obj_id) = _ctx.symbols.get(name).copied()
+                    && let Some(mod_reg) = _ctx.get_object_reg_by_objid(obj_id)
+                {
+                    let r = b.alloc_reg();
+                    b.emit_op(IROp::LoadGlobal {
+                        dest: r,
+                        src: mod_reg,
+                    });
+                    return r;
+                }
+                let r = b.alloc_reg();
+                b.emit_op(IROp::LConst {
+                    dest: r,
+                    value: crate::ir::value::Value::Symbol(name.clone()),
+                });
+                r
             } else {
                 let r = ir_mod.alloc_reg();
-                ir_mod.emit_op(IROp::LConst { dest: r, value: crate::ir::value::Value::Symbol(name.clone()) });
+                ir_mod.emit_op(IROp::LConst {
+                    dest: r,
+                    value: crate::ir::value::Value::Symbol(name.clone()),
+                });
                 r
             }
         }
@@ -351,11 +631,17 @@ pub fn lower_expr_to_reg_with_builder(
             // the object afterwards (which may consume `builder`).
             let key_reg = if let Some(b) = builder.as_mut() {
                 let r = b.alloc_reg();
-                b.emit_op(IROp::LConst { dest: r, value: crate::ir::value::Value::Symbol(key_name.clone()) });
+                b.emit_op(IROp::LConst {
+                    dest: r,
+                    value: crate::ir::value::Value::Symbol(key_name.clone()),
+                });
                 r
             } else {
                 let r = ir_mod.alloc_reg();
-                ir_mod.emit_op(IROp::LConst { dest: r, value: crate::ir::value::Value::Symbol(key_name.clone()) });
+                ir_mod.emit_op(IROp::LConst {
+                    dest: r,
+                    value: crate::ir::value::Value::Symbol(key_name.clone()),
+                });
                 r
             };
 
@@ -393,11 +679,17 @@ pub fn lower_expr_to_reg_with_builder(
                             } else if let Some(b) = builder.as_mut() {
                                 if let Some(local_idx) = b.lookup_local(name) {
                                     let r = b.alloc_reg();
-                                    b.emit_op(IROp::LLocal { dest: r, local_index: local_idx });
+                                    b.emit_op(IROp::LLocal {
+                                        dest: r,
+                                        local_index: local_idx,
+                                    });
                                     r
                                 } else {
                                     let r = b.alloc_reg();
-                                    b.emit_op(IROp::LConst { dest: r, value: crate::ir::value::Value::Symbol(name.clone()) });
+                                    b.emit_op(IROp::LConst {
+                                        dest: r,
+                                        value: crate::ir::value::Value::Symbol(name.clone()),
+                                    });
                                     r
                                 }
                             } else {
@@ -406,11 +698,17 @@ pub fn lower_expr_to_reg_with_builder(
                         } else if let Some(b) = builder.as_mut() {
                             if let Some(local_idx) = b.lookup_local(name) {
                                 let r = b.alloc_reg();
-                                b.emit_op(IROp::LLocal { dest: r, local_index: local_idx });
+                                b.emit_op(IROp::LLocal {
+                                    dest: r,
+                                    local_index: local_idx,
+                                });
                                 r
                             } else {
                                 let r = b.alloc_reg();
-                                b.emit_op(IROp::LConst { dest: r, value: crate::ir::value::Value::Symbol(name.clone()) });
+                                b.emit_op(IROp::LConst {
+                                    dest: r,
+                                    value: crate::ir::value::Value::Symbol(name.clone()),
+                                });
                                 r
                             }
                         } else {
@@ -423,11 +721,19 @@ pub fn lower_expr_to_reg_with_builder(
 
             if let Some(b) = builder.as_mut() {
                 let dest = b.alloc_reg();
-                b.emit_op(IROp::GetProp { dest, obj: obj_reg, key: key_reg });
+                b.emit_op(IROp::GetProp {
+                    dest,
+                    obj: obj_reg,
+                    key: key_reg,
+                });
                 dest
             } else {
                 let dest = ir_mod.alloc_reg();
-                ir_mod.emit_op(IROp::GetProp { dest, obj: obj_reg, key: key_reg });
+                ir_mod.emit_op(IROp::GetProp {
+                    dest,
+                    obj: obj_reg,
+                    key: key_reg,
+                });
                 dest
             }
         }
@@ -439,11 +745,17 @@ pub fn lower_expr_to_reg_with_builder(
                 AstNodeKind::Integer { value } => {
                     if let Some(b) = builder.as_mut() {
                         let r = b.alloc_reg();
-                        b.emit_op(IROp::LConst { dest: r, value: crate::ir::value::Value::Int(*value) });
+                        b.emit_op(IROp::LConst {
+                            dest: r,
+                            value: crate::ir::value::Value::Int(*value),
+                        });
                         r
                     } else {
                         let r = ir_mod.alloc_reg();
-                        ir_mod.emit_op(IROp::LConst { dest: r, value: crate::ir::value::Value::Int(*value) });
+                        ir_mod.emit_op(IROp::LConst {
+                            dest: r,
+                            value: crate::ir::value::Value::Int(*value),
+                        });
                         r
                     }
                 }
@@ -451,11 +763,17 @@ pub fn lower_expr_to_reg_with_builder(
                     if let Some(b) = builder.as_mut() {
                         if let Some(local_idx) = b.lookup_local(name) {
                             let r = b.alloc_reg();
-                            b.emit_op(IROp::LLocal { dest: r, local_index: local_idx });
+                            b.emit_op(IROp::LLocal {
+                                dest: r,
+                                local_index: local_idx,
+                            });
                             r
                         } else {
                             let r = b.alloc_reg();
-                            b.emit_op(IROp::LConst { dest: r, value: crate::ir::value::Value::Symbol(name.clone()) });
+                            b.emit_op(IROp::LConst {
+                                dest: r,
+                                value: crate::ir::value::Value::Symbol(name.clone()),
+                            });
                             r
                         }
                     } else {
@@ -472,16 +790,25 @@ pub fn lower_expr_to_reg_with_builder(
             // is an identifier, emit an `LLocal` when available; fall back to
             // the module helper for other expressions.
             let obj_reg = match object.get_kind() {
-                AstNodeKind::Member { object: inner_obj, property: inner_prop } => {
+                AstNodeKind::Member {
+                    object: inner_obj,
+                    property: inner_prop,
+                } => {
                     // Build key reg first
                     let inner_key = inner_prop.clone();
                     let inner_key_reg = if let Some(b) = builder.as_mut() {
                         let r = b.alloc_reg();
-                        b.emit_op(IROp::LConst { dest: r, value: crate::ir::value::Value::Symbol(inner_key.clone()) });
+                        b.emit_op(IROp::LConst {
+                            dest: r,
+                            value: crate::ir::value::Value::Symbol(inner_key.clone()),
+                        });
                         r
                     } else {
                         let r = ir_mod.alloc_reg();
-                        ir_mod.emit_op(IROp::LConst { dest: r, value: crate::ir::value::Value::Symbol(inner_key.clone()) });
+                        ir_mod.emit_op(IROp::LConst {
+                            dest: r,
+                            value: crate::ir::value::Value::Symbol(inner_key.clone()),
+                        });
                         r
                     };
 
@@ -491,7 +818,10 @@ pub fn lower_expr_to_reg_with_builder(
                             if let Some(b) = builder.as_mut() {
                                 if let Some(local_idx) = b.lookup_local(name) {
                                     let r = b.alloc_reg();
-                                    b.emit_op(IROp::LLocal { dest: r, local_index: local_idx });
+                                    b.emit_op(IROp::LLocal {
+                                        dest: r,
+                                        local_index: local_idx,
+                                    });
                                     r
                                 } else {
                                     lower_expr_to_reg_helper(inner_obj, ir_mod, Some(_ctx))
@@ -506,11 +836,19 @@ pub fn lower_expr_to_reg_with_builder(
                     // Emit GetProp into a dest reg
                     if let Some(b) = builder.as_mut() {
                         let dst = b.alloc_reg();
-                        b.emit_op(IROp::GetProp { dest: dst, obj: inner_obj_reg, key: inner_key_reg });
+                        b.emit_op(IROp::GetProp {
+                            dest: dst,
+                            obj: inner_obj_reg,
+                            key: inner_key_reg,
+                        });
                         dst
                     } else {
                         let dst = ir_mod.alloc_reg();
-                        ir_mod.emit_op(IROp::GetProp { dest: dst, obj: inner_obj_reg, key: inner_key_reg });
+                        ir_mod.emit_op(IROp::GetProp {
+                            dest: dst,
+                            obj: inner_obj_reg,
+                            key: inner_key_reg,
+                        });
                         dst
                     }
                 }
@@ -518,7 +856,10 @@ pub fn lower_expr_to_reg_with_builder(
                     if let Some(b) = builder.as_mut() {
                         if let Some(local_idx) = b.lookup_local(name) {
                             let r = b.alloc_reg();
-                            b.emit_op(IROp::LLocal { dest: r, local_index: local_idx });
+                            b.emit_op(IROp::LLocal {
+                                dest: r,
+                                local_index: local_idx,
+                            });
                             r
                         } else {
                             lower_expr_to_reg_helper(object, ir_mod, Some(_ctx))
@@ -531,11 +872,19 @@ pub fn lower_expr_to_reg_with_builder(
             };
             if let Some(b) = builder.as_mut() {
                 let dest = b.alloc_reg();
-                b.emit_op(IROp::ArrayGet { dest, array: obj_reg, index: idx_reg });
+                b.emit_op(IROp::ArrayGet {
+                    dest,
+                    array: obj_reg,
+                    index: idx_reg,
+                });
                 dest
             } else {
                 let dest = ir_mod.alloc_reg();
-                ir_mod.emit_op(IROp::ArrayGet { dest, array: obj_reg, index: idx_reg });
+                ir_mod.emit_op(IROp::ArrayGet {
+                    dest,
+                    array: obj_reg,
+                    index: idx_reg,
+                });
                 dest
             }
         }
@@ -543,28 +892,49 @@ pub fn lower_expr_to_reg_with_builder(
             let mut consts: Option<Vec<crate::ir::value::Value>> = Some(Vec::new());
             for el in elements.iter() {
                 match el.get_kind() {
-                    AstNodeKind::Integer { value } => consts.as_mut().unwrap().push(crate::ir::value::Value::Int(*value)),
-                    AstNodeKind::Float { value } => consts.as_mut().unwrap().push(crate::ir::value::Value::Float(*value)),
-                    AstNodeKind::Bool { value } => consts.as_mut().unwrap().push(crate::ir::value::Value::Bool(*value)),
-                    AstNodeKind::String { value } => consts.as_mut().unwrap().push(crate::ir::value::Value::Str(value.clone())),
-                    _ => { consts = None; break; }
+                    AstNodeKind::Integer { value } => consts
+                        .as_mut()
+                        .unwrap()
+                        .push(crate::ir::value::Value::Int(*value)),
+                    AstNodeKind::Float { value } => consts
+                        .as_mut()
+                        .unwrap()
+                        .push(crate::ir::value::Value::Float(*value)),
+                    AstNodeKind::Bool { value } => consts
+                        .as_mut()
+                        .unwrap()
+                        .push(crate::ir::value::Value::Bool(*value)),
+                    AstNodeKind::String { value } => consts
+                        .as_mut()
+                        .unwrap()
+                        .push(crate::ir::value::Value::Str(value.clone())),
+                    _ => {
+                        consts = None;
+                        break;
+                    }
                 }
             }
             if let Some(vec) = consts {
                 if let Some(b) = builder.as_mut() {
                     let r = b.alloc_reg();
-                    b.emit_op(IROp::LConst { dest: r, value: crate::ir::value::Value::Array(vec) });
+                    b.emit_op(IROp::LConst {
+                        dest: r,
+                        value: crate::ir::value::Value::Array(vec),
+                    });
                     r
                 } else {
                     let r = ir_mod.alloc_reg();
-                    ir_mod.emit_op(IROp::LConst { dest: r, value: crate::ir::value::Value::Array(vec) });
+                    ir_mod.emit_op(IROp::LConst {
+                        dest: r,
+                        value: crate::ir::value::Value::Array(vec),
+                    });
                     r
                 }
             } else {
                 // non-constant list: build elements into regs and emit ArrayNew
                 let mut regs: Vec<usize> = Vec::new();
                 for el in elements.iter() {
-                    let builder_arg = builder.as_mut().map(|b| &mut **b);
+                    let builder_arg = builder.as_deref_mut();
                     let r = lower_expr_to_reg_with_builder(el, ir_mod, _ctx, builder_arg);
                     regs.push(r);
                 }
@@ -586,11 +956,17 @@ pub fn lower_expr_to_reg_with_builder(
             // Fallback: allocate a register and initialize to Null
             if let Some(b) = builder.as_mut() {
                 let r = b.alloc_reg();
-                b.emit_op(IROp::LConst { dest: r, value: crate::ir::value::Value::Null });
+                b.emit_op(IROp::LConst {
+                    dest: r,
+                    value: crate::ir::value::Value::Null,
+                });
                 r
             } else {
                 let r = ir_mod.alloc_reg();
-                ir_mod.emit_op(IROp::LConst { dest: r, value: crate::ir::value::Value::Null });
+                ir_mod.emit_op(IROp::LConst {
+                    dest: r,
+                    value: crate::ir::value::Value::Null,
+                });
                 r
             }
         }

@@ -24,7 +24,7 @@ pub(crate) fn parse_expression_rule(
         _ => Err(Box::<dyn MainstageErrorExt>::from(Box::new(
             crate::ast::err::SyntaxError::with(
                 crate::Level::Error,
-                format!("Unexpected expression type. {:?}", eq_pair.as_rule()).into(),
+                format!("Unexpected expression type. {:?}", eq_pair.as_rule()),
                 "mainstage.expr.parse_expression_rule".into(),
                 location,
                 span,
@@ -326,7 +326,7 @@ fn parse_postfix_expression_rule(
     let mut node = parse_primary_expression_rule(next_rule, script)?;
 
     // Remaining inner pairs (if any) are postfix_op instances; apply them left-to-right.
-    while let Some(op_pair) = inner_pair.next() {
+    for op_pair in inner_pair {
         // Each op_pair is a postfix_op; inspect its inner contents to determine
         // whether it's a call, member access, index, or postfix inc/dec.
         let mut op_inner = op_pair.clone().into_inner();

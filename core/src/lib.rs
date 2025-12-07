@@ -46,7 +46,7 @@ pub fn optimize_ir(ir: &str) -> Result<String, Box<dyn MainstageErrorExt>> {
 }
 
 pub fn run_ir_in_vm(_ir: &str) -> Result<String, Box<dyn MainstageErrorExt>> {
-    Ok(format!("IR"))
+    Ok("IR".to_string())
 }
 
 pub fn compile_source_to_ir(source: &Script) -> Result<String, Box<dyn MainstageErrorExt>> {

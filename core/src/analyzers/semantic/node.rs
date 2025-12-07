@@ -35,7 +35,7 @@ pub(crate) fn analyze_node(
         AstNodeKind::While { .. } => super::expr::analyze_while(node, tbl),
         AstNodeKind::Return { .. } => super::expr::analyze_return(node, tbl),
         _ => {
-            return Err(Box::new(
+            Err(Box::new(
                 crate::analyzers::semantic::err::SemanticError::with(
                     crate::error::Level::Error,
                     format!("Unsupported node kind for analyze_node: {}", node.kind),
@@ -43,7 +43,7 @@ pub(crate) fn analyze_node(
                     node.location.clone(),
                     node.span.clone(),
                 ),
-            ));
+            ))
         }
     }
 }

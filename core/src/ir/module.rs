@@ -18,7 +18,7 @@ use std::collections::{HashMap, HashSet};
 /// representation of a module before final bytecode emission. It also
 /// provides helper methods for optimizations and analyses that operate
 /// on the IR.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct IrModule {
     /// Sequence of IR operations in the module.
     pub ops: Vec<IROp>,

@@ -153,8 +153,8 @@ pub(crate) fn get_data_from_rule<'a>(
     Option<crate::location::Span>,
 ) {
     let inner_rules = rule.clone().into_inner();
-    let span = get_span_from_pair(&rule, script);
-    let location = get_location_from_pair(&rule, script);
+    let span = get_span_from_pair(rule, script);
+    let location = get_location_from_pair(rule, script);
     (inner_rules, location, span)
 }
 

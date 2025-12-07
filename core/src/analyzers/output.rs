@@ -12,7 +12,7 @@ pub type NodeId = usize;
 
 // Use `crate::location::Span` for accurate source locations.
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct AnalyzerOutput {
     pub objects: Vec<ObjectInfo>,
     pub functions: Vec<FunctionInfo>,

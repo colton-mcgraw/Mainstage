@@ -129,7 +129,7 @@ pub fn disassemble(bytes: &[u8]) -> Result<String, String> {
                 }
             }
             IROp::Jump { target } => {
-                let t = *target as usize;
+                let t = *target;
                 if let Some(name) = label_map.get(&t) {
                     out.push_str(&format!("{:04}  Jump {} ({})\n", i, name, t));
                 } else if let Some(name) = label_ordinals.get(t) {
@@ -139,7 +139,7 @@ pub fn disassemble(bytes: &[u8]) -> Result<String, String> {
                 }
             }
             IROp::BrTrue { cond, target } => {
-                let t = *target as usize;
+                let t = *target;
                 if let Some(name) = label_map.get(&t) {
                     out.push_str(&format!("{:04}  BrTrue r{} -> {} ({})\n", i, cond, name, t));
                 } else if let Some(name) = label_ordinals.get(t) {
@@ -152,7 +152,7 @@ pub fn disassemble(bytes: &[u8]) -> Result<String, String> {
                 }
             }
             IROp::BrFalse { cond, target } => {
-                let t = *target as usize;
+                let t = *target;
                 if let Some(name) = label_map.get(&t) {
                     out.push_str(&format!(
                         "{:04}  BrFalse r{} -> {} ({})\n",
@@ -221,7 +221,7 @@ pub fn disassemble(bytes: &[u8]) -> Result<String, String> {
                 label_index,
                 args,
             } => {
-                let t = *label_index as usize;
+                let t = *label_index;
                 if let Some(name) = label_map.get(&t) {
                     out.push_str(&format!("{:04}  CallLabel r{} <- {}(", i, dest, name));
                 } else {

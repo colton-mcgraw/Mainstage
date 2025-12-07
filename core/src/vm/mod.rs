@@ -76,7 +76,7 @@ impl VM
 
     pub fn run(&self, enable_tracing: bool) -> Result<(), String>
     {
-        return run::run_bytecode(&self.bytecode, enable_tracing, &self.plugins);
+        run::run_bytecode(&self.bytecode, enable_tracing, &self.plugins)
     }
 
     pub fn register_plugin(&mut self, plugin: std::sync::Arc<dyn plugin::Plugin>)

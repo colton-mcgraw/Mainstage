@@ -130,9 +130,7 @@ impl LoweringContext {
                 ctx.bind_object_reg_by_objid(obj_id, obj_reg);
             }
         }
-
         
-
         // Note: scopes and call_graph are available in `analysis` for more
         // advanced population of the context (scoped symbol tables, topo order).
 
@@ -172,13 +170,11 @@ impl LoweringContext {
     }
 
     pub fn get_object_reg(&self, node_id: NodeId) -> Option<usize> {
-        let v = self.object_regs.get(&node_id).copied();
-        v
+        self.object_regs.get(&node_id).copied()
     }
 
     pub fn get_object_reg_by_objid(&self, obj_id: u32) -> Option<usize> {
-        let v = self.object_id_regs.get(&obj_id).copied();
-        v
+        self.object_id_regs.get(&obj_id).copied()
     }
 
     /// Bind a statically-created list (variable name) to a module register
@@ -190,8 +186,7 @@ impl LoweringContext {
     /// Lookup a previously bound list array register by the AST node id of
     /// the assignment target or iterable identifier.
     pub fn get_list_array(&self, node_id: NodeId) -> Option<usize> {
-        let v = self.list_arrays.get(&node_id).copied();
-        v
+        self.list_arrays.get(&node_id).copied()
     }
 
     /// Bind a temporary identifier name to a runtime register for the
@@ -207,15 +202,14 @@ impl LoweringContext {
     }
 
     pub fn get_temp_ident(&self, name: &str) -> Option<usize> {
-        let v = self.temp_idents.get(name).copied();
-        v
+        self.temp_idents.get(name).copied()
     }
 
     /// Register a plugin function mapping. `bare` should be the unqualified call
     /// name (e.g., "say"), `plugin_name` the plugin identifier (e.g., "stdlib_plugin"),
     /// and `qualified_func` the domain-qualified function name (e.g., "util.say").
     pub fn register_plugin_func(&mut self, bare: &str, plugin_name: &str, qualified_func: &str) {
-        self.plugin_func_registry.entry(bare.to_string()).or_insert_with(Vec::new).push((plugin_name.to_string(), qualified_func.to_string()));
+        self.plugin_func_registry.entry(bare.to_string()).or_default().push((plugin_name.to_string(), qualified_func.to_string()));
     }
 
     /// Lookup a plugin function mapping by its bare name.

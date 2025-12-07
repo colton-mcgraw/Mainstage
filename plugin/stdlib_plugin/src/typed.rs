@@ -150,9 +150,9 @@ pub unsafe fn register_typed_impl(ctx: *mut std::ffi::c_void, registrar: CTypedR
                 return 0;
             }
             // Copy existing
-            if let Some(b) = base { if b.tag == CTag::Array && !b.arr.ptr.is_null() {
+            if let Some(b) = base && b.tag == CTag::Array && !b.arr.ptr.is_null() {
                 for i in 0..b.arr.len { let cv = deep_copy_value(&*b.arr.ptr.add(i)); *ptr.add(i) = cv; }
-            }}
+            }
             // Append
             if let Some(v) = add { let cp = deep_copy_value(&v); *ptr.add(base_len) = cp; }
             (*out).tag = CTag::Array; (*out).arr = CArrayView { ptr, len: new_len }; (*out).obj = CObjectView { ptr: std::ptr::null(), len: 0 };
@@ -488,8 +488,7 @@ pub unsafe fn register_typed_impl(ctx: *mut std::ffi::c_void, registrar: CTypedR
             unsafe { (*out).tag = CTag::Array; (*out).arr = CArrayView { ptr: std::ptr::null(), len: 0 }; (*out).obj = CObjectView { ptr: std::ptr::null(), len: 0 } };
             return 0;
         }
-        for i in 0..n {
-            let s = &items[i];
+        for (i, s) in items.iter().enumerate().take(n) {
             let cs = CString::new(s.as_str()).unwrap(); let dup = dup_cstr(&cs);
             let val = CValue { tag: CTag::String, b: false, i: 0, f: 0.0, s: CStrView { ptr: dup, len: cs.as_bytes().len() }, arr: CArrayView { ptr: std::ptr::null(), len: 0 }, obj: CObjectView { ptr: std::ptr::null(), len: 0 } };
             unsafe { *ptr.add(i) = val; }
@@ -505,8 +504,7 @@ pub unsafe fn register_typed_impl(ctx: *mut std::ffi::c_void, registrar: CTypedR
         let bytes = std::mem::size_of::<CObjectEntry>() * n;
         let ptr = unsafe { libc::malloc(bytes) as *mut CObjectEntry };
         if n > 0 && ptr.is_null() { unsafe { (*out).tag = CTag::Object; (*out).obj = CObjectView { ptr: std::ptr::null(), len: 0 }; (*out).arr = CArrayView { ptr: std::ptr::null(), len: 0 } }; return 0; }
-        for i in 0..n {
-            let kv = &items[i];
+        for (i, kv) in items.iter().enumerate().take(n) {
             let kcs = CString::new(kv.key.as_str()).unwrap(); let kdup = dup_cstr(&kcs);
             let vcs = CString::new(kv.value.as_str()).unwrap(); let vdup = dup_cstr(&vcs);
             let entry = CObjectEntry {
@@ -616,8 +614,7 @@ pub unsafe fn register_typed_impl(ctx: *mut std::ffi::c_void, registrar: CTypedR
         let bytes = std::mem::size_of::<CValue>() * n;
         let ptr = unsafe { libc::malloc(bytes) as *mut CValue };
         if ptr.is_null() { unsafe { (*out).tag = CTag::Array; (*out).arr = CArrayView { ptr: std::ptr::null(), len: 0 }; (*out).obj = CObjectView { ptr: std::ptr::null(), len: 0 } }; return 0; }
-        for i in 0..n {
-            let s = &items[i];
+        for (i, s) in items.iter().enumerate().take(n) {
             let cs = CString::new(s.as_str()).unwrap(); let dup = dup_cstr(&cs);
             let val = CValue { tag: CTag::String, b: false, i: 0, f: 0.0, s: CStrView { ptr: dup, len: cs.as_bytes().len() }, arr: CArrayView { ptr: std::ptr::null(), len: 0 }, obj: CObjectView { ptr: std::ptr::null(), len: 0 } };
             unsafe { *ptr.add(i) = val; }
@@ -724,7 +721,7 @@ pub unsafe fn register_typed_impl(ctx: *mut std::ffi::c_void, registrar: CTypedR
                     let ptr = unsafe { libc::malloc(bytes) as *mut CValue };
                     if ptr.is_null() { CValue { tag: CTag::Array, b: false, i: 0, f: 0.0, s: CStrView { ptr: std::ptr::null(), len: 0 }, arr: CArrayView { ptr: std::ptr::null(), len: 0 }, obj: CObjectView { ptr: std::ptr::null(), len: 0 } } }
                     else {
-                        for i in 0..n { let cv = json_to_cvalue(&arr[i]); unsafe { *ptr.add(i) = cv; } }
+                        for (i, v) in arr.iter().enumerate() { let cv = json_to_cvalue(v); unsafe { *ptr.add(i) = cv; } }
                         CValue { tag: CTag::Array, b: false, i: 0, f: 0.0, s: CStrView { ptr: std::ptr::null(), len: 0 }, arr: CArrayView { ptr, len: n }, obj: CObjectView { ptr: std::ptr::null(), len: 0 } }
                     }
                 }
@@ -757,13 +754,13 @@ pub unsafe fn register_typed_impl(ctx: *mut std::ffi::c_void, registrar: CTypedR
             CTag::Float => serde_json::Value::Number(serde_json::Number::from_f64(v.f).unwrap_or_else(|| serde_json::Number::from_f64(0.0).unwrap())),
             CTag::String => {
                 if v.s.ptr.is_null() { serde_json::Value::String(String::new()) }
-                else { let s = std::ffi::CStr::from_ptr(v.s.ptr).to_string_lossy().into_owned(); serde_json::Value::String(s) }
+                else { let s = unsafe { std::ffi::CStr::from_ptr(v.s.ptr).to_string_lossy().into_owned() }; serde_json::Value::String(s) }
             }
             CTag::Array => {
                 if v.arr.ptr.is_null() || v.arr.len == 0 { serde_json::Value::Array(vec![]) }
                 else {
                     let mut a = Vec::with_capacity(v.arr.len);
-                    for i in 0..v.arr.len { let e = &*v.arr.ptr.add(i); a.push(unsafe { cvalue_to_json(e) }); }
+                    for i in 0..v.arr.len { let e = unsafe { &*v.arr.ptr.add(i) }; a.push(unsafe { cvalue_to_json(e) }); }
                     serde_json::Value::Array(a)
                 }
             }
@@ -772,8 +769,9 @@ pub unsafe fn register_typed_impl(ctx: *mut std::ffi::c_void, registrar: CTypedR
                 else {
                     let mut m = serde_json::Map::new();
                     for i in 0..v.obj.len {
-                        let entry = &*v.obj.ptr.add(i);
-                        let k = if entry.key.ptr.is_null() { String::new() } else { std::ffi::CStr::from_ptr(entry.key.ptr).to_string_lossy().into_owned() };
+                        let entry = unsafe { &*v.obj.ptr.add(i) };
+                        let k = if entry.key.ptr.is_null() { String::new() } 
+                        else { unsafe { std::ffi::CStr::from_ptr(entry.key.ptr).to_string_lossy().into_owned() } };
                         let val = unsafe { cvalue_to_json(&entry.value) };
                         m.insert(k, val);
                     }

@@ -1,7 +1,7 @@
-use std::path::PathBuf;
-use mainstage_core::{ast, ir, script::Script};
 use mainstage_core::ir::op::IROp;
 use mainstage_core::ir::value::Value;
+use mainstage_core::{ast, ir, script::Script};
+use std::path::PathBuf;
 
 const WORKSPACE_SAMPLE: &str = r#"[entrypoint]
 workspace demo_ws {
@@ -33,7 +33,11 @@ const STAGE_SAMPLE: &str = r#"stage s() {
 
 #[test]
 fn stage_forin_creates_local_binding() {
-    let script = Script { name: "stage_loop.ms".to_string(), path: PathBuf::from("stage_loop.ms"), content: STAGE_SAMPLE.to_string() };
+    let script = Script {
+        name: "stage_loop.ms".to_string(),
+        path: PathBuf::from("stage_loop.ms"),
+        content: STAGE_SAMPLE.to_string(),
+    };
     let ast = ast::generate_ast_from_source(&script).expect("failed to parse stage sample");
     let ir_mod = ir::lower_ast_to_ir(&ast, false, None);
 
@@ -42,37 +46,73 @@ fn stage_forin_creates_local_binding() {
     let mut loads: std::collections::HashSet<usize> = std::collections::HashSet::new();
     for op in ir_mod.ops.iter() {
         match op {
-            IROp::SLocal { src: _, local_index } => { stores.insert(*local_index); }
-            IROp::LLocal { dest: _, local_index } => { loads.insert(*local_index); }
+            IROp::SLocal {
+                src: _,
+                local_index,
+            } => {
+                stores.insert(*local_index);
+            }
+            IROp::LLocal {
+                dest: _,
+                local_index,
+            } => {
+                loads.insert(*local_index);
+            }
             _ => {}
         }
     }
 
     let intersection: Vec<usize> = stores.intersection(&loads).copied().collect();
-    assert!(!intersection.is_empty(), "expected a local index that is both stored and loaded in stage loop lowering, ops:\n{}", ir_mod);
+    assert!(
+        !intersection.is_empty(),
+        "expected a local index that is both stored and loaded in stage loop lowering, ops:\n{}",
+        ir_mod
+    );
 }
 
 #[test]
 fn workspace_forin_creates_wrapper_function() {
-    let script = Script { name: "ws_loop.ms".to_string(), path: PathBuf::from("ws_loop.ms"), content: WORKSPACE_SAMPLE.to_string() };
+    let script = Script {
+        name: "ws_loop.ms".to_string(),
+        path: PathBuf::from("ws_loop.ms"),
+        content: WORKSPACE_SAMPLE.to_string(),
+    };
     let ast = ast::generate_ast_from_source(&script).expect("failed to parse workspace sample");
     let ir_mod = ir::lower_ast_to_ir(&ast, false, None);
 
     // Ensure an Array constant was emitted for the static list
     let mut found_array_const = false;
     for op in ir_mod.ops.iter() {
-        if let IROp::LConst { dest: _, value } = op {
-            if let Value::Array(_) = value { found_array_const = true; break; }
+        if let IROp::LConst { dest: _, value } = op
+            && let Value::Array(_) = value
+        {
+            found_array_const = true;
+            break;
         }
     }
-    assert!(found_array_const, "expected an Array LConst for workspace list, IR:\n{}", ir_mod);
+    assert!(
+        found_array_const,
+        "expected an Array LConst for workspace list, IR:\n{}",
+        ir_mod
+    );
 
     // Ensure there is at least one CallLabel emitted (calling the loop wrapper)
     let mut found_calllabel = false;
     for op in ir_mod.ops.iter() {
-        if let IROp::CallLabel { dest: _, label_index: _, args } = op {
-            if !args.is_empty() { found_calllabel = true; break; }
+        if let IROp::CallLabel {
+            dest: _,
+            label_index: _,
+            args,
+        } = op
+            && !args.is_empty()
+        {
+            found_calllabel = true;
+            break;
         }
     }
-    assert!(found_calllabel, "expected a CallLabel into loop wrapper for workspace for-in, IR:\n{}", ir_mod);
+    assert!(
+        found_calllabel,
+        "expected a CallLabel into loop wrapper for workspace for-in, IR:\n{}",
+        ir_mod
+    );
 }

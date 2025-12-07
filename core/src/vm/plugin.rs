@@ -48,6 +48,7 @@ pub struct PluginDescriptor {
     pub path: Option<PathBuf>,
 }
 
+#[derive(Default)]
 pub struct PluginRegistry {
     plugins: HashMap<String, Arc<dyn Plugin>>,
     descriptors: HashMap<String, PluginDescriptor>,

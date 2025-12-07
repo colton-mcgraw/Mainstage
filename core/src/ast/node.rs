@@ -23,8 +23,8 @@
 //!
 //! # Error semantics
 //! - This module does not define errors itself, but `AstNode` construction may
-//! fail in higher-level parsing functions which produce `MainstageErrorExt`
-//! diagnostics.
+//!   fail in higher-level parsing functions which produce `MainstageErrorExt`
+//!   diagnostics.
 //!
 //! # See also
 //!
@@ -34,9 +34,9 @@
 //!
 //! # Thread-safety & performance
 //! - `AstNode` is thread-safe (no interior mutability or global state). It can be
-//! shared across threads as needed.
+//!   shared across threads as needed.
 //! - `AstNode` is lightweight to clone (simple data structure with owned fields). 
-//! It is suitable for use in compiler passes that transform or analyze the AST.
+//!   It is suitable for use in compiler passes that transform or analyze the AST.
 //!
 use crate::location;
 
