@@ -7,11 +7,36 @@ use std::collections::{HashMap, HashSet, VecDeque};
 
 use crate::{
     ast::*,
+    cache::{self, Cache},
     error::{Diagnostic, Error, Result},
     eval::{eval_expr, EvalContext, Value},
     executor::execute_steps,
     sema::AnalysisResult,
 };
+
+// ── Reporting ──────────────────────────────────────────────────────────────────
+
+/// Receives stage- and pipeline-level lifecycle events during a run so a frontend
+/// (e.g. the CLI) can render progress. Every method has a default no-op body, so
+/// implementors override only the events they care about.
+pub trait Reporter {
+    /// A stage is about to execute its steps.
+    fn stage_start(&self, _stage: &str) {}
+    /// A stage was skipped because its inputs are unchanged and outputs present.
+    fn stage_skipped(&self, _stage: &str) {}
+    /// A stage finished successfully.
+    fn stage_passed(&self, _stage: &str) {}
+    /// A stage failed; `allow_failure` indicates whether the failure is tolerated.
+    fn stage_failed(&self, _stage: &str, _error: &Error, _allow_failure: bool) {}
+    /// A stage was cancelled because a dependency failed.
+    fn stage_cancelled(&self, _stage: &str) {}
+    /// The pipeline completed; `failed_stage` is `Some` when it failed.
+    fn pipeline_finished(&self, _pipeline: &str, _failed_stage: Option<&str>) {}
+}
+
+/// A [`Reporter`] that does nothing — the default used by [`run_pipeline`].
+pub struct NoopReporter;
+impl Reporter for NoopReporter {}
 
 // ── Public API ─────────────────────────────────────────────────────────────────
 
@@ -36,9 +61,29 @@ pub fn run_pipeline(
     ctx: &EvalContext,
     analysis: &AnalysisResult,
 ) -> Result<()> {
+    run_pipeline_reported(program, pipeline_name, ctx, analysis, &NoopReporter)
+}
+
+/// Like [`run_pipeline`], but emits lifecycle events to `reporter` as stages run,
+/// skip, pass, or fail.
+///
+/// Change detection (Phase 7) is applied per stage: a stage whose resolved `inputs`
+/// digest matches the cache and whose declared `outputs` all still exist is skipped.
+/// The cache lives at `<script_dir>/.mainstage/cache.json` and is updated after each
+/// successful stage, then saved (best-effort) when the run completes.
+pub fn run_pipeline_reported(
+    program: &Program,
+    pipeline_name: Option<&str>,
+    ctx: &EvalContext,
+    analysis: &AnalysisResult,
+    reporter: &dyn Reporter,
+) -> Result<()> {
     let pipeline    = find_pipeline(program, pipeline_name)?;
     let stage_names = pipeline_stage_names(pipeline, ctx)?;
     let sorted      = toposort(&stage_names, &analysis.dependency_graph)?;
+
+    let project_dir = ctx.script_dir.clone();
+    let mut cache = Cache::load(&project_dir);
 
     // Track stages that have failed or been cancelled so dependents can be skipped.
     let mut cancelled: HashSet<String> = HashSet::new();
@@ -54,6 +99,7 @@ pub fn run_pipeline(
 
         if dep_failed {
             cancelled.insert(stage_name.clone());
+            reporter.stage_cancelled(stage_name);
             continue;
         }
 
@@ -62,14 +108,39 @@ pub fn run_pipeline(
 
         let stage_ctx = build_stage_ctx(stage, ctx)?;
 
+        // Change detection: compute the input digest and declared outputs, then skip
+        // the stage when it is unchanged and its outputs are all present.
+        let digest = stage_ctx.stage_inputs.as_ref().map(cache::input_digest);
+        let outputs = stage_ctx
+            .stage_outputs
+            .as_ref()
+            .map(cache::output_paths)
+            .unwrap_or_default();
+
+        if let Some(dig) = &digest
+            && cache.is_fresh(stage_name, dig, &project_dir)
+        {
+            reporter.stage_skipped(stage_name);
+            continue;
+        }
+
+        reporter.stage_start(stage_name);
         match execute_steps(&stage.steps, &stage_ctx) {
-            Ok(()) => {} // stage succeeded — continue
-            Err(_) => {
+            Ok(()) => {
+                // Record the stage as up-to-date for the next run.
+                if let Some(dig) = digest {
+                    cache.update(stage_name, dig, outputs);
+                }
+                reporter.stage_passed(stage_name);
+            }
+            Err(e) => {
                 // Stage on_failure: run but do not propagate its errors.
                 let _ = execute_steps(&stage.on_failure, &stage_ctx);
+                reporter.stage_failed(stage_name, &e, stage.allow_failure);
 
                 if stage.allow_failure {
-                    // Treat as success — downstream stages are unaffected.
+                    // Treat as success — downstream stages are unaffected. The cache is
+                    // not updated, so the stage re-runs next time.
                 } else {
                     cancelled.insert(stage_name.clone());
                     if first_failure.is_none() {
@@ -80,11 +151,17 @@ pub fn run_pipeline(
         }
     }
 
+    // Persist change-detection state for every stage that succeeded this run, even
+    // when the pipeline as a whole failed. Best-effort: a save failure does not fail
+    // an otherwise-successful run.
+    let _ = cache.save(&project_dir);
+
     match first_failure {
         Some(failed) => {
             // Pipeline on_failure: bind `failed_stage` and run; ignore its own errors.
             let failure_ctx = ctx.with_failed_stage(failed.clone());
             let _ = execute_steps(&pipeline.on_failure, &failure_ctx);
+            reporter.pipeline_finished(&pipeline.name, Some(&failed));
             Err(runner_err(format!(
                 "pipeline '{}' failed: stage '{}' did not succeed",
                 pipeline.name, failed
@@ -92,6 +169,7 @@ pub fn run_pipeline(
         }
         None => {
             execute_steps(&pipeline.on_success, ctx)?;
+            reporter.pipeline_finished(&pipeline.name, None);
             Ok(())
         }
     }

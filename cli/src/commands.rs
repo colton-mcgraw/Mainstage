@@ -1,87 +1,284 @@
+//! Phase 8 — CLI.
+//!
+//! Wires the CLI subcommands to the `mainstage_core` runtime and renders structured
+//! terminal output. Every command returns a process exit code (0 = success).
+
+use std::path::Path;
+
 use clap::{Arg, Command};
-use mainstage_core::{analyze, eval_program, parse, Source};
+use console::style;
+use mainstage_core::{
+    analyze, ast, cache, eval_program, parse, run_pipeline_reported, AnalysisResult, EvalContext,
+    Reporter, Source,
+};
+use mainstage_core::ast::Program;
 
-/// Register all CLI subcommands on `cli` and return the augmented [`Command`].
+/// Default script file used by `run` / `list` / `clean` and the no-subcommand run.
+const DEFAULT_SCRIPT: &str = "main.ms";
+
+/// Build the `--file` option shared by the script-oriented subcommands.
+fn file_arg() -> Arg {
+    Arg::new("file")
+        .short('f')
+        .long("file")
+        .value_name("FILE")
+        .default_value(DEFAULT_SCRIPT)
+        .help("Path to the .ms script")
+}
+
+/// Register all CLI subcommands and the top-level `--file` option.
 pub fn setup(cli: Command) -> Command {
-    cli.subcommand(
-        Command::new("parse")
-            .about("Parse a .ms file and print its AST (debug tool)")
-            .arg(Arg::new("file").required(true).help("Path to the .ms script")),
-    )
-    .subcommand(
-        Command::new("eval")
-            .about("Parse, analyze, and evaluate a .ms file; print the resulting context (debug tool)")
-            .arg(Arg::new("file").required(true).help("Path to the .ms script")),
-    )
+    cli.arg(file_arg())
+        .subcommand(
+            Command::new("run")
+                .about("Run a named pipeline")
+                .arg(Arg::new("name").required(true).help("Pipeline name to run"))
+                .arg(file_arg()),
+        )
+        .subcommand(
+            Command::new("list")
+                .about("List all declared pipelines and their stages")
+                .arg(file_arg()),
+        )
+        .subcommand(
+            Command::new("clean")
+                .about("Clear the change-detection cache")
+                .arg(file_arg()),
+        )
+        .subcommand(
+            Command::new("parse")
+                .about("Parse a .ms file and print its AST (debug tool)")
+                .arg(Arg::new("file").required(true).help("Path to the .ms script")),
+        )
+        .subcommand(
+            Command::new("eval")
+                .about("Parse, analyze, and evaluate a .ms file; print the context (debug tool)")
+                .arg(Arg::new("file").required(true).help("Path to the .ms script")),
+        )
 }
 
-/// Dispatch the matched subcommand, running it to completion.
-///
-/// Exits the process with a non-zero code on any error.
-pub fn dispatch(matches: &clap::ArgMatches) {
+/// Dispatch the matched command and return the process exit code.
+pub fn dispatch(matches: &clap::ArgMatches) -> i32 {
     match matches.subcommand() {
-        Some(("parse", sub)) => cmd_parse(sub),
-        Some(("eval", sub))  => cmd_eval(sub),
-        _ => {
-            eprintln!("No subcommand provided. Run with --help for usage.");
-            std::process::exit(1);
+        Some(("run", sub)) => cmd_run(file_of(sub), Some(sub.get_one::<String>("name").unwrap())),
+        Some(("list", sub)) => cmd_list(file_of(sub)),
+        Some(("clean", sub)) => cmd_clean(file_of(sub)),
+        Some(("parse", sub)) => cmd_parse(file_of(sub)),
+        Some(("eval", sub)) => cmd_eval(file_of(sub)),
+        // No subcommand: run the default pipeline.
+        None => cmd_run(file_of(matches), None),
+        Some((other, _)) => {
+            eprintln!("{} unknown command '{}'", style("error:").red().bold(), other);
+            2
         }
     }
 }
 
-fn cmd_parse(matches: &clap::ArgMatches) {
-    let file: &String = matches.get_one("file").unwrap();
+fn file_of(matches: &clap::ArgMatches) -> &str {
+    matches.get_one::<String>("file").map(String::as_str).unwrap_or(DEFAULT_SCRIPT)
+}
 
-    let source = match Source::from_file(file) {
-        Ok(s) => s,
-        Err(e) => {
-            eprintln!("{}", e);
-            std::process::exit(1);
-        }
+// ── run ─────────────────────────────────────────────────────────────────────────
+
+fn cmd_run(file: &str, pipeline: Option<&str>) -> i32 {
+    let Some((program, analysis, ctx)) = prepare(file) else {
+        return 1;
     };
 
+    match pipeline {
+        Some(name) => println!("{} pipeline {}", style("running").bold(), style(name).cyan()),
+        None => println!("{} {}", style("running").bold(), style("default pipeline").cyan()),
+    }
+
+    let reporter = TermReporter;
+    match run_pipeline_reported(&program, pipeline, &ctx, &analysis, &reporter) {
+        Ok(()) => 0,
+        // Print the conclusion for every failure mode — including ones that occur
+        // before any stage runs (unknown pipeline name, dependency cycle, …), which
+        // the per-stage reporter never sees.
+        Err(e) => fail(e),
+    }
+}
+
+// ── list ────────────────────────────────────────────────────────────────────────
+
+fn cmd_list(file: &str) -> i32 {
+    let Some((program, _, _)) = prepare(file) else {
+        return 1;
+    };
+
+    let pipelines: Vec<&ast::PipelineBlock> = program
+        .items
+        .iter()
+        .filter_map(|item| match item {
+            ast::Item::Pipeline(p) => Some(p),
+            _ => None,
+        })
+        .collect();
+
+    if pipelines.is_empty() {
+        println!("no pipelines declared in {file}");
+        return 0;
+    }
+
+    for p in pipelines {
+        let marker = if p.is_default {
+            format!(" {}", style("(default)").dim())
+        } else {
+            String::new()
+        };
+        println!("{}{}", style(&p.name).cyan().bold(), marker);
+
+        let stages = p.stages.as_ref().map(stage_names).unwrap_or_default();
+        if stages.is_empty() {
+            println!("  {}", style("(no stages)").dim());
+        } else {
+            for s in stages {
+                println!("  - {s}");
+            }
+        }
+    }
+    0
+}
+
+/// Extract the bare stage-name identifiers from a pipeline `stages:` expression.
+/// Non-identifier expressions (computed lists) are reported as `<dynamic>`.
+fn stage_names(expr: &ast::Expr) -> Vec<String> {
+    match expr {
+        ast::Expr::Ident(i) => vec![i.name.clone()],
+        ast::Expr::List(l) => l.items.iter().flat_map(stage_names).collect(),
+        _ => vec!["<dynamic>".to_string()],
+    }
+}
+
+// ── clean ───────────────────────────────────────────────────────────────────────
+
+fn cmd_clean(file: &str) -> i32 {
+    let dir = script_dir(file);
+    match cache::clean(dir) {
+        Ok(()) => {
+            println!("{} change-detection cache", style("cleared").bold());
+            0
+        }
+        Err(e) => fail(e),
+    }
+}
+
+// ── parse / eval (debug) ─────────────────────────────────────────────────────────
+
+fn cmd_parse(file: &str) -> i32 {
+    let source = match Source::from_file(file) {
+        Ok(s) => s,
+        Err(e) => return fail(e),
+    };
     match parse(&source) {
-        Ok(program) => println!("{:#?}", program),
-        Err(e) => {
-            eprintln!("{}", e);
-            std::process::exit(1);
+        Ok(program) => {
+            println!("{program:#?}");
+            0
         }
+        Err(e) => fail(e),
     }
 }
 
-fn cmd_eval(matches: &clap::ArgMatches) {
-    let file: &String = matches.get_one("file").unwrap();
+fn cmd_eval(file: &str) -> i32 {
+    match prepare(file) {
+        Some((_, _, ctx)) => {
+            println!("{ctx:#?}");
+            0
+        }
+        None => 1,
+    }
+}
 
+// ── Shared pipeline preparation ──────────────────────────────────────────────────
+
+/// Load, parse, analyze, and evaluate `file`. On any error, print it and return
+/// `None`. On success, return the program, its analysis, and the eval context.
+fn prepare(file: &str) -> Option<(Program, AnalysisResult, EvalContext)> {
     let source = match Source::from_file(file) {
         Ok(s) => s,
         Err(e) => {
-            eprintln!("{}", e);
-            std::process::exit(1);
+            fail(e);
+            return None;
         }
     };
-
     let program = match parse(&source) {
         Ok(p) => p,
         Err(e) => {
-            eprintln!("{}", e);
-            std::process::exit(1);
+            fail(e);
+            return None;
         }
     };
+    let analysis = match analyze(&program) {
+        Ok(a) => a,
+        Err(e) => {
+            fail(e);
+            return None;
+        }
+    };
+    let ctx = match eval_program(&program, script_dir(file)) {
+        Ok(c) => c,
+        Err(e) => {
+            fail(e);
+            return None;
+        }
+    };
+    Some((program, analysis, ctx))
+}
 
-    if let Err(e) = analyze(&program) {
-        eprintln!("{}", e);
-        std::process::exit(1);
+/// Directory containing the script — the root for globs and the cache.
+fn script_dir(file: &str) -> &Path {
+    Path::new(file).parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or(Path::new("."))
+}
+
+/// Print a core error (its `Display` is already user-facing and prefixed) and
+/// return the failure exit code.
+fn fail(e: mainstage_core::Error) -> i32 {
+    eprintln!("{e}");
+    1
+}
+
+// ── Terminal reporter ────────────────────────────────────────────────────────────
+
+/// Renders pipeline progress to the terminal with status glyphs.
+struct TermReporter;
+
+impl Reporter for TermReporter {
+    fn stage_start(&self, stage: &str) {
+        println!("{} {}", style("▶").cyan(), style(stage).bold());
     }
 
-    let script_dir = std::path::Path::new(file)
-        .parent()
-        .unwrap_or(std::path::Path::new("."));
+    fn stage_skipped(&self, stage: &str) {
+        println!("{} {} {}", style("•").dim(), stage, style("(up to date)").dim());
+    }
 
-    match eval_program(&program, script_dir) {
-        Ok(ctx) => println!("{:#?}", ctx),
-        Err(e) => {
-            eprintln!("{}", e);
-            std::process::exit(1);
+    fn stage_passed(&self, stage: &str) {
+        println!("{} {}", style("✓").green(), stage);
+    }
+
+    fn stage_failed(&self, stage: &str, error: &mainstage_core::Error, allow_failure: bool) {
+        if allow_failure {
+            println!("{} {} {}", style("!").yellow(), stage, style("(failure allowed)").yellow());
+        } else {
+            println!("{} {}", style("✗").red(), style(stage).red());
+            eprintln!("  {error}");
+        }
+    }
+
+    fn stage_cancelled(&self, stage: &str) {
+        println!("{} {} {}", style("⊘").yellow(), stage, style("(cancelled)").yellow());
+    }
+
+    fn pipeline_finished(&self, pipeline: &str, failed_stage: Option<&str>) {
+        // Only the success banner is rendered here; failures (including those with no
+        // failing stage) are reported by `cmd_run` from the returned error, avoiding a
+        // redundant summary line.
+        if failed_stage.is_none() {
+            println!(
+                "\n{} {}",
+                style("✓").green().bold(),
+                style(format!("pipeline '{pipeline}' succeeded")).green()
+            );
         }
     }
 }

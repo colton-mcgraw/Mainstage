@@ -694,6 +694,9 @@ dependencies = [
  "lazy_static",
  "pest",
  "pest_derive",
+ "serde",
+ "serde_json",
+ "sha2",
  "uuid",
 ]
 

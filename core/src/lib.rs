@@ -1,6 +1,7 @@
 //! `mainstage_core` — language core: parser, AST, semantic analysis, and evaluator.
 
 pub mod ast;
+pub mod cache;
 pub mod error;
 pub mod eval;
 pub mod executor;
@@ -13,7 +14,7 @@ pub mod source;
 pub use error::{Diagnostic, Error, Result, Span};
 pub use eval::{eval_condition, eval_expr, eval_program, EvalContext, FileEntry, Value};
 pub use executor::{execute_step, execute_steps};
-pub use runner::run_pipeline;
+pub use runner::{run_pipeline, run_pipeline_reported, NoopReporter, Reporter};
 pub use parser::parse;
 pub use sema::{analyze, AnalysisResult};
 pub use source::Source;

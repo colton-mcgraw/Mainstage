@@ -99,6 +99,11 @@ mainstage list          # lists all pipelines and their stages
 | `mainstage parse <file>` | Print the parsed AST (debug tool). |
 | `mainstage clean` | Clear the change-detection cache. |
 
+`run`, `list`, and `clean` (and the bare `mainstage`) read `main.ms` in the current
+directory by default; pass `-f, --file <FILE>` to point at a different script. Change
+detection persists per project in `.mainstage/cache.json` next to the script — a stage
+is skipped when its `inputs` are unchanged and its declared `outputs` still exist.
+
 ## Building from Source
 
 Requires Rust stable (edition 2024).

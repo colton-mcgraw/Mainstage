@@ -95,11 +95,11 @@ Orchestrate stages in dependency order and handle failures per the propagation r
 
 Skip stages whose inputs have not changed and whose declared outputs are already present.
 
-- [ ] Hash all files in a stage's resolved `inputs` set (SHA-256 per file, combined into a single digest)
-- [ ] Persist input digest and output path list to a local cache (`.mainstage/cache.json`)
-- [ ] On stage entry: if the input digest matches the cache and all declared output paths exist, skip the stage
-- [ ] Invalidate cache entries when output files are missing or deleted between runs
-- [ ] `mainstage clean` CLI subcommand — delete the cache and force a full rebuild
+- [x] Hash all files in a stage's resolved `inputs` set (SHA-256 per file, combined into a single digest)
+- [x] Persist input digest and output path list to a local cache (`.mainstage/cache.json`)
+- [x] On stage entry: if the input digest matches the cache and all declared output paths exist, skip the stage
+- [x] Invalidate cache entries when output files are missing or deleted between runs
+- [x] `mainstage clean` CLI subcommand — delete the cache and force a full rebuild
 
 ---
 
@@ -107,12 +107,12 @@ Skip stages whose inputs have not changed and whose declared outputs are already
 
 Wire the CLI subcommands to the runtime and produce clear terminal output.
 
-- [ ] `mainstage` — run the `default pipeline`; user-facing error if none is declared
-- [ ] `mainstage run <name>` — run a named pipeline
-- [ ] `mainstage list` — list all declared pipelines with their stage names
-- [ ] `mainstage parse <file>` — print the parsed AST (from Phase 1, promoted to a stable debug tool)
-- [ ] `mainstage clean` — clear the change-detection cache (from Phase 7)
-- [ ] Structured terminal output: stage start/skip/pass/fail indicators, step output, failure summaries
-- [ ] Exit code propagation: exit non-zero when a pipeline fails
+- [x] `mainstage` — run the `default pipeline`; user-facing error if none is declared
+- [x] `mainstage run <name>` — run a named pipeline
+- [x] `mainstage list` — list all declared pipelines with their stage names
+- [x] `mainstage parse <file>` — print the parsed AST (from Phase 1, promoted to a stable debug tool)
+- [x] `mainstage clean` — clear the change-detection cache (from Phase 7)
+- [x] Structured terminal output: stage start/skip/pass/fail indicators, step output, failure summaries
+- [x] Exit code propagation: exit non-zero when a pipeline fails
 
 ---
