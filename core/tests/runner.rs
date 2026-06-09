@@ -168,3 +168,71 @@ fn missing_default_pipeline_errors() {
     assert!(run(src, &dir, None).is_err());
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+// ── Cross-stage output references ────────────────────────────────────────────────
+
+#[test]
+fn downstream_stage_consumes_upstream_outputs() {
+    let dir = unique_dir("stageref");
+    let d = dir.display();
+    // `package` references `compile.outputs` in its inputs. With dependency-ordered
+    // resolution, compile runs first and publishes its outputs, so package's context
+    // builds and the stage runs (previously this errored at context build).
+    let src = format!(
+        r#"
+        default pipeline build {{
+            stages: [compile, package]
+        }}
+        stage compile {{
+            outputs: ["{d}/out/app"]
+            steps {{
+                write "{d}/out/app" content: "binary"
+            }}
+        }}
+        stage package {{
+            inputs:  [compile.outputs]
+            outputs: ["{d}/out/app.tar"]
+            steps {{
+                write "{d}/out/app.tar" content: "archive"
+            }}
+        }}
+        "#
+    );
+
+    run(&src, &dir, None).expect("a stage consuming upstream outputs should run");
+
+    assert!(exists(&dir, "out/app"), "compile must produce its output");
+    assert!(exists(&dir, "out/app.tar"), "package must run and produce its output");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn outputs_of_stage_outside_pipeline_error() {
+    let dir = unique_dir("missingref");
+    let d = dir.display();
+    // The pipeline runs only `package`; `compile` never executes, so its outputs are
+    // unavailable and the reference is a runtime error.
+    let src = format!(
+        r#"
+        default pipeline only_package {{
+            stages: [package]
+        }}
+        stage compile {{
+            outputs: ["{d}/out/app"]
+            steps {{ mkdir "{d}/out" }}
+        }}
+        stage package {{
+            inputs: [compile.outputs]
+            steps {{ mkdir "{d}/pkg" }}
+        }}
+        "#
+    );
+
+    assert!(
+        run(&src, &dir, None).is_err(),
+        "referencing the outputs of a stage that did not run must error"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}

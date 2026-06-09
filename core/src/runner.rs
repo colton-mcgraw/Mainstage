@@ -88,6 +88,9 @@ pub fn run_pipeline_reported(
     // Track stages that have failed or been cancelled so dependents can be skipped.
     let mut cancelled: HashSet<String> = HashSet::new();
     let mut first_failure: Option<String> = None;
+    // Resolved `outputs` of stages completed so far, so a later stage's
+    // `<stage>.outputs` references resolve. Populated in dependency order.
+    let mut resolved_outputs: HashMap<String, Value> = HashMap::new();
 
     for stage_name in &sorted {
         // Skip if any dependency in this pipeline already failed or was cancelled.
@@ -106,20 +109,23 @@ pub fn run_pipeline_reported(
         let stage = find_stage(program, stage_name)
             .ok_or_else(|| runner_err(format!("stage '{}' listed in pipeline but not declared", stage_name)))?;
 
-        let stage_ctx = build_stage_ctx(stage, ctx)?;
+        // Evaluate inputs/outputs with prior stages' outputs in scope so that
+        // `inputs: [<stage>.outputs]` resolves for stages that actually run.
+        let stage_ctx = build_stage_ctx(stage, ctx, &resolved_outputs)?;
+        let stage_outputs_value = stage_ctx.stage_outputs.clone();
 
         // Change detection: compute the input digest and declared outputs, then skip
         // the stage when it is unchanged and its outputs are all present.
         let digest = stage_ctx.stage_inputs.as_ref().map(cache::input_digest);
-        let outputs = stage_ctx
-            .stage_outputs
-            .as_ref()
-            .map(cache::output_paths)
-            .unwrap_or_default();
+        let outputs = stage_outputs_value.as_ref().map(cache::output_paths).unwrap_or_default();
 
         if let Some(dig) = &digest
             && cache.is_fresh(stage_name, dig, &project_dir)
         {
+            // A skipped stage's outputs already exist; record them so dependents resolve.
+            if let Some(v) = stage_outputs_value {
+                resolved_outputs.insert(stage_name.clone(), v);
+            }
             reporter.stage_skipped(stage_name);
             continue;
         }
@@ -131,6 +137,9 @@ pub fn run_pipeline_reported(
                 if let Some(dig) = digest {
                     cache.update(stage_name, dig, outputs);
                 }
+                if let Some(v) = stage_outputs_value {
+                    resolved_outputs.insert(stage_name.clone(), v);
+                }
                 reporter.stage_passed(stage_name);
             }
             Err(e) => {
@@ -140,7 +149,11 @@ pub fn run_pipeline_reported(
 
                 if stage.allow_failure {
                     // Treat as success — downstream stages are unaffected. The cache is
-                    // not updated, so the stage re-runs next time.
+                    // not updated, so the stage re-runs next time; its declared outputs
+                    // are still published so dependents' references resolve.
+                    if let Some(v) = stage_outputs_value {
+                        resolved_outputs.insert(stage_name.clone(), v);
+                    }
                 } else {
                     cancelled.insert(stage_name.clone());
                     if first_failure.is_none() {
@@ -240,10 +253,17 @@ fn collect_stage_names(expr: &Expr, ctx: &EvalContext) -> Result<Vec<String>> {
 
 // ── Stage execution context ────────────────────────────────────────────────────
 
-fn build_stage_ctx(stage: &StageBlock, base: &EvalContext) -> Result<EvalContext> {
-    let inputs  = stage.inputs .as_ref().map(|e| eval_expr(e, base)).transpose()?;
-    let outputs = stage.outputs.as_ref().map(|e| eval_expr(e, base)).transpose()?;
-    Ok(base.with_stage(inputs, outputs))
+fn build_stage_ctx(
+    stage: &StageBlock,
+    base: &EvalContext,
+    resolved_outputs: &HashMap<String, Value>,
+) -> Result<EvalContext> {
+    // A context in which `<stage>.outputs` references resolve to the outputs of
+    // stages that have already run this pipeline.
+    let with_refs = base.with_stage_outputs(resolved_outputs.clone());
+    let inputs  = stage.inputs .as_ref().map(|e| eval_expr(e, &with_refs)).transpose()?;
+    let outputs = stage.outputs.as_ref().map(|e| eval_expr(e, &with_refs)).transpose()?;
+    Ok(with_refs.with_stage(inputs, outputs))
 }
 
 // ── Topological sort (Kahn's algorithm) ───────────────────────────────────────

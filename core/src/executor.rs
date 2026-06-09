@@ -307,6 +307,7 @@ mod tests {
             stage_inputs: None,
             stage_outputs: None,
             stage_names: std::collections::HashSet::new(),
+            stage_output_refs: HashMap::new(),
         }
     }
 
@@ -422,6 +423,7 @@ mod tests {
             stage_inputs: None,
             stage_outputs: None,
             stage_names: std::collections::HashSet::new(),
+            stage_output_refs: HashMap::new(),
         };
         let span = span();
         let path_expr = Expr::Ident(IdentExpr { name: "p".to_string(), span: span.clone() });
@@ -456,6 +458,7 @@ mod tests {
             stage_inputs: None,
             stage_outputs: None,
             stage_names: std::collections::HashSet::new(),
+            stage_output_refs: HashMap::new(),
         };
         let span = span();
         let path_expr = Expr::Ident(IdentExpr { name: "p".to_string(), span: span.clone() });

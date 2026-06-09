@@ -106,6 +106,10 @@ pub struct EvalContext {
     /// All stage names declared in the program — lets bare stage-name identifiers resolve
     /// to their string value (e.g. in `pipeline { stages: [compile, test] }`).
     pub stage_names: HashSet<String>,
+    /// Resolved `outputs` values of stages that have already completed, keyed by stage
+    /// name. Lets `<stage>.outputs` references evaluate at runtime once the producing
+    /// stage has run; populated by the Phase 6 runner in dependency order.
+    pub stage_output_refs: HashMap<String, Value>,
 }
 
 impl EvalContext {
@@ -129,6 +133,14 @@ impl EvalContext {
         child
     }
 
+    /// Return a context whose `<stage>.outputs` references resolve against `registry`
+    /// (the resolved outputs of already-completed stages, keyed by stage name).
+    pub fn with_stage_outputs(&self, registry: HashMap<String, Value>) -> Self {
+        let mut child = self.clone_base();
+        child.stage_output_refs = registry;
+        child
+    }
+
     /// Return a context where `failed_stage` resolves to `stage_name` (for pipeline on_failure).
     pub fn with_failed_stage(&self, stage_name: String) -> Self {
         let mut child = self.clone_base();
@@ -149,6 +161,7 @@ impl EvalContext {
             stage_inputs:   None,
             stage_outputs:  None,
             stage_names:    self.stage_names.clone(),
+            stage_output_refs: self.stage_output_refs.clone(),
         }
     }
 }
@@ -179,6 +192,7 @@ pub fn eval_program(program: &Program, script_dir: &Path) -> Result<EvalContext>
         stage_inputs: None,
         stage_outputs: None,
         stage_names,
+        stage_output_refs: HashMap::new(),
     };
     let mut errors: Vec<Diagnostic> = Vec::new();
 
@@ -269,10 +283,17 @@ impl<'a> Evaluator<'a> {
                     .collect::<Result<_>>()?;
                 modules::dispatch(&module_name, &c.method, &resolved, &c.span, &self.ctx.script_dir)
             }
-            Expr::StageRef(r)     => Err(self.eval_err(
-                format!("'{}' outputs are not available until the stage has run", r.stage),
-                &r.span,
-            )),
+            Expr::StageRef(r)     => self
+                .ctx
+                .stage_output_refs
+                .get(&r.stage)
+                .cloned()
+                .ok_or_else(|| {
+                    self.eval_err(
+                        format!("'{}' outputs are not available until the stage has run", r.stage),
+                        &r.span,
+                    )
+                }),
             Expr::MemberAccess(m) => self.eval_member_access(m),
             Expr::Ident(ident)    => self.eval_ident(ident),
         }
@@ -451,6 +472,7 @@ mod tests {
             stage_inputs: None,
             stage_outputs: None,
             stage_names: HashSet::new(),
+            stage_output_refs: HashMap::new(),
         }
     }
 
@@ -540,6 +562,26 @@ mod tests {
         });
         let val = eval_expr(&expr, &ctx).unwrap();
         assert!(matches!(val, Value::String(s) if s == "myapp"));
+    }
+
+    #[test]
+    fn stage_ref_resolves_from_registry() {
+        // Once a producing stage has run, `<stage>.outputs` resolves to its outputs.
+        let mut ctx = empty_ctx();
+        ctx.stage_output_refs.insert(
+            "compile".to_string(),
+            Value::List(vec![Value::String("bin/app".to_string())]),
+        );
+        let expr = Expr::StageRef(StageRefExpr { stage: "compile".to_string(), span: dummy_span() });
+        let val = eval_expr(&expr, &ctx).unwrap();
+        assert!(matches!(val, Value::List(items) if items.len() == 1));
+    }
+
+    #[test]
+    fn stage_ref_unresolved_errors() {
+        // Before the producing stage runs, the reference is an error.
+        let expr = Expr::StageRef(StageRefExpr { stage: "ghost".to_string(), span: dummy_span() });
+        assert!(eval_expr(&expr, &empty_ctx()).is_err());
     }
 
     #[test]
