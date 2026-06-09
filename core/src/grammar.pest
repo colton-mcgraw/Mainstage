@@ -65,7 +65,10 @@ if_expr       = { "if" ~ condition ~ "{" ~ expr ~ "}" ~ "else" ~ "{" ~ expr ~ "}
 glob_expr     = { "glob" ~ "(" ~ string ~ ("," ~ string)* ~ ")" }
 module_call   = { ident ~ "." ~ ident ~ "(" ~ arg_list? ~ ")" }
 stage_ref     = { ident ~ "." ~ "outputs" }
-member_access = { ident ~ "." ~ ident }
+member_access = { member_object ~ "." ~ ident }
+// `project` is reserved as a keyword but is a valid member-access object so that
+// `project.<field>` parses (e.g. `project.name`). All other objects are plain idents.
+member_object = @{ ("project" ~ !(ASCII_ALPHANUMERIC | "_")) | ident }
 list_expr     = { "[" ~ (expr ~ ("," ~ expr)* ~ ","?)? ~ "]" }
 
 arg_list  = { arg ~ ("," ~ arg)* }
