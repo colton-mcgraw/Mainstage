@@ -1,74 +1,78 @@
-# Mainstage License (Version 1.0)
+# Mainstage Source-Available License (Version 1.0)
 
-This project is licensed to you (the "Licensee") under the following terms (the "License") by the author (the "Licensor"). By using, copying, modifying, or distributing this software, you agree to be bound by the terms of this License. If you do not agree to the terms of this License, do not use, copy, modify, or distribute this software.
+Copyright (c) 2026 Colton McGraw (github.com/ColtMcG1)
 
-## Definitions
+## Grant of Rights
 
-- **Licensor**: The author or copyright holder of the software. (github.com/ColtMcG1)
-- **Licensee**: Any individual or entity using, copying, modifying, or distributing the software under this License.
-- **Software**: The source code, binary code, and associated documentation provided under this License.
-- **Commercial Use**: Any use of the software for profit or commercial purposes.
+Subject to the terms of this License, the Licensor grants you a worldwide,
+royalty-free, non-exclusive, non-sublicensable license to:
 
-## Grant of License
+1. Use, copy, and run the Software for any purpose permitted under this License.
+2. Modify the Software for your own use, subject to the Attribution section.
+3. Distribute verbatim copies of the Software, provided you include this License
+   in full and retain all attribution notices.
+4. Distribute modified copies of the Software, provided you (a) include this
+   License in full, (b) clearly mark your modifications as distinct from the
+   original, and (c) do not misrepresent modified versions as the original Software.
 
-Subject to the terms and conditions of this License, the Licensor hereby grants to the Licensee a worldwide, royalty-free, non-exclusive, perpetual (for the duration of the applicable copyright) license to use, copy, modify, and distribute the software in source code and binary form. Provided that the Licensee complies with all the terms and conditions of this License.
+## Commercial Use Threshold
+
+Use of the Software is free provided that the Licensee's total annual gross
+revenue **directly derived from products or services that incorporate or depend on
+the Software** does not exceed **$100,000 USD** in any rolling twelve-month period.
+
+If the Licensee's qualifying revenue meets or exceeds $100,000 USD, the Licensee
+must obtain a commercial license from the Licensor before continuing that use.
+Contact the Licensor via the repository to arrange a commercial license.
 
 ## Restrictions
 
-The Licensee shall not:
+You may not:
 
-- Use the software for any illegal purposes.
-- Distribute the software without proper attribution.
-- Misrepresent the origin of the software.
-- Sell or sublicense the software without explicit permission from the Licensor.
-- Modify the software without explicit permission from the Licensor, unless such modifications are clearly marked and comply with the terms of this License.
-
-The Licensor reserves all rights not expressly granted to the Licensee under this License.
-The Licensee agrees to comply with all applicable laws and regulations regarding the use of the software.
-The Licensee agrees to indemnify and hold harmless the Licensor from any claims, damages, liabilities, costs, and expenses arising from the Licensee's use of the software.
-The Licensee agrees that any modifications made to the software shall be clearly marked as such and shall not be misrepresented as the original software.
-The Licensee agrees to include a copy of this License with any distribution of the software.
-The Licensee agrees that this License shall be governed by and construed in accordance with the laws of the jurisdiction in which the Licensor resides, without regard to its conflict of law principles.
+1. Remove or alter any copyright, license, or attribution notices present in the
+   Software.
+2. Use the Licensor's name, trademarks, or service marks to endorse or promote
+   products derived from the Software without prior written permission.
+3. Sell or sublicense the Software itself as a standalone product.
 
 ## Attribution
 
-The Licensee must give appropriate credit to the Licensor by:
+Any distribution of the Software or derivative works must include:
 
-- Including the Licensor's name and a link to the original repository in the documentation or about section of the software.
-- Indicating if changes were made to the software, such as by including a "Modified by [Your Name]" notice.
-
-This may be done in any reasonable manner, but not in any way that suggests the Licensor endorses the Licensee or their use of the software.
+1. A complete copy of this License.
+2. A notice identifying the original Software and linking to its source repository.
+3. A clear description of any modifications made.
 
 ## Disclaimer of Warranty
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS
+FOR A PARTICULAR PURPOSE, AND NONINFRINGEMENT.
 
 ## Limitation of Liability
 
-IN NO EVENT SHALL THE LICENSOR BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+IN NO EVENT SHALL THE LICENSOR BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR
+BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING
+IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY
+OF SUCH DAMAGE.
 
 ## Termination
 
-This License is effective until terminated. The Licensee's rights under this License will terminate automatically without notice from the Licensor if the Licensee fails to comply with any term(s) of this License. Upon termination, the Licensee must cease all use of the software and destroy all copies, full or partial, of the software.
+Your rights under this License terminate automatically if you fail to comply with
+any of its terms. Upon termination, you must cease all use and distribution of the
+Software and destroy all copies in your possession. The Disclaimer of Warranty,
+Limitation of Liability, and Attribution sections survive termination.
 
-## Miscellaneous
+## Governing Law
 
-This License allows free use of the software for personal, educational, and commercial purposes, provided the Licensee's annual gross revenue derived from the use of this software does not exceed $100,000.00. If the Licensee's commercial use exceeds this threshold, the Licensee must obtain a commercial license by contacting the Licensor at the email address provided in the repository.
-
-This License does not grant any rights to use the Licensor's trademarks, service marks, or trade names.
-
-This License constitutes the entire agreement between the parties with respect to the software and supersedes all prior or contemporaneous understandings regarding such subject matter. If any provision of this License is held to be unenforceable, such provision shall be reformed only to the extent necessary to make it enforceable. The failure of either party to enforce any right or provision of this License shall not constitute a waiver of such right or provision.
-
-By using, copying, modifying, or distributing the software, you acknowledge that you have read, understood, and agree to be bound by the terms of this License.
-
-## Contact Information
-
-For any questions or concerns regarding this License, please contact the Licensor at the email address provided in the repository.
+This License is governed by the laws of the jurisdiction in which the Licensor
+resides, without regard to conflict-of-law principles.
 
 ## Severability
 
-If any provision of this License is found to be unenforceable, the remaining provisions shall remain in full force and effect.
-
-## Entire Agreement
-
-This License constitutes the entire agreement between the Licensor and the Licensee regarding the software and supersedes all prior agreements and understandings, whether written or oral, relating to the software.
+If any provision of this License is held unenforceable, it shall be modified to
+the minimum extent necessary to make it enforceable. The remaining provisions
+shall remain in full force and effect.

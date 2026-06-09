@@ -1,100 +1,111 @@
-// --- Lexical / Skipping ---
-WHITESPACE = _{ " " | "\t" | "\r" | "\n" | COMMENT }
-COMMENT    = _{ "//" ~ (!"\n" ~ ANY)* ~ ("\n" | EOI) }
+// ── Whitespace and comments ───────────────────────────────────────────────────
 
-// --- Top-Level ---
-script = { SOI ~ item* ~ EOI }
+WHITESPACE = _{ " " | "\t" | "\r\n" | "\n" }
+COMMENT    = _{ "//" ~ (!"\n" ~ ANY)* }
 
-// Items are either declarations or statements (where statements can be blocks)
-item = { declaration | statement }
+// ── Top-level ─────────────────────────────────────────────────────────────────
 
-// --- Statements ---
-statement = { terminated_statement | loop_stmt | conditional_stmt | block }
+program = { SOI ~ item* ~ EOI }
+item    = _{ import_decl | let_decl | project_block | stage_block | pipeline_block }
 
-terminated_statement = {
-    return_stmt
-  | include_stmt
-  | import_stmt
-  | assignment_stmt
-  | expression_stmt
+// ── Declarations ──────────────────────────────────────────────────────────────
+
+import_decl = { "import" ~ string ~ "as" ~ ident ~ ";" }
+let_decl    = { "let" ~ ident ~ "=" ~ expr ~ ";" }
+
+// ── Project ───────────────────────────────────────────────────────────────────
+
+project_block = { "project" ~ "{" ~ project_field* ~ "}" }
+project_field = { ident ~ ":" ~ expr ~ ","? }
+
+// ── Stage ─────────────────────────────────────────────────────────────────────
+
+stage_block         = { "stage" ~ ident ~ "{" ~ stage_field* ~ "}" }
+stage_field         = _{ stage_inputs | stage_outputs | stage_allow_failure | steps_block | stage_on_failure }
+stage_inputs        = { "inputs" ~ ":" ~ expr ~ ","? }
+stage_outputs       = { "outputs" ~ ":" ~ expr ~ ","? }
+stage_allow_failure = { "allow_failure" ~ ":" ~ bool_lit ~ ","? }
+steps_block         = { "steps" ~ "{" ~ step* ~ "}" }
+stage_on_failure    = { "on_failure" ~ "{" ~ step* ~ "}" }
+
+// ── Pipeline ──────────────────────────────────────────────────────────────────
+
+pipeline_block      = { pipeline_default? ~ "pipeline" ~ ident ~ "{" ~ pipeline_field* ~ "}" }
+pipeline_default    = { "default" }
+pipeline_field      = _{ pipeline_input | pipeline_stages | pipeline_on_failure | pipeline_on_success }
+pipeline_input      = { "input" ~ ":" ~ expr ~ ","? }
+pipeline_stages     = { "stages" ~ ":" ~ expr ~ ","? }
+pipeline_on_failure = { "on_failure" ~ "{" ~ step* ~ "}" }
+pipeline_on_success = { "on_success" ~ "{" ~ step* ~ "}" }
+
+// ── Steps ─────────────────────────────────────────────────────────────────────
+
+step        = _{ exec_step | copy_step | move_step | mkdir_step | delete_step | write_step | if_step | for_step }
+// Compound-atomic so horizontal whitespace is consumed explicitly (prevents
+// WHITESPACE from swallowing the newline that terminates the exec line).
+exec_step   = ${ "$" ~ (" " | "\t")* ~ exec_line }
+exec_line   = @{ (!"\n" ~ ANY)* }
+copy_step   = { "copy" ~ expr ~ "to" ~ expr }
+move_step   = { "move" ~ expr ~ "to" ~ expr }
+mkdir_step  = { "mkdir" ~ expr }
+delete_step = { "delete" ~ expr }
+write_step  = { "write" ~ expr ~ "content" ~ ":" ~ string }
+if_step     = { "if" ~ condition ~ then_block ~ ("else" ~ else_block)? }
+then_block  = { "{" ~ step* ~ "}" }
+else_block  = { "{" ~ step* ~ "}" }
+for_step    = { "for" ~ ident ~ "in" ~ expr ~ "{" ~ step* ~ "}" }
+
+// ── Expressions ───────────────────────────────────────────────────────────────
+// Order resolves ambiguity: more-specific alternatives first.
+// module_call  = ident.ident(...)  must precede stage_ref and member_access
+// stage_ref    = ident.outputs     must precede member_access = ident.ident
+
+expr          = { if_expr | glob_expr | module_call | stage_ref | member_access | list_expr | string | bool_lit | ident }
+if_expr       = { "if" ~ condition ~ "{" ~ expr ~ "}" ~ "else" ~ "{" ~ expr ~ "}" }
+glob_expr     = { "glob" ~ "(" ~ string ~ ("," ~ string)* ~ ")" }
+module_call   = { ident ~ "." ~ ident ~ "(" ~ arg_list? ~ ")" }
+stage_ref     = { ident ~ "." ~ "outputs" }
+member_access = { ident ~ "." ~ ident }
+list_expr     = { "[" ~ (expr ~ ("," ~ expr)* ~ ","?)? ~ "]" }
+
+arg_list  = { arg ~ ("," ~ arg)* }
+arg       = { named_arg | expr }
+// arg_key allows keywords as named argument names (e.g. `default: "..."`, `short: true`)
+named_arg = { arg_key ~ ":" ~ expr }
+arg_key   = @{ (ASCII_ALPHA | "_") ~ (ASCII_ALPHANUMERIC | "_")* }
+
+// ── Conditions ────────────────────────────────────────────────────────────────
+
+condition    = { or_cond }
+or_cond      = { and_cond ~ ("or" ~ and_cond)* }
+and_cond     = { unary_cond ~ ("and" ~ unary_cond)* }
+unary_cond   = { "!" ~ unary_cond | primary_cond }
+primary_cond = { "(" ~ condition ~ ")" | env_cond | platform_cond }
+env_cond     = { "env" ~ "(" ~ string ~ ")" ~ (compare_op ~ string)? }
+platform_cond = { "platform" ~ compare_op ~ string }
+compare_op   = { "==" | "!=" }
+
+// ── Primitives ────────────────────────────────────────────────────────────────
+
+// Word-boundary check prevents "true" from matching the prefix of "trueish".
+bool_lit = @{ ("true" | "false") ~ !(ASCII_ALPHANUMERIC | "_") }
+
+// Reserved words that cannot be used as identifiers.
+keyword = _{
+    ( "import" | "as" | "let" | "project" | "stage" | "pipeline" | "default"
+    | "if" | "else" | "for" | "in" | "to"
+    | "true" | "false"
+    | "and" | "or" )
+    ~ !(ASCII_ALPHANUMERIC | "_")
 }
+ident = @{ !keyword ~ (ASCII_ALPHA | "_") ~ (ASCII_ALPHANUMERIC | "_")* }
 
-return_stmt     = { "return" ~ expression ~ ";" }
-include_stmt    = { "include" ~ string ~ ";" }
-import_stmt     = { "import" ~ string ~ "as" ~ identifier ~ ";" }
-expression_stmt = { expression ~ ";" }
+// ── Strings with interpolation ────────────────────────────────────────────────
+// `$` makes the outer rule compound-atomic (no implicit WHITESPACE inside).
+// `!` on interpolation breaks back out of atomicity so `expr` parses normally.
 
-// --- Blocks ---
-block = { "{" ~ statement* ~ "}" }
-
-// --- Declarations (no trailing semicolon) ---
-declaration   = { workspace_decl | project_decl | stage_decl }
-
-workspace_decl = { attributes? ~ "workspace" ~ identifier ~ block }
-project_decl   = { attributes? ~ "project"   ~ identifier ~ block }
-stage_decl     = { attributes? ~ "stage"     ~ identifier ~ "(" ~ arguments? ~ ")" ~ block }
-
-// --- Conditionals (no trailing semicolon; body must be a block) ---
-conditional_stmt = { if_stmt | if_else_stmt | tenary_stmt }
-if_stmt        = { "if" ~ expression ~ block }
-if_else_stmt    = { "if" ~ expression ~ block ~ "else" ~ block }
-tenary_stmt    = { expression ~ "?" ~ expression ~ ":" ~ expression ~ ";" }
-
-// --- Loops (no trailing semicolon; body must be a block) ---
-loop_stmt    = { for_in_stmt | for_to_stmt | while_stmt }
-for_in_stmt   = { "for" ~ identifier ~ "in" ~ expression ~ block }
-for_to_stmt   = { "for" ~ assignment_expr ~ "to" ~ expression ~ block }
-while_stmt   = { "while" ~ expression ~ block }
-
-// Add operator set
-assign_op = { "=" | "+=" | "-=" | "*=" | "/=" | "%=" }
-
-// Replace existing rules that used bare "="
-assignment_stmt = { identifier ~ assign_op ~ expression ~ ";" }
-assignment_expr = { identifier ~ assign_op ~ expression }  // for forto header
-
-// --- Expressions ---
-// Make calls/members/index postfix ops so chaining works: obj.fn(a).x[i]++.
-expression                = { equality_expression }
-equality_expression       = { relational_expression ~ (eq_op  ~ relational_expression)* }
-relational_expression     = { additive_expression   ~ (rel_op ~ additive_expression)* }
-additive_expression       = { multiplicative_expression ~ (add_op ~ multiplicative_expression)* }
-multiplicative_expression = { unary_expression      ~ (mul_op ~ unary_expression)* }
-unary_expression          = { (unary_op)* ~ postfix_expression }
-
-postfix_expression = { primary_expression ~ (postfix_op)* }
-postfix_op = {
-      "(" ~ arguments? ~ ")"        // call
-    | "." ~ identifier              // member
-    | "[" ~ expression ~ "]"        // index
-    | "++"                          // postfix inc
-    | "--"                          // postfix dec
-}
-
-primary_expression = { value | identifier | "(" ~ expression ~ ")" }
-
-eq_op    = { "==" | "!=" }
-rel_op   = { "<=" | ">=" | "<" | ">" }
-add_op   = { "+" | "-" }
-mul_op   = { "*" | "/" }
-unary_op = { "++" | "--" | "+" | "-" }
-
-// --- Arguments / Attributes ---
-parameter  = { expression }
-arguments  = { parameter ~ ("," ~ parameter)* ~ ","? }   // trailing comma ok
-
-attribute  = { identifier }
-attributes = { "[" ~ attribute ~ ("," ~ attribute)* ~ "]" }
-
-// --- Values ---
-value        = { array | shell_string | string | boolean | number | null }
-array        = { "[" ~ (expression ~ ("," ~ expression)*)? ~ "]" }
-boolean      = { "true" | "false" }
-number       = { ASCII_DIGIT+ ~ ("." ~ ASCII_DIGIT+)? }
-string       = { "\"" ~ (!"\"" ~ ANY)* ~ "\"" }
-shell_string = { shell_prefix ~ string }
-shell_prefix = { "sh" | "bash" | "zsh" | "pwsh" | "cmd" }
-null         = { "null" }
-
-// --- Identifiers ---
-identifier = @{ (ASCII_ALPHA | "_") ~ (ASCII_ALPHANUMERIC | "_")* }
+string        = ${ "\"" ~ string_inner ~ "\"" }
+string_inner  = { string_part* }
+string_part   = { interpolation | string_raw }
+interpolation = !{ "${" ~ expr ~ "}" }
+string_raw    = @{ (!("\"" | "${") ~ ANY)+ }

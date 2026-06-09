@@ -1,15 +1,16 @@
 [package]
-name = "mainstage"
+name = "mainstage_lsp"
 version = "0.1.0"
 edition.workspace = true
 authors.workspace = true
 license-file.workspace = true
 
 [[bin]]
-name = "mainstage"
+name = "mainstage-lsp"
 path = "src/main.rs"
 
 [dependencies]
 mainstage_core.workspace = true
-clap = { version = "4.5.49", features = ["derive"] }
-console = "0.16.1"
+tower-lsp.workspace = true
+tokio.workspace = true
+serde_json.workspace = true

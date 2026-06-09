@@ -1,0 +1,558 @@
+//! Phase 3 — Expression Evaluator & Built-in Variables.
+//!
+//! Converts AST [`Expr`] nodes into runtime [`Value`]s given an [`EvalContext`].
+//! Evaluates string literals, string interpolation, booleans, lists, glob patterns,
+//! `if/else` expressions, the `platform` built-in, and `project.<field>` access.
+
+use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
+
+use crate::{
+    ast::*,
+    error::{Diagnostic, Error, Result, Span},
+    modules,
+};
+
+// ── Value types ───────────────────────────────────────────────────────────────
+
+/// A single file matched by a `glob(...)` expression.
+#[derive(Debug, Clone)]
+pub struct FileEntry {
+    /// Absolute path to the file.
+    pub path: PathBuf,
+    /// File name including extension (e.g. `"main.rs"`).
+    pub name: String,
+    /// File name without extension (e.g. `"main"`).
+    pub stem: String,
+    /// Extension without leading dot (e.g. `"rs"`); empty string if none.
+    pub ext: String,
+    /// Parent directory (absolute).
+    pub dir: PathBuf,
+}
+
+impl FileEntry {
+    pub(crate) fn from_path(path: PathBuf) -> Self {
+        let name = path.file_name().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+        let stem = path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+        let ext  = path.extension().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+        let dir  = path.parent().unwrap_or(Path::new("")).to_path_buf();
+        FileEntry { path, name, stem, ext, dir }
+    }
+
+    /// Return the value of a named file property (`.path`, `.name`, `.stem`, `.ext`, `.dir`).
+    pub fn get_field(&self, field: &str) -> Option<String> {
+        match field {
+            "path" => Some(self.path.display().to_string()),
+            "name" => Some(self.name.clone()),
+            "stem" => Some(self.stem.clone()),
+            "ext"  => Some(self.ext.clone()),
+            "dir"  => Some(self.dir.display().to_string()),
+            _      => None,
+        }
+    }
+}
+
+/// A Mainstage runtime value.
+#[derive(Debug, Clone)]
+pub enum Value {
+    String(String),
+    Bool(bool),
+    List(Vec<Value>),
+    FileSet(Vec<FileEntry>),
+}
+
+impl Value {
+    /// Render to a string for use inside `${...}` interpolations.
+    pub fn display_string(&self) -> String {
+        match self {
+            Value::String(s) => s.clone(),
+            Value::Bool(b) => b.to_string(),
+            Value::List(items) => {
+                items.iter().map(|v| v.display_string()).collect::<Vec<_>>().join(", ")
+            }
+            Value::FileSet(entries) => {
+                entries.iter().map(|e| e.path.display().to_string()).collect::<Vec<_>>().join(", ")
+            }
+        }
+    }
+}
+
+// ── Evaluation context ────────────────────────────────────────────────────────
+
+/// Runtime context threaded through expression evaluation.
+///
+/// Build the initial context for a script with [`eval_program`], then extend it with
+/// for-loop variable bindings (via [`EvalContext::with_for_var`]) inside step execution
+/// (Phase 5).
+#[derive(Debug)]
+pub struct EvalContext {
+    /// Directory containing the `.ms` file; `glob` patterns are resolved relative to it.
+    pub script_dir: PathBuf,
+    /// Host platform string: `"windows"`, `"linux"`, or `"macos"`.
+    pub platform: String,
+    /// Evaluated `let` bindings in declaration order.
+    pub let_values: Vec<(String, Value)>,
+    /// Evaluated `project` block fields.
+    pub project_fields: HashMap<String, Value>,
+    /// Active `for`-loop variable bindings set by the step executor (Phase 5).
+    pub for_vars: HashMap<String, FileEntry>,
+    /// Maps each import alias to the raw module name from the `import` declaration.
+    /// e.g. `import "git" as vcs` → `"vcs" → "git"`.
+    pub import_aliases: HashMap<String, String>,
+    /// Resolved `inputs` fileset for the currently executing stage (set by Phase 6 runner).
+    pub stage_inputs: Option<Value>,
+    /// Resolved `outputs` value for the currently executing stage (set by Phase 6 runner).
+    pub stage_outputs: Option<Value>,
+    /// All stage names declared in the program — lets bare stage-name identifiers resolve
+    /// to their string value (e.g. in `pipeline { stages: [compile, test] }`).
+    pub stage_names: HashSet<String>,
+}
+
+impl EvalContext {
+    fn lookup_let(&self, name: &str) -> Option<&Value> {
+        self.let_values.iter().rev().find(|(n, _)| n == name).map(|(_, v)| v)
+    }
+
+    /// Return a clone of this context with `var` bound to `entry` for `for`-loop iteration.
+    pub fn with_for_var(&self, var: String, entry: FileEntry) -> Self {
+        let mut child = self.clone_base();
+        child.for_vars = self.for_vars.clone();
+        child.for_vars.insert(var, entry);
+        child
+    }
+
+    /// Return a stage-execution context: fresh `for_vars`, `stage_inputs`, and `stage_outputs` set.
+    pub fn with_stage(&self, inputs: Option<Value>, outputs: Option<Value>) -> Self {
+        let mut child = self.clone_base();
+        child.stage_inputs  = inputs;
+        child.stage_outputs = outputs;
+        child
+    }
+
+    /// Return a context where `failed_stage` resolves to `stage_name` (for pipeline on_failure).
+    pub fn with_failed_stage(&self, stage_name: String) -> Self {
+        let mut child = self.clone_base();
+        child.stage_inputs  = self.stage_inputs.clone();
+        child.stage_outputs = self.stage_outputs.clone();
+        child.let_values.push(("failed_stage".to_string(), Value::String(stage_name)));
+        child
+    }
+
+    fn clone_base(&self) -> Self {
+        EvalContext {
+            script_dir:     self.script_dir.clone(),
+            platform:       self.platform.clone(),
+            let_values:     self.let_values.clone(),
+            project_fields: self.project_fields.clone(),
+            for_vars:       HashMap::new(),
+            import_aliases: self.import_aliases.clone(),
+            stage_inputs:   None,
+            stage_outputs:  None,
+            stage_names:    self.stage_names.clone(),
+        }
+    }
+}
+
+// ── Public API ─────────────────────────────────────────────────────────────────
+
+/// Evaluate all `let` bindings and the `project` block in `program`, producing an
+/// [`EvalContext`] for subsequent stage and step evaluation.
+///
+/// `import`, `stage`, and `pipeline` items are skipped — they belong to later phases.
+/// Errors are accumulated; the first fatal non-eval error short-circuits immediately.
+pub fn eval_program(program: &Program, script_dir: &Path) -> Result<EvalContext> {
+    // Collect all stage names in one pass before evaluation so bare stage-name
+    // identifiers (e.g. in `stages: [compile, test]`) resolve to their string value.
+    let stage_names: HashSet<String> = program
+        .items
+        .iter()
+        .filter_map(|item| if let Item::Stage(s) = item { Some(s.name.clone()) } else { None })
+        .collect();
+
+    let mut ctx = EvalContext {
+        script_dir: script_dir.to_path_buf(),
+        platform: host_platform().to_string(),
+        let_values: Vec::new(),
+        project_fields: HashMap::new(),
+        for_vars: HashMap::new(),
+        import_aliases: HashMap::new(),
+        stage_inputs: None,
+        stage_outputs: None,
+        stage_names,
+    };
+    let mut errors: Vec<Diagnostic> = Vec::new();
+
+    for item in &program.items {
+        match item {
+            Item::Import(d) => {
+                ctx.import_aliases.insert(d.alias.clone(), d.module.clone());
+            }
+            Item::Let(d) => match eval_expr(&d.value, &ctx) {
+                Ok(v) => ctx.let_values.push((d.name.clone(), v)),
+                Err(Error::Eval(diags)) => errors.extend(diags),
+                Err(e) => return Err(e),
+            },
+            Item::Project(b) => {
+                for field in &b.fields {
+                    match eval_expr(&field.value, &ctx) {
+                        Ok(v) => {
+                            ctx.project_fields.insert(field.name.clone(), v);
+                        }
+                        Err(Error::Eval(diags)) => errors.extend(diags),
+                        Err(e) => return Err(e),
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    if errors.is_empty() {
+        Ok(ctx)
+    } else {
+        Err(Error::Eval(errors))
+    }
+}
+
+/// Evaluate a single expression within `ctx`.
+pub fn eval_expr(expr: &Expr, ctx: &EvalContext) -> Result<Value> {
+    Evaluator { ctx }.eval(expr)
+}
+
+/// Evaluate a boolean condition within `ctx`.
+pub fn eval_condition(condition: &Condition, ctx: &EvalContext) -> Result<bool> {
+    Evaluator { ctx }.eval_condition(condition)
+}
+
+// ── Evaluator ─────────────────────────────────────────────────────────────────
+
+struct Evaluator<'a> {
+    ctx: &'a EvalContext,
+}
+
+impl<'a> Evaluator<'a> {
+    fn eval_err(&self, msg: impl Into<String>, span: &Span) -> Error {
+        Error::Eval(vec![Diagnostic::new(msg).with_span(span.clone())])
+    }
+
+    fn eval(&self, expr: &Expr) -> Result<Value> {
+        match expr {
+            Expr::String(s)       => self.eval_string(s),
+            Expr::Bool(b)         => Ok(Value::Bool(b.value)),
+            Expr::List(list)      => self.eval_list(list),
+            Expr::Glob(g)         => self.eval_glob(g),
+            Expr::If(if_expr)     => self.eval_if(if_expr),
+            Expr::ModuleCall(c) => {
+                let module_name = self
+                    .ctx
+                    .import_aliases
+                    .get(&c.module)
+                    .ok_or_else(|| {
+                        self.eval_err(
+                            format!(
+                                "undeclared module alias '{}' (should have been caught in semantic analysis)",
+                                c.module
+                            ),
+                            &c.span,
+                        )
+                    })?
+                    .clone();
+                let resolved: Vec<modules::ResolvedArg> = c
+                    .args
+                    .iter()
+                    .map(|a| {
+                        Ok(modules::ResolvedArg {
+                            name: a.name.clone(),
+                            value: self.eval(&a.value)?,
+                        })
+                    })
+                    .collect::<Result<_>>()?;
+                modules::dispatch(&module_name, &c.method, &resolved, &c.span, &self.ctx.script_dir)
+            }
+            Expr::StageRef(r)     => Err(self.eval_err(
+                format!("'{}' outputs are not available until the stage has run", r.stage),
+                &r.span,
+            )),
+            Expr::MemberAccess(m) => self.eval_member_access(m),
+            Expr::Ident(ident)    => self.eval_ident(ident),
+        }
+    }
+
+    fn eval_string(&self, s: &StringExpr) -> Result<Value> {
+        let mut buf = String::new();
+        for part in &s.parts {
+            match part {
+                StringPart::Literal(text) => buf.push_str(text),
+                StringPart::Interpolation(expr) => {
+                    let val = self.eval(expr)?;
+                    buf.push_str(&val.display_string());
+                }
+            }
+        }
+        Ok(Value::String(buf))
+    }
+
+    fn eval_list(&self, list: &ListExpr) -> Result<Value> {
+        let mut items = Vec::with_capacity(list.items.len());
+        for item in &list.items {
+            items.push(self.eval(item)?);
+        }
+        Ok(Value::List(items))
+    }
+
+    fn eval_glob(&self, g: &GlobExpr) -> Result<Value> {
+        let mut entries: Vec<FileEntry> = Vec::new();
+        for pattern in &g.patterns {
+            let full = self.ctx.script_dir.join(pattern);
+            // glob crate expects forward slashes on all platforms
+            let pattern_str = full.to_string_lossy().replace('\\', "/");
+            let iter = glob::glob(&pattern_str).map_err(|e| {
+                self.eval_err(format!("invalid glob pattern '{}': {}", pattern, e), &g.span)
+            })?;
+            for result in iter {
+                match result {
+                    Ok(path) => entries.push(FileEntry::from_path(path)),
+                    Err(e) => {
+                        return Err(self.eval_err(
+                            format!("error reading '{}': {}", e.path().display(), e.error()),
+                            &g.span,
+                        ));
+                    }
+                }
+            }
+        }
+        Ok(Value::FileSet(entries))
+    }
+
+    fn eval_if(&self, if_expr: &IfExpr) -> Result<Value> {
+        if self.eval_condition(&if_expr.condition)? {
+            self.eval(&if_expr.then_expr)
+        } else {
+            self.eval(&if_expr.else_expr)
+        }
+    }
+
+    fn eval_condition(&self, cond: &Condition) -> Result<bool> {
+        match cond {
+            Condition::Env(c) => {
+                let val = std::env::var(&c.var).unwrap_or_default();
+                Ok(match &c.comparison {
+                    None => !val.is_empty(),
+                    Some((CompareOp::Eq, expected)) => &val == expected,
+                    Some((CompareOp::Ne, expected)) => &val != expected,
+                })
+            }
+            Condition::Platform(c) => {
+                let rhs = match c.value {
+                    Platform::Windows => "windows",
+                    Platform::Linux   => "linux",
+                    Platform::MacOs   => "macos",
+                };
+                Ok(match c.op {
+                    CompareOp::Eq => self.ctx.platform == rhs,
+                    CompareOp::Ne => self.ctx.platform != rhs,
+                })
+            }
+            Condition::Not(inner, _) => Ok(!self.eval_condition(inner)?),
+            Condition::And(a, b, _)  => Ok(self.eval_condition(a)? && self.eval_condition(b)?),
+            Condition::Or(a, b, _)   => Ok(self.eval_condition(a)? || self.eval_condition(b)?),
+        }
+    }
+
+    fn eval_member_access(&self, m: &MemberAccessExpr) -> Result<Value> {
+        if m.object == "project" {
+            return self.ctx.project_fields.get(&m.field)
+                .cloned()
+                .ok_or_else(|| {
+                    self.eval_err(format!("unknown project field '{}'", m.field), &m.span)
+                });
+        }
+        if let Some(entry) = self.ctx.for_vars.get(&m.object) {
+            return entry.get_field(&m.field).map(Value::String).ok_or_else(|| {
+                self.eval_err(format!("unknown file property '{}'", m.field), &m.span)
+            });
+        }
+        Err(self.eval_err(
+            format!(
+                "'{}' is not a valid member-access target here; \
+                 `project` fields and `for`-loop variables are the only valid objects",
+                m.object
+            ),
+            &m.span,
+        ))
+    }
+
+    fn eval_ident(&self, ident: &IdentExpr) -> Result<Value> {
+        if ident.name == "platform" {
+            return Ok(Value::String(self.ctx.platform.clone()));
+        }
+        if ident.name == "inputs" {
+            return self.ctx.stage_inputs.clone().ok_or_else(|| {
+                self.eval_err("'inputs' is only available inside a stage's step block", &ident.span)
+            });
+        }
+        if ident.name == "outputs" {
+            return self.ctx.stage_outputs.clone().ok_or_else(|| {
+                self.eval_err("'outputs' is only available inside a stage's step block", &ident.span)
+            });
+        }
+        if ident.name == "failed_stage" {
+            return self.ctx.lookup_let("failed_stage").cloned().ok_or_else(|| {
+                self.eval_err("'failed_stage' is only available inside a pipeline on_failure block", &ident.span)
+            });
+        }
+        // User let-bindings (take precedence over stage names to respect shadowing)
+        if let Some(val) = self.ctx.lookup_let(&ident.name) {
+            return Ok(val.clone());
+        }
+        // Bare stage-name identifiers — used in `stages: [compile, test]` lists
+        if self.ctx.stage_names.contains(&ident.name) {
+            return Ok(Value::String(ident.name.clone()));
+        }
+        Err(self.eval_err(format!("undefined name '{}'", ident.name), &ident.span))
+    }
+}
+
+// ── Platform detection ────────────────────────────────────────────────────────
+
+fn host_platform() -> &'static str {
+    if cfg!(target_os = "windows") {
+        "windows"
+    } else if cfg!(target_os = "linux") {
+        "linux"
+    } else if cfg!(target_os = "macos") {
+        "macos"
+    } else {
+        "unknown"
+    }
+}
+
+// ── Tests ─────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::error::Span;
+    use std::collections::HashSet;
+    use std::path::PathBuf;
+
+    fn dummy_span() -> Span {
+        Span { file: PathBuf::from("test.ms"), line_start: 1, col_start: 1, line_end: 1, col_end: 1 }
+    }
+
+    fn empty_ctx() -> EvalContext {
+        EvalContext {
+            script_dir: PathBuf::from("."),
+            platform: "windows".to_string(),
+            let_values: Vec::new(),
+            project_fields: HashMap::new(),
+            for_vars: HashMap::new(),
+            import_aliases: HashMap::new(),
+            stage_inputs: None,
+            stage_outputs: None,
+            stage_names: HashSet::new(),
+        }
+    }
+
+    #[test]
+    fn string_literal() {
+        let expr = Expr::String(StringExpr {
+            parts: vec![StringPart::Literal("hello".to_string())],
+            span: dummy_span(),
+        });
+        let val = eval_expr(&expr, &empty_ctx()).unwrap();
+        assert!(matches!(val, Value::String(s) if s == "hello"));
+    }
+
+    #[test]
+    fn bool_literal() {
+        let expr = Expr::Bool(BoolExpr { value: true, span: dummy_span() });
+        let val = eval_expr(&expr, &empty_ctx()).unwrap();
+        assert!(matches!(val, Value::Bool(true)));
+    }
+
+    #[test]
+    fn string_interpolation() {
+        let ctx = empty_ctx();
+        let inner = Expr::Bool(BoolExpr { value: false, span: dummy_span() });
+        let expr = Expr::String(StringExpr {
+            parts: vec![
+                StringPart::Literal("flag=".to_string()),
+                StringPart::Interpolation(Box::new(inner)),
+            ],
+            span: dummy_span(),
+        });
+        let val = eval_expr(&expr, &ctx).unwrap();
+        assert!(matches!(val, Value::String(s) if s == "flag=false"));
+    }
+
+    #[test]
+    fn platform_ident() {
+        let expr = Expr::Ident(IdentExpr { name: "platform".to_string(), span: dummy_span() });
+        let val = eval_expr(&expr, &empty_ctx()).unwrap();
+        assert!(matches!(val, Value::String(s) if s == "windows"));
+    }
+
+    #[test]
+    fn if_else_platform_condition() {
+        let cond = Condition::Platform(PlatformCondition {
+            op: CompareOp::Eq,
+            value: Platform::Windows,
+            span: dummy_span(),
+        });
+        let expr = Expr::If(Box::new(IfExpr {
+            condition: cond,
+            then_expr: Expr::String(StringExpr {
+                parts: vec![StringPart::Literal("win".to_string())],
+                span: dummy_span(),
+            }),
+            else_expr: Expr::String(StringExpr {
+                parts: vec![StringPart::Literal("unix".to_string())],
+                span: dummy_span(),
+            }),
+            span: dummy_span(),
+        }));
+        let val = eval_expr(&expr, &empty_ctx()).unwrap();
+        assert!(matches!(val, Value::String(s) if s == "win"));
+    }
+
+    #[test]
+    fn list_literal() {
+        let expr = Expr::List(ListExpr {
+            items: vec![
+                Expr::String(StringExpr { parts: vec![StringPart::Literal("a".to_string())], span: dummy_span() }),
+                Expr::String(StringExpr { parts: vec![StringPart::Literal("b".to_string())], span: dummy_span() }),
+            ],
+            span: dummy_span(),
+        });
+        let val = eval_expr(&expr, &empty_ctx()).unwrap();
+        assert!(matches!(val, Value::List(items) if items.len() == 2));
+    }
+
+    #[test]
+    fn project_field_access() {
+        let mut ctx = empty_ctx();
+        ctx.project_fields.insert("name".to_string(), Value::String("myapp".to_string()));
+        let expr = Expr::MemberAccess(MemberAccessExpr {
+            object: "project".to_string(),
+            field: "name".to_string(),
+            span: dummy_span(),
+        });
+        let val = eval_expr(&expr, &ctx).unwrap();
+        assert!(matches!(val, Value::String(s) if s == "myapp"));
+    }
+
+    #[test]
+    fn for_var_field_access() {
+        let entry = FileEntry::from_path(PathBuf::from("/src/main.rs"));
+        let mut ctx = empty_ctx();
+        ctx.for_vars.insert("f".to_string(), entry);
+        let expr = Expr::MemberAccess(MemberAccessExpr {
+            object: "f".to_string(),
+            field: "name".to_string(),
+            span: dummy_span(),
+        });
+        let val = eval_expr(&expr, &ctx).unwrap();
+        assert!(matches!(val, Value::String(s) if s == "main.rs"));
+    }
+}

@@ -1,10 +1,17 @@
 [package]
 name = "mainstage_core"
 version = "0.1.0"
-edition = "2024"
+edition.workspace = true
+authors.workspace = true
+license-file.workspace = true
+
+[lib]
+name = "mainstage_core"
+path = "src/lib.rs"
 
 [dependencies]
 chrono = "0.4.42"
+glob = "0.3"
 lazy_static = "1.5.0"
 pest = "2.8.3"
 pest_derive = "2.8.3"

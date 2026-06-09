@@ -1,82 +1,135 @@
-![Mainstage](./media/mainstage_logo_text.svg)
-
 # Mainstage
 
-[![License](https://img.shields.io/badge/License-blue.svg)](LICENSE.md)  [![GitHub issues](https://img.shields.io/github/issues/ColtMcG1/mainstage)](https://github.com/ColtMcG1/mainstage/issues)  [![GitHub forks](https://img.shields.io/github/forks/ColtMcG1/mainstage)](https://github.com/ColtMcG1/mainstage/forks)  [![GitHub stars](https://img.shields.io/github/stars/ColtMcG1/mainstage)](https://github.com/ColtMcG1/mainstage/stars)
+![Mainstage](./media/mainstage_logo_text.svg)
 
-Mainstage is a scripting language designed for cross-platform orchestration and automation tasks. It aims to provide a simple and intuitive syntax for defining workflows. Its design focuses on readability and ease of use, making it accessible for both beginners and experienced developers. Its designed to be extensible, allowing users to create custom modules and plugins to enhance its functionality. It is not designed for a specific domain, but rather to be a general-purpose tool that can be adapted to a wide range of use cases and expanded as needed via its modular architecture.
+[![License](https://img.shields.io/badge/License-Source_Available-blue.svg)](LICENSE.md) [![GitHub issues](https://img.shields.io/github/issues/ColtMcG1/mainstage)](https://github.com/ColtMcG1/mainstage/issues) [![GitHub forks](https://img.shields.io/github/forks/ColtMcG1/mainstage)](https://github.com/ColtMcG1/mainstage/forks) [![GitHub stars](https://img.shields.io/github/stars/ColtMcG1/mainstage)](https://github.com/ColtMcG1/mainstage/stargazers)
 
-## Features
+> **Status:** Early development — not yet usable. See the [roadmap](docs/ROADMAP.md).
 
-- Cross-platform compatibility
-- Intuitive syntax for workflow definition
-- Extensible architecture with custom modules and plugins
+Mainstage is a declarative build and automation language. Scripts describe *what* to build and *how* stages relate to each other — the runtime determines execution order and skips stages whose inputs haven't changed.
 
-## Installation
+Scripts use the `.ms` extension. A project declares stages (with `inputs`, `outputs`, and `steps`) and pipelines that group them into named entry points. Inter-stage dependencies are resolved automatically from `<stage>.outputs` references — no explicit `depends_on` needed.
 
-To install Mainstage, follow these steps:
-
-- If you are running the local installer, download the installer from the [official website](https://github.com/ColtMcG1/mainstage/releases) and follow the on-screen instructions.
-- If you are using a package manager, you can install Mainstage using the following command:
-
-    ```bash
-    # Using Homebrew (macOS/Linux)
-    brew install mainstage
-    # Using Chocolatey (Windows)
-    choco install mainstage
-    ```
-
-- If you prefer manual installation, follow these steps:
-
-    1. Download the latest release from the [official repository](https://github.com/ColtMcG1/mainstage/releases).
-    2. Extract the downloaded archive to your desired location.
-    3. Add the Mainstage binary to your system's PATH for easy access.
-    4. Verify the installation by running `mainstage --version` in your terminal.
-
-## Getting Started
-
-To get started with Mainstage, create a new script file with the `.ms` extension. Here is a simple example of a Mainstage script:
+## Example
 
 ```mainstage
-say("Hello, World!")
+import "env" as env;
+import "git" as git;
+
+project {
+    name:    "my-app"
+    version: git.tag()
+}
+
+let sources = glob("src/**/*.rs");
+let out     = env.get("OUT_DIR", default: "dist");
+let target  = if platform == "windows" {
+    "x86_64-pc-windows-msvc"
+} else {
+    "x86_64-unknown-linux-gnu"
+};
+
+default pipeline dev {
+    stages: [compile]
+}
+
+pipeline release {
+    stages: [compile, lint, test, package]
+
+    on_success {
+        $ slack-notify "Released ${project.version}"
+    }
+}
+
+stage compile {
+    inputs:  sources
+    outputs: ["target/${target}/release/my-app"]
+
+    steps {
+        $ cargo build --release --target ${target}
+    }
+
+    on_failure {
+        delete "target/"
+    }
+}
+
+stage lint {
+    inputs:        sources
+    allow_failure: true
+
+    steps {
+        $ cargo clippy
+    }
+}
+
+stage test {
+    inputs: sources
+
+    steps {
+        $ cargo test
+    }
+}
+
+stage package {
+    inputs:  [compile.outputs]
+    outputs: ["${out}/${project.name}-${project.version}.tar.gz"]
+
+    steps {
+        mkdir "${out}/"
+        write "${out}/VERSION" content: "${project.version}"
+        $ tar -czf "${outputs[0]}" "${out}/"
+    }
+}
 ```
 
-To run the script, use the following command in your terminal:
-
-```bash
-mainstage your_script.ms
+```sh
+mainstage               # runs the default pipeline
+mainstage run release   # runs the release pipeline
+mainstage list          # lists all pipelines and their stages
 ```
 
-This will execute the script and print "Hello, World!" to the console.
+## CLI
+
+| Command | Description |
+| --- | --- |
+| `mainstage` | Run the `default pipeline`. Error if none is declared. |
+| `mainstage run <name>` | Run a named pipeline. |
+| `mainstage list` | List all pipelines and their stages. |
+| `mainstage parse <file>` | Print the parsed AST (debug tool). |
+| `mainstage clean` | Clear the change-detection cache. |
+
+## Building from Source
+
+Requires Rust stable (edition 2024).
+
+```sh
+git clone https://github.com/ColtMcG1/mainstage.git
+cd mainstage
+cargo build --release
+```
+
+The CLI binary is at `target/release/mainstage`.
+
+## Workspace
+
+| Crate | Description |
+| --- | --- |
+| [`core`](core/) | Parser, AST, semantic analysis, and evaluator |
+| [`cli`](cli/) | `mainstage` CLI binary |
+| [`lsp`](lsp/) | `mainstage-lsp` Language Server |
 
 ## Documentation
 
-For detailed documentation on Mainstage, including syntax, built-in functions, and examples, please visit the [official documentation site](https://mainstage-docs.example.com).
+- [Grammar Specification](docs/GRAMMAR.md) — full language syntax and semantics reference
+- [Roadmap](docs/ROADMAP.md) — planned features and milestones
 
 ## Contributing
 
-Contributions to Mainstage are welcome! If you would like to contribute, please follow these steps:
-
-1. Fork the repository on GitHub.
-2. Create a new branch for your feature or bug fix.
-3. Make your changes and commit them with clear messages.
-4. Push your changes to your forked repository.
-5. Submit a pull request to the main repository.
-
-Please ensure that your code adheres to the project's coding standards and includes appropriate tests.
+1. Fork the repository and create a branch.
+2. Make your changes with clear commit messages.
+3. Submit a pull request.
 
 ## License
 
-See the [LICENSE](LICENSE.md) file for license rights and limitations.
-
-## Contact
-
-For questions or support, please open an issue on the [GitHub repository](https://github.com/ColtMcG1/mainstage/issues).
-
-## Acknowledgments
-
-We would like to thank all contributors and users who have supported the development of Mainstage. Your feedback and contributions are invaluable to the growth of this project.
-
----
-
-Thank you for using Mainstage!
+[MIT](LICENSE.md)
