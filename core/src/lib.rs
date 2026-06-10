@@ -12,9 +12,12 @@ pub mod sema;
 pub mod source;
 
 pub use error::{Diagnostic, Error, Result, Span};
-pub use eval::{eval_condition, eval_expr, eval_program, EvalContext, FileEntry, Value};
+pub use eval::{
+    eval_condition, eval_expr, eval_program, eval_program_with, EvalContext, FileEntry, Value,
+};
 pub use executor::{execute_step, execute_steps};
+pub use modules::{Module, ModuleRegistry};
 pub use runner::{run_pipeline, run_pipeline_reported, NoopReporter, Reporter};
 pub use parser::parse;
-pub use sema::{analyze, AnalysisResult};
+pub use sema::{analyze, analyze_with, AnalysisResult};
 pub use source::Source;

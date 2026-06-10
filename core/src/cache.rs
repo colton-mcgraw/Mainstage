@@ -116,6 +116,14 @@ pub fn input_digest(value: &Value) -> String {
     hex(&outer.finalize())
 }
 
+/// SHA-256 of `bytes` as a lowercase hex string.
+///
+/// Shared with the `hash` standard-library module so script-level hashing uses the
+/// same algorithm and hex encoding as change detection.
+pub fn sha256_hex(bytes: &[u8]) -> String {
+    hex(&Sha256::digest(bytes))
+}
+
 /// Collect the declared output paths from an evaluated `outputs` value.
 pub fn output_paths(value: &Value) -> Vec<String> {
     let mut paths = Vec::new();

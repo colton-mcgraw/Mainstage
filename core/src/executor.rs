@@ -289,6 +289,7 @@ fn step_err(msg: impl Into<String>, span: &Span) -> Error {
 mod tests {
     use super::*;
     use crate::eval::{EvalContext, Value};
+    use crate::modules::ModuleRegistry;
     use std::collections::HashMap;
     use std::path::PathBuf;
 
@@ -308,6 +309,7 @@ mod tests {
             stage_outputs: None,
             stage_names: std::collections::HashSet::new(),
             stage_output_refs: HashMap::new(),
+            registry: ModuleRegistry::standard(),
         }
     }
 
@@ -424,6 +426,7 @@ mod tests {
             stage_outputs: None,
             stage_names: std::collections::HashSet::new(),
             stage_output_refs: HashMap::new(),
+            registry: ModuleRegistry::standard(),
         };
         let span = span();
         let path_expr = Expr::Ident(IdentExpr { name: "p".to_string(), span: span.clone() });
@@ -459,6 +462,7 @@ mod tests {
             stage_outputs: None,
             stage_names: std::collections::HashSet::new(),
             stage_output_refs: HashMap::new(),
+            registry: ModuleRegistry::standard(),
         };
         let span = span();
         let path_expr = Expr::Ident(IdentExpr { name: "p".to_string(), span: span.clone() });

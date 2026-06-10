@@ -8,8 +8,8 @@ use std::path::Path;
 use clap::{Arg, Command};
 use console::style;
 use mainstage_core::{
-    analyze, ast, cache, eval_program, parse, run_pipeline_reported, AnalysisResult, EvalContext,
-    Reporter, Source,
+    analyze_with, ast, cache, eval_program_with, parse, run_pipeline_reported, AnalysisResult,
+    EvalContext, ModuleRegistry, Reporter, Source,
 };
 use mainstage_core::ast::Program;
 
@@ -209,14 +209,17 @@ fn prepare(file: &str) -> Option<(Program, AnalysisResult, EvalContext)> {
             return None;
         }
     };
-    let analysis = match analyze(&program) {
+    // Construct the registry once and share it between analysis and evaluation so
+    // both agree on the set of available modules.
+    let registry = ModuleRegistry::standard();
+    let analysis = match analyze_with(&program, &registry) {
         Ok(a) => a,
         Err(e) => {
             fail(e);
             return None;
         }
     };
-    let ctx = match eval_program(&program, script_dir(file)) {
+    let ctx = match eval_program_with(&program, script_dir(file), registry) {
         Ok(c) => c,
         Err(e) => {
             fail(e);

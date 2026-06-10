@@ -137,12 +137,12 @@ Today the module system is a hardcoded `match` in `core/src/modules.rs` that rou
 
 Replace the hardcoded `dispatch` match with a `Module` trait and a `ModuleRegistry`. A pure refactor — `env` and `git` behave identically and no user-visible features change. Mirrors the existing `Reporter` trait idiom in `core/src/runner.rs`.
 
-- [ ] Define the `Module` trait and `MethodSig` / `Param` / `NamedParam` / `ValueTy` / `ModuleCx` / `ResolvedArg` in `core/src/modules/mod.rs`
-- [ ] Implement `ModuleRegistry` (`standard`, `get`, `method_sig`, `dispatch`) — `Arc`-backed and cheaply clonable
-- [ ] Port `env` → `EnvModule` and `git` → `GitModule`, with their unit tests, into `core/src/modules/builtin/`
-- [ ] Thread `ModuleRegistry` through `EvalContext` (and `clone_base`) and `eval_program_with`
-- [ ] Pass the same registry into `analyze_with`; construct it once in `cli/src/commands.rs::prepare`
-- [ ] Update `core/src/lib.rs` re-exports (`ModuleRegistry`, `Module`)
+- [x] Define the `Module` trait and `MethodSig` / `Param` / `NamedParam` / `ValueTy` / `ModuleCx` / `ResolvedArg` in `core/src/modules/mod.rs`
+- [x] Implement `ModuleRegistry` (`standard`, `get`, `method_sig`, `dispatch`) — `Arc`-backed and cheaply clonable
+- [x] Port `env` → `EnvModule` and `git` → `GitModule`, with their unit tests, into `core/src/modules/builtin/`
+- [x] Thread `ModuleRegistry` through `EvalContext` (and `clone_base`) and `eval_program_with`
+- [x] Pass the same registry into `analyze_with`; construct it once in `cli/src/commands.rs::prepare`
+- [x] Update `core/src/lib.rs` re-exports (`ModuleRegistry`, `Module`)
 
 ---
 
@@ -150,10 +150,10 @@ Replace the hardcoded `dispatch` match with a `Module` trait and a `ModuleRegist
 
 Validate module names, method names, and argument arity and types during semantic analysis instead of at eval time.
 
-- [ ] Validate the `import "<name>"` string against the registry — `import "bogus" as b;` now errors at analysis time
-- [ ] Per `ModuleCall`: method exists; positional count within min/max; named arguments are recognized and required ones present; literal argument types match the declared `ValueTy`
-- [ ] Emit precise diagnostics carrying the call and argument `Span`
-- [ ] Keep eval-time errors as a defensive fallback — validated calls should never reach them
+- [x] Validate the `import "<name>"` string against the registry — `import "bogus" as b;` now errors at analysis time
+- [x] Per `ModuleCall`: method exists; positional count within min/max; named arguments are recognized and required ones present; literal argument types match the declared `ValueTy`
+- [x] Emit precise diagnostics carrying the call and argument `Span`
+- [x] Keep eval-time errors as a defensive fallback — validated calls should never reach them
 
 ---
 
@@ -161,10 +161,10 @@ Validate module names, method names, and argument arity and types during semanti
 
 Add the deterministic, low-risk standard-library modules.
 
-- [ ] `str` — `upper`, `lower`, `trim`, `replace`, `split`, `join`, `contains`, `starts_with`, `ends_with`, `len`
-- [ ] `path` — `join`, `dir`, `base`, `stem`, `ext`, `with_ext`, `abs` (relative to the script directory)
-- [ ] `hash` — `sha256`, `sha256_file`, reusing the Phase 7 hasher
-- [ ] `env.has("VAR")` addition
+- [x] `str` — `upper`, `lower`, `trim`, `replace`, `split`, `join`, `contains`, `starts_with`, `ends_with`, `len`
+- [x] `path` — `join`, `dir`, `base`, `stem`, `ext`, `with_ext`, `abs` (relative to the script directory)
+- [x] `hash` — `sha256`, `sha256_file`, reusing the Phase 7 hasher
+- [x] `env.has("VAR")` addition
 
 ---
 
@@ -172,8 +172,8 @@ Add the deterministic, low-risk standard-library modules.
 
 Add side-effecting but read-only modules. File mutation stays in the existing `write` / `copy` / `move` / `delete` step layer.
 
-- [ ] `fs` — `exists`, `read`, `is_dir`, `is_file`, `size`, `list`
-- [ ] `json` — `parse`, `get(text, "a.b.0")`, `stringify` (opaque-string / path-getter form, no `Value` enum change)
+- [x] `fs` — `exists`, `read`, `is_dir`, `is_file`, `size`, `list`
+- [x] `json` — `parse`, `get(text, "a.b.0")`, `stringify` (opaque-string / path-getter form, no `Value` enum change)
 
 ---
 
