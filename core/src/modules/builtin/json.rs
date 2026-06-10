@@ -133,7 +133,11 @@ mod tests {
 
     fn call(method: &str, args: &[&str]) -> Result<Value> {
         let span = span();
-        let cx = ModuleCx { span: &span, script_dir: Path::new(".") };
+        let cx = ModuleCx {
+            span: &span,
+            script_dir: Path::new("."),
+            permissions: crate::modules::Permissions::all(),
+        };
         let resolved: Vec<ResolvedArg> = args
             .iter()
             .map(|a| ResolvedArg { name: None, value: Value::String(a.to_string()) })

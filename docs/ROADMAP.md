@@ -191,12 +191,12 @@ Let users add modules via subprocess plugins that speak JSON over stdio — no c
 
 ### Phase 14: Permissioned I/O Modules
 
-Introduce a capability model, then the modules that require it. Decision-gated and likely a later milestone.
+Introduce a capability model, then the modules that require it.
 
-- [ ] Permission model — `--allow-run` / `--allow-net` flags and/or a manifest `[permissions]` block
-- [ ] `shell` / `exec` module (capture stdout), gated on the `run` capability
-- [ ] `http` module (`get`, `download`), gated on the `net` capability
-- [ ] `time` module (`now`, `unix`, `format`, calendar fields), with a note on determinism vs. change detection
+- [x] Permission model — `--allow-run` / `--allow-net` (and `--allow-all`) flags **and** a manifest `[permissions]` block; the granted set is their union, defaulting to all-denied
+- [x] `shell` module (`run`, capturing stdout), gated on the `run` capability
+- [x] `http` module (`get`, `download`), gated on the `net` capability
+- [x] `time` module (`now`, `unix`, `format`), ungated, with a determinism-vs-change-detection note in the module docs
 
 ---
 

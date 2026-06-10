@@ -71,7 +71,11 @@ mod tests {
 
     fn call_in(method: &str, args: &[ResolvedArg], dir: &Path) -> Result<Value> {
         let span = span();
-        let cx = ModuleCx { span: &span, script_dir: dir };
+        let cx = ModuleCx {
+            span: &span,
+            script_dir: dir,
+            permissions: crate::modules::Permissions::all(),
+        };
         HashModule.call(method, args, &cx)
     }
 

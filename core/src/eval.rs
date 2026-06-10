@@ -301,7 +301,11 @@ impl<'a> Evaluator<'a> {
                         })
                     })
                     .collect::<Result<_>>()?;
-                let cx = modules::ModuleCx { span: &c.span, script_dir: &self.ctx.script_dir };
+                let cx = modules::ModuleCx {
+                    span: &c.span,
+                    script_dir: &self.ctx.script_dir,
+                    permissions: self.ctx.registry.permissions(),
+                };
                 self.ctx.registry.dispatch(&module_name, &c.method, &resolved, &cx)
             }
             Expr::StageRef(r)     => self

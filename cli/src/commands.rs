@@ -5,11 +5,11 @@
 
 use std::path::Path;
 
-use clap::{Arg, Command};
+use clap::{Arg, ArgAction, Command};
 use console::style;
 use mainstage_core::{
     analyze_with, ast, cache, eval_program_with, parse, run_pipeline_reported, AnalysisResult,
-    EvalContext, ModuleRegistry, Reporter, Source,
+    EvalContext, ModuleRegistry, Permissions, Reporter, Source,
 };
 use mainstage_core::ast::Program;
 
@@ -26,9 +26,19 @@ fn file_arg() -> Arg {
         .help("Path to the .ms script")
 }
 
-/// Register all CLI subcommands and the top-level `--file` option.
+/// Build a global capability-granting flag. Marked `global` so it is accepted both
+/// before and after the subcommand (e.g. `mainstage --allow-run run release`).
+fn capability_flag(name: &'static str, help: &'static str) -> Arg {
+    Arg::new(name).long(name).action(ArgAction::SetTrue).global(true).help(help)
+}
+
+/// Register all CLI subcommands, the top-level `--file` option, and the capability
+/// flags that grant side-effecting modules permission to run.
 pub fn setup(cli: Command) -> Command {
     cli.arg(file_arg())
+        .arg(capability_flag("allow-run", "Allow the shell module to run external commands"))
+        .arg(capability_flag("allow-net", "Allow the http module to make network requests"))
+        .arg(capability_flag("allow-all", "Grant every capability (--allow-run and --allow-net)"))
         .subcommand(
             Command::new("run")
                 .about("Run a named pipeline")
@@ -59,14 +69,19 @@ pub fn setup(cli: Command) -> Command {
 
 /// Dispatch the matched command and return the process exit code.
 pub fn dispatch(matches: &clap::ArgMatches) -> i32 {
+    // Capability flags are global, so reading them from the top-level matches captures
+    // them wherever they appear on the command line.
+    let flags = flag_permissions(matches);
     match matches.subcommand() {
-        Some(("run", sub)) => cmd_run(file_of(sub), Some(sub.get_one::<String>("name").unwrap())),
-        Some(("list", sub)) => cmd_list(file_of(sub)),
+        Some(("run", sub)) => {
+            cmd_run(file_of(sub), Some(sub.get_one::<String>("name").unwrap()), flags)
+        }
+        Some(("list", sub)) => cmd_list(file_of(sub), flags),
         Some(("clean", sub)) => cmd_clean(file_of(sub)),
         Some(("parse", sub)) => cmd_parse(file_of(sub)),
-        Some(("eval", sub)) => cmd_eval(file_of(sub)),
+        Some(("eval", sub)) => cmd_eval(file_of(sub), flags),
         // No subcommand: run the default pipeline.
-        None => cmd_run(file_of(matches), None),
+        None => cmd_run(file_of(matches), None, flags),
         Some((other, _)) => {
             eprintln!("{} unknown command '{}'", style("error:").red().bold(), other);
             2
@@ -78,10 +93,19 @@ fn file_of(matches: &clap::ArgMatches) -> &str {
     matches.get_one::<String>("file").map(String::as_str).unwrap_or(DEFAULT_SCRIPT)
 }
 
+/// Derive the capabilities granted on the command line. `--allow-all` implies both.
+fn flag_permissions(matches: &clap::ArgMatches) -> Permissions {
+    let all = matches.get_flag("allow-all");
+    Permissions {
+        run: all || matches.get_flag("allow-run"),
+        net: all || matches.get_flag("allow-net"),
+    }
+}
+
 // ── run ─────────────────────────────────────────────────────────────────────────
 
-fn cmd_run(file: &str, pipeline: Option<&str>) -> i32 {
-    let Some((program, analysis, ctx)) = prepare(file) else {
+fn cmd_run(file: &str, pipeline: Option<&str>, perms: Permissions) -> i32 {
+    let Some((program, analysis, ctx)) = prepare(file, perms) else {
         return 1;
     };
 
@@ -102,8 +126,8 @@ fn cmd_run(file: &str, pipeline: Option<&str>) -> i32 {
 
 // ── list ────────────────────────────────────────────────────────────────────────
 
-fn cmd_list(file: &str) -> i32 {
-    let Some((program, _, _)) = prepare(file) else {
+fn cmd_list(file: &str, perms: Permissions) -> i32 {
+    let Some((program, _, _)) = prepare(file, perms) else {
         return 1;
     };
 
@@ -180,8 +204,8 @@ fn cmd_parse(file: &str) -> i32 {
     }
 }
 
-fn cmd_eval(file: &str) -> i32 {
-    match prepare(file) {
+fn cmd_eval(file: &str, perms: Permissions) -> i32 {
+    match prepare(file, perms) {
         Some((_, _, ctx)) => {
             println!("{ctx:#?}");
             0
@@ -194,7 +218,11 @@ fn cmd_eval(file: &str) -> i32 {
 
 /// Load, parse, analyze, and evaluate `file`. On any error, print it and return
 /// `None`. On success, return the program, its analysis, and the eval context.
-fn prepare(file: &str) -> Option<(Program, AnalysisResult, EvalContext)> {
+///
+/// `flag_perms` are the capabilities granted on the command line; they are unioned
+/// with any declared in the manifest `[permissions]` block, so a capability granted
+/// by either source is in effect for the run.
+fn prepare(file: &str, flag_perms: Permissions) -> Option<(Program, AnalysisResult, EvalContext)> {
     let source = match Source::from_file(file) {
         Ok(s) => s,
         Err(e) => {
@@ -209,11 +237,19 @@ fn prepare(file: &str) -> Option<(Program, AnalysisResult, EvalContext)> {
             return None;
         }
     };
+    let manifest_perms = match Permissions::from_manifest(script_dir(file)) {
+        Ok(p) => p,
+        Err(e) => {
+            fail(e);
+            return None;
+        }
+    };
     // Construct the registry once and share it between analysis and evaluation so
     // both agree on the set of available modules. Plugins discovered under the
-    // script directory are spawned here and live for the rest of the run.
+    // script directory are spawned here and live for the rest of the run. The granted
+    // capabilities are the union of the manifest's and the command line's.
     let registry = match ModuleRegistry::with_plugins(script_dir(file)) {
-        Ok(r) => r,
+        Ok(r) => r.with_permissions(manifest_perms.union(flag_perms)),
         Err(e) => {
             fail(e);
             return None;

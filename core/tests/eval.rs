@@ -6,7 +6,10 @@
 
 use std::path::PathBuf;
 
-use mainstage_core::{eval_program, parse, EvalContext, Source, Value};
+use mainstage_core::{
+    eval_program, eval_program_with, parse, EvalContext, Error, ModuleRegistry, Permissions,
+    Source, Value,
+};
 
 /// Parse `src` and evaluate it relative to `script_dir`, asserting success.
 fn eval_in(src: &str, script_dir: &std::path::Path) -> EvalContext {
@@ -318,4 +321,68 @@ fn env_module_reads_variables_and_defaults() {
     assert!(matches!(let_val(&ctx, "absent"), Value::Bool(false)));
 
     unsafe { std::env::remove_var("_MS_EVAL_ENV_PRESENT") };
+}
+
+// ── Permissioned modules (Phase 14) ───────────────────────────────────────────────
+
+/// Evaluate `src` with `perms` granted, returning the raw result so a permission
+/// denial can be asserted as an error rather than panicking.
+fn eval_with_perms(src: &str, perms: Permissions) -> Result<EvalContext, Error> {
+    let program = parse(&Source::from_str("test.ms", src)).expect("parse should succeed");
+    let registry = ModuleRegistry::standard().with_permissions(perms);
+    eval_program_with(&program, &PathBuf::from("."), registry)
+}
+
+#[test]
+fn time_module_now_unix_and_format() {
+    // `time` is ungated, so the default registry evaluates it directly.
+    let ctx = eval(
+        r#"
+        import "time" as time;
+        let secs = time.unix();
+        let year = time.format("%Y");
+        "#,
+    );
+    assert!(string_of(&ctx, "secs").parse::<i64>().unwrap() > 0);
+    assert_eq!(string_of(&ctx, "year").len(), 4);
+}
+
+#[test]
+fn shell_run_denied_without_run_capability() {
+    let err = eval_with_perms(
+        r#"
+        import "shell" as shell;
+        let out = shell.run("echo hi");
+        "#,
+        Permissions::default(),
+    )
+    .expect_err("shell.run must be denied without the run capability");
+    assert!(format!("{err}").contains("permission denied"), "got: {err}");
+}
+
+#[test]
+fn shell_run_succeeds_with_run_capability() {
+    let ctx = eval_with_perms(
+        r#"
+        import "shell" as shell;
+        let out = shell.run("echo hi there");
+        "#,
+        Permissions::all(),
+    )
+    .expect("shell.run should succeed once granted");
+    assert_eq!(string_of(&ctx, "out"), "hi there");
+}
+
+#[test]
+fn http_get_denied_without_net_capability() {
+    // The capability gate fires before any network access is attempted.
+    let err = eval_with_perms(
+        r#"
+        import "http" as http;
+        let body = http.get("https://example.com");
+        "#,
+        Permissions::default(),
+    )
+    .expect_err("http.get must be denied without the net capability");
+    assert!(format!("{err}").contains("permission denied"), "got: {err}");
 }

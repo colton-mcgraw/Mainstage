@@ -16,7 +16,7 @@ pub use eval::{
     eval_condition, eval_expr, eval_program, eval_program_with, EvalContext, FileEntry, Value,
 };
 pub use executor::{execute_step, execute_steps};
-pub use modules::{ExternalModule, Module, ModuleRegistry};
+pub use modules::{Capability, ExternalModule, Module, ModuleRegistry, Permissions};
 pub use runner::{run_pipeline, run_pipeline_reported, NoopReporter, Reporter};
 pub use parser::parse;
 pub use sema::{analyze, analyze_with, AnalysisResult};

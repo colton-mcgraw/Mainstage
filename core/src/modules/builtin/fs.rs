@@ -104,7 +104,11 @@ mod tests {
 
     fn call_in(method: &str, arg: &str, dir: &Path) -> Result<Value> {
         let span = span();
-        let cx = ModuleCx { span: &span, script_dir: dir };
+        let cx = ModuleCx {
+            span: &span,
+            script_dir: dir,
+            permissions: crate::modules::Permissions::all(),
+        };
         let args = vec![ResolvedArg { name: None, value: Value::String(arg.to_string()) }];
         FsModule.call(method, &args, &cx)
     }

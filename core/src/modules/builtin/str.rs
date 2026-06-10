@@ -153,7 +153,11 @@ mod tests {
 
     fn call(method: &str, args: &[ResolvedArg]) -> Result<Value> {
         let span = span();
-        let cx = ModuleCx { span: &span, script_dir: Path::new(".") };
+        let cx = ModuleCx {
+            span: &span,
+            script_dir: Path::new("."),
+            permissions: crate::modules::Permissions::all(),
+        };
         StrModule.call(method, args, &cx)
     }
 

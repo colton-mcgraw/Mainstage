@@ -97,7 +97,11 @@ mod tests {
 
     fn call_in(method: &str, args: &[ResolvedArg], dir: &Path) -> Result<Value> {
         let span = span();
-        let cx = ModuleCx { span: &span, script_dir: dir };
+        let cx = ModuleCx {
+            span: &span,
+            script_dir: dir,
+            permissions: crate::modules::Permissions::all(),
+        };
         GitModule.call(method, args, &cx)
     }
 
@@ -210,7 +214,11 @@ mod tests {
     #[test]
     fn git_unknown_method_errors() {
         let span = span();
-        let cx = ModuleCx { span: &span, script_dir: Path::new(".") };
+        let cx = ModuleCx {
+            span: &span,
+            script_dir: Path::new("."),
+            permissions: crate::modules::Permissions::all(),
+        };
         assert!(GitModule.call("nonexistent", &[], &cx).is_err());
     }
 }
