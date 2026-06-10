@@ -172,8 +172,8 @@ Add the deterministic, low-risk standard-library modules.
 
 Add side-effecting but read-only modules. File mutation stays in the existing `write` / `copy` / `move` / `delete` step layer.
 
-- [ ] `fs` — `exists`, `read`, `is_dir`, `is_file`, `size`, `list`
-- [ ] `json` — `parse`, `get(text, "a.b.0")`, `stringify` (opaque-string / path-getter form, no `Value` enum change)
+- [x] `fs` — `exists`, `read`, `is_dir`, `is_file`, `size`, `list`
+- [x] `json` — `parse`, `get(text, "a.b.0")`, `stringify` (opaque-string / path-getter form, no `Value` enum change)
 
 ---
 

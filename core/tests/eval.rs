@@ -249,3 +249,49 @@ fn hash_module_sha256() {
         "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
     );
 }
+
+#[test]
+fn fs_module_reads_relative_to_script_dir() {
+    let dir = unique_dir("fsmod");
+    std::fs::write(dir.join("config.txt"), "value").unwrap();
+
+    let ctx = eval_in(
+        r#"
+        import "fs" as fs;
+        let here = fs.exists("config.txt");
+        let gone = fs.exists("missing");
+        let body = fs.read("config.txt");
+        let n = fs.size("config.txt");
+        "#,
+        &dir,
+    );
+    assert!(matches!(let_val(&ctx, "here"), Value::Bool(true)));
+    assert!(matches!(let_val(&ctx, "gone"), Value::Bool(false)));
+    assert_eq!(string_of(&ctx, "body"), "value");
+    assert_eq!(string_of(&ctx, "n"), "5");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn json_module_reads_and_queries_a_file() {
+    // `.ms` string literals can't contain double quotes, so JSON lives in a file and
+    // is read with `fs.read` — also exercising fs + json composition.
+    let dir = unique_dir("jsonmod");
+    std::fs::write(dir.join("pkg.json"), r#"{"name": "app", "tags": ["a", "b"]}"#).unwrap();
+
+    let ctx = eval_in(
+        r#"
+        import "fs" as fs;
+        import "json" as json;
+        let doc = fs.read("pkg.json");
+        let name = json.get(doc, "name");
+        let tag = json.get(doc, "tags.1");
+        "#,
+        &dir,
+    );
+    assert_eq!(string_of(&ctx, "name"), "app");
+    assert_eq!(string_of(&ctx, "tag"), "b");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}

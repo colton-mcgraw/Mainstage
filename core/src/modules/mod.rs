@@ -15,13 +15,15 @@
 mod builtin;
 
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use crate::error::{Diagnostic, Error, Result, Span};
 use crate::eval::Value;
 
-pub use builtin::{EnvModule, GitModule, HashModule, PathModule, StrModule};
+pub use builtin::{
+    EnvModule, FsModule, GitModule, HashModule, JsonModule, PathModule, StrModule,
+};
 
 // ── Resolved argument ─────────────────────────────────────────────────────────
 
@@ -178,6 +180,8 @@ impl ModuleRegistry {
             Arc::new(StrModule),
             Arc::new(PathModule),
             Arc::new(HashModule),
+            Arc::new(FsModule),
+            Arc::new(JsonModule),
         ];
         Self::from_modules(mods)
     }
@@ -257,6 +261,13 @@ pub(crate) fn require_positional_string(
             idx + 1
         ))),
     }
+}
+
+/// Resolve `p` against `script_dir` when relative; absolute paths are returned as-is.
+/// Used by I/O modules so script-relative paths behave consistently with `glob`.
+pub(crate) fn resolve_path(script_dir: &Path, p: &str) -> PathBuf {
+    let raw = PathBuf::from(p);
+    if raw.is_absolute() { raw } else { script_dir.join(raw) }
 }
 
 /// Return the `idx`-th positional (unnamed) argument as a `List`, or error.
