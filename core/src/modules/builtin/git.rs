@@ -4,7 +4,7 @@ use std::sync::LazyLock;
 
 use crate::error::Result;
 use crate::eval::Value;
-use crate::modules::{named_bool, MethodSig, Module, ModuleCx, NamedParam, ResolvedArg, ValueTy};
+use crate::modules::{named_bool, named_string, MethodSig, Module, ModuleCx, NamedParam, ResolvedArg, ValueTy};
 
 /// `git.sha()`, `git.sha(short: true)`, `git.tag()`.
 pub struct GitModule;
@@ -24,7 +24,11 @@ static METHODS: LazyLock<Vec<MethodSig>> = LazyLock::new(|| {
         MethodSig {
             name: "tag".to_string(),
             params: vec![],
-            named: vec![],
+            named: vec![NamedParam {
+                name: "default".to_string(),
+                ty: ValueTy::String,
+                required: false,
+            }],
             returns: ValueTy::String,
         },
     ]
@@ -49,7 +53,15 @@ impl Module for GitModule {
                     run_git(&["rev-parse", "HEAD"], cx)
                 }
             }
-            "tag" => run_git(&["describe", "--tags", "--abbrev=0"], cx),
+            "tag" => {
+                match run_git(&["describe", "--tags", "--abbrev=0"], cx) {
+                    Ok(v) => Ok(v),
+                    Err(e) => match named_string(args, "default") {
+                        Some(d) => Ok(Value::String(d)),
+                        None => Err(e),
+                    },
+                }
+            }
             _ => Err(cx.error(format!("git has no method '{}'", method))),
         }
     }
