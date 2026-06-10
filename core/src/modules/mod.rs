@@ -13,8 +13,9 @@
 //! with a registry that the rest of the crate is threaded through.
 
 mod builtin;
+pub mod plugin;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -24,6 +25,7 @@ use crate::eval::Value;
 pub use builtin::{
     EnvModule, FsModule, GitModule, HashModule, JsonModule, PathModule, StrModule,
 };
+pub use plugin::ExternalModule;
 
 // ── Resolved argument ─────────────────────────────────────────────────────────
 
@@ -174,7 +176,29 @@ pub struct ModuleRegistry {
 impl ModuleRegistry {
     /// The registry of built-in standard-library modules.
     pub fn standard() -> Self {
-        let mods: Vec<Arc<dyn Module>> = vec![
+        Self::from_modules(Self::standard_modules())
+    }
+
+    /// The standard registry extended with any external plugins discovered under
+    /// `script_dir` (see [`plugin::discover`]). Built-in modules always take
+    /// precedence — a plugin may never shadow one — and plugin processes are
+    /// spawned here and kept alive for the lifetime of the returned registry.
+    ///
+    /// Pass the resulting registry to both [`analyze_with`](crate::sema::analyze_with)
+    /// and [`eval_program_with`](crate::eval::eval_program_with) so plugin calls are
+    /// validated identically to built-in ones.
+    pub fn with_plugins(script_dir: &Path) -> Result<Self> {
+        let mut mods: Vec<Arc<dyn Module>> = Self::standard_modules();
+        let reserved: HashSet<String> = mods.iter().map(|m| m.name().to_string()).collect();
+        for plugin in plugin::discover(script_dir, &reserved)? {
+            mods.push(Arc::new(plugin));
+        }
+        Ok(Self::from_modules(mods))
+    }
+
+    /// The built-in standard-library modules, as trait objects.
+    fn standard_modules() -> Vec<Arc<dyn Module>> {
+        vec![
             Arc::new(EnvModule),
             Arc::new(GitModule),
             Arc::new(StrModule),
@@ -182,8 +206,7 @@ impl ModuleRegistry {
             Arc::new(HashModule),
             Arc::new(FsModule),
             Arc::new(JsonModule),
-        ];
-        Self::from_modules(mods)
+        ]
     }
 
     fn from_modules(mods: Vec<Arc<dyn Module>>) -> Self {

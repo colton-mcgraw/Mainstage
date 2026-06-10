@@ -76,7 +76,7 @@ impl Analyzer {
                     if !self.registry.contains(&d.module) {
                         self.error(
                             format!(
-                                "unknown module \"{}\"; no built-in module with that name",
+                                "unknown module \"{}\"; no built-in module or discovered plugin with that name",
                                 d.module
                             ),
                             d.span.clone(),

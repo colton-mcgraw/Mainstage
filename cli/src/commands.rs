@@ -210,8 +210,15 @@ fn prepare(file: &str) -> Option<(Program, AnalysisResult, EvalContext)> {
         }
     };
     // Construct the registry once and share it between analysis and evaluation so
-    // both agree on the set of available modules.
-    let registry = ModuleRegistry::standard();
+    // both agree on the set of available modules. Plugins discovered under the
+    // script directory are spawned here and live for the rest of the run.
+    let registry = match ModuleRegistry::with_plugins(script_dir(file)) {
+        Ok(r) => r,
+        Err(e) => {
+            fail(e);
+            return None;
+        }
+    };
     let analysis = match analyze_with(&program, &registry) {
         Ok(a) => a,
         Err(e) => {
