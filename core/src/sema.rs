@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use crate::{
     ast::*,
     error::{Diagnostic, Error, Result, Span},
-    modules::ModuleRegistry,
+    modules::{MethodSig, ModuleRegistry, ValueTy},
 };
 
 // ── Public API ─────────────────────────────────────────────────────────────────
@@ -40,9 +40,8 @@ pub fn analyze_with(program: &Program, registry: &ModuleRegistry) -> Result<Anal
 
 struct Analyzer {
     errors: Vec<Diagnostic>,
-    /// The module registry. Threaded in now; consumed by Phase 10 (semantic call
-    /// validation) to check module names, method names, and argument types.
-    #[allow(dead_code)]
+    /// The module registry — the source of truth for which modules exist and the
+    /// signatures of their methods. Used to validate `import`s and module calls.
     registry: ModuleRegistry,
 }
 
@@ -74,13 +73,22 @@ impl Analyzer {
         for item in &program.items {
             match item {
                 Item::Import(d) => {
+                    if !self.registry.contains(&d.module) {
+                        self.error(
+                            format!(
+                                "unknown module \"{}\"; no built-in module with that name",
+                                d.module
+                            ),
+                            d.span.clone(),
+                        );
+                    }
                     if scope.import_aliases.contains_key(&d.alias) {
                         self.error(
                             format!("import alias '{}' is already defined", d.alias),
                             d.span.clone(),
                         );
                     } else {
-                        scope.import_aliases.insert(d.alias.clone(), d.span.clone());
+                        scope.import_aliases.insert(d.alias.clone(), d.module.clone());
                     }
                 }
                 Item::Let(d) => {
@@ -280,18 +288,12 @@ impl Analyzer {
                 self.check_if_type_compat(if_expr);
             }
             Expr::ModuleCall(call) => {
-                if !scope.import_aliases.contains_key(&call.module) {
-                    self.error(
-                        format!(
-                            "use of undeclared module '{}'; add `import \"{}\" as {};` at the top of the file",
-                            call.module, call.module, call.module
-                        ),
-                        call.span.clone(),
-                    );
-                }
+                // Resolve argument expressions for name resolution, then validate the
+                // call (module/method existence, arity, argument types) against the registry.
                 for arg in &call.args {
                     self.resolve_expr(&arg.value, scope, ctx);
                 }
+                self.validate_module_call(call, scope);
             }
             Expr::StageRef(r) => {
                 if !scope.stage_names.contains_key(&r.stage) {
@@ -399,6 +401,130 @@ impl Analyzer {
             }
         }
     }
+
+    // ── Module-call validation ────────────────────────────────────────────────
+    //
+    // Validates a `<alias>.<method>(...)` call against the registry: the alias is
+    // declared, the method exists, and the arguments match the declared signature.
+    // The evaluator keeps eval-time checks as a defensive fallback, but a call that
+    // passes here should never trip them.
+
+    fn validate_module_call(&mut self, call: &ModuleCallExpr, scope: &Scope) {
+        let module_name = match scope.import_aliases.get(&call.module) {
+            Some(name) => name.clone(),
+            None => {
+                self.error(
+                    format!(
+                        "use of undeclared module '{}'; add `import \"{}\" as {};` at the top of the file",
+                        call.module, call.module, call.module
+                    ),
+                    call.span.clone(),
+                );
+                return;
+            }
+        };
+
+        // If the bound module name is not registered, the `import` was already
+        // reported as unknown; skip method/argument checks to avoid cascading errors.
+        if !self.registry.contains(&module_name) {
+            return;
+        }
+
+        let sig = match self.registry.method_sig(&module_name, &call.method) {
+            Some(s) => s.clone(),
+            None => {
+                self.error(
+                    format!("module '{}' has no method '{}'", module_name, call.method),
+                    call.span.clone(),
+                );
+                return;
+            }
+        };
+
+        self.check_call_args(call, &module_name, &sig);
+    }
+
+    fn check_call_args(&mut self, call: &ModuleCallExpr, module: &str, sig: &MethodSig) {
+        let positional: Vec<&CallArg> = call.args.iter().filter(|a| a.name.is_none()).collect();
+
+        // Positional arity: within [min, max] required/declared positionals.
+        let (min, max) = (sig.min_positional(), sig.max_positional());
+        if positional.len() < min || positional.len() > max {
+            let expected = if min == max { min.to_string() } else { format!("{min} to {max}") };
+            self.error(
+                format!(
+                    "{}.{} expects {} positional argument(s), found {}",
+                    module,
+                    sig.name,
+                    expected,
+                    positional.len()
+                ),
+                call.span.clone(),
+            );
+        }
+
+        // Positional argument types (only where a literal type is statically known).
+        for (i, arg) in positional.iter().enumerate() {
+            if let Some(param) = sig.params.get(i) {
+                self.check_arg_type(
+                    arg,
+                    param.ty,
+                    &format!("{}.{} positional argument {}", module, sig.name, i + 1),
+                );
+            }
+        }
+
+        // Named arguments: each must be a recognized keyword, and well-typed.
+        for arg in call.args.iter().filter(|a| a.name.is_some()) {
+            let name = arg.name.as_deref().unwrap();
+            match sig.named_param(name) {
+                Some(np) => self.check_arg_type(
+                    arg,
+                    np.ty,
+                    &format!("{}.{} argument '{}'", module, sig.name, name),
+                ),
+                None => self.error(
+                    format!("{}.{} has no named argument '{}'", module, sig.name, name),
+                    arg.span.clone(),
+                ),
+            }
+        }
+
+        // Required named arguments must be present.
+        for np in sig.named.iter().filter(|p| p.required) {
+            let present = call.args.iter().any(|a| a.name.as_deref() == Some(np.name.as_str()));
+            if !present {
+                self.error(
+                    format!("{}.{} requires named argument '{}'", module, sig.name, np.name),
+                    call.span.clone(),
+                );
+            }
+        }
+    }
+
+    /// Check a single argument's statically-inferable type against its declared type.
+    /// Arguments whose type is not known until runtime (e.g. identifiers) are skipped.
+    fn check_arg_type(&mut self, arg: &CallArg, expected: ValueTy, what: &str) {
+        if let Some(actual) = infer_expr_type(&arg.value)
+            && !accepts_ty(expected, &actual)
+        {
+            self.error(
+                format!("{} must be {}, found {}", what, expected.describe(), actual.describe()),
+                arg.span.clone(),
+            );
+        }
+    }
+}
+
+/// Whether a parameter declared as `expected` accepts a statically-inferred `actual`.
+fn accepts_ty(expected: ValueTy, actual: &ExprType) -> bool {
+    match expected {
+        ValueTy::Any => true,
+        ValueTy::String => matches!(actual, ExprType::String),
+        ValueTy::Bool => matches!(actual, ExprType::Bool),
+        ValueTy::List => matches!(actual, ExprType::List),
+        ValueTy::FileSet => matches!(actual, ExprType::FileSet),
+    }
 }
 
 // ── Dependency graph ───────────────────────────────────────────────────────────
@@ -480,7 +606,9 @@ struct Scope {
     let_bindings: Vec<(String, Span)>,
     stage_names: HashMap<String, Span>,
     pipeline_names: HashMap<String, Span>,
-    import_aliases: HashMap<String, Span>,
+    /// Maps each import alias to the raw module name it binds (e.g. `vcs → "git"`),
+    /// so module calls can be validated against the registry.
+    import_aliases: HashMap<String, String>,
     project_fields: HashMap<String, Span>,
     has_project: bool,
 }

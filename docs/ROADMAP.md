@@ -150,10 +150,10 @@ Replace the hardcoded `dispatch` match with a `Module` trait and a `ModuleRegist
 
 Validate module names, method names, and argument arity and types during semantic analysis instead of at eval time.
 
-- [ ] Validate the `import "<name>"` string against the registry — `import "bogus" as b;` now errors at analysis time
-- [ ] Per `ModuleCall`: method exists; positional count within min/max; named arguments are recognized and required ones present; literal argument types match the declared `ValueTy`
-- [ ] Emit precise diagnostics carrying the call and argument `Span`
-- [ ] Keep eval-time errors as a defensive fallback — validated calls should never reach them
+- [x] Validate the `import "<name>"` string against the registry — `import "bogus" as b;` now errors at analysis time
+- [x] Per `ModuleCall`: method exists; positional count within min/max; named arguments are recognized and required ones present; literal argument types match the declared `ValueTy`
+- [x] Emit precise diagnostics carrying the call and argument `Span`
+- [x] Keep eval-time errors as a defensive fallback — validated calls should never reach them
 
 ---
 

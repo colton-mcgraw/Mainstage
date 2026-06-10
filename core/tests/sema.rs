@@ -79,6 +79,95 @@ fn declared_module_resolves() {
     );
 }
 
+// ── Module-call validation ────────────────────────────────────────────────────────
+
+#[test]
+fn unknown_imported_module_errors() {
+    let diags = analyze_err(r#"import "bogus" as b;"#);
+    assert!(has_msg(&diags, r#"unknown module "bogus""#));
+}
+
+#[test]
+fn unknown_method_errors() {
+    let diags = analyze_err(
+        r#"
+        import "git" as git;
+        let v = git.branch();
+        "#,
+    );
+    assert!(has_msg(&diags, "module 'git' has no method 'branch'"));
+}
+
+#[test]
+fn too_many_positional_args_errors() {
+    // env.get takes exactly one positional (the variable name).
+    let diags = analyze_err(
+        r#"
+        import "env" as env;
+        let v = env.get("A", "B");
+        "#,
+    );
+    assert!(has_msg(&diags, "expects 1 positional argument(s), found 2"));
+}
+
+#[test]
+fn missing_positional_arg_errors() {
+    let diags = analyze_err(
+        r#"
+        import "env" as env;
+        let v = env.get();
+        "#,
+    );
+    assert!(has_msg(&diags, "expects 1 positional argument(s), found 0"));
+}
+
+#[test]
+fn unknown_named_arg_errors() {
+    let diags = analyze_err(
+        r#"
+        import "git" as git;
+        let v = git.sha(long: true);
+        "#,
+    );
+    assert!(has_msg(&diags, "has no named argument 'long'"));
+}
+
+#[test]
+fn wrong_positional_arg_type_errors() {
+    // env.get's variable name must be a string, not a bool.
+    let diags = analyze_err(
+        r#"
+        import "env" as env;
+        let v = env.get(true);
+        "#,
+    );
+    assert!(has_msg(&diags, "must be string, found bool"));
+}
+
+#[test]
+fn wrong_named_arg_type_errors() {
+    // git.sha's `short` must be a bool, not a string.
+    let diags = analyze_err(
+        r#"
+        import "git" as git;
+        let v = git.sha(short: "yes");
+        "#,
+    );
+    assert!(has_msg(&diags, "must be bool, found string"));
+}
+
+#[test]
+fn valid_calls_with_args_ok() {
+    analyze_ok(
+        r#"
+        import "git" as git;
+        import "env" as env;
+        let a = git.sha(short: true);
+        let b = env.get("HOME", default: "/tmp");
+        "#,
+    );
+}
+
 // ── Project access ──────────────────────────────────────────────────────────────
 
 #[test]
