@@ -99,6 +99,31 @@ fn unknown_method_errors() {
 }
 
 #[test]
+fn permissioned_modules_resolve_and_validate() {
+    // The capability-gated modules are registered, so their calls pass analysis
+    // (permission is a runtime concern, not a static one); arity is still checked.
+    analyze_ok(
+        r#"
+        import "shell" as shell;
+        import "http" as http;
+        import "time" as time;
+        let a = shell.run("echo hi");
+        let b = http.get("https://example.com");
+        let c = time.format("%Y");
+        let d = time.now();
+        "#,
+    );
+
+    let diags = analyze_err(
+        r#"
+        import "time" as time;
+        let bad = time.now("unexpected");
+        "#,
+    );
+    assert!(has_msg(&diags, "time"));
+}
+
+#[test]
 fn too_many_positional_args_errors() {
     // env.get takes exactly one positional (the variable name).
     let diags = analyze_err(

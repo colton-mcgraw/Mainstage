@@ -104,6 +104,28 @@ directory by default; pass `-f, --file <FILE>` to point at a different script. C
 detection persists per project in `.mainstage/cache.json` next to the script — a stage
 is skipped when its `inputs` are unchanged and its declared `outputs` still exist.
 
+### Capabilities
+
+Side-effecting modules are denied by default and must be granted a capability before
+they run:
+
+| Module | Capability | Grant |
+| --- | --- | --- |
+| `shell` (run external commands) | `run` | `--allow-run` |
+| `http` (network requests) | `net` | `--allow-net` |
+
+Grant both with `--allow-all`, or declare them per-project in a `[permissions]` block
+of `plugins.toml` next to the script:
+
+```toml
+[permissions]
+run = true
+net = false
+```
+
+A capability granted by *either* the flags or the manifest is in effect. The `time`
+module reads the wall clock but is not gated.
+
 ## Building from Source
 
 Requires Rust stable (edition 2024).

@@ -153,7 +153,11 @@ mod tests {
 
     fn call(method: &str, args: &[ResolvedArg]) -> Result<Value> {
         let span = span();
-        let cx = ModuleCx { span: &span, script_dir: Path::new(".") };
+        let cx = ModuleCx {
+            span: &span,
+            script_dir: Path::new("."),
+            permissions: crate::modules::Permissions::all(),
+        };
         StrModule.call(method, args, &cx)
     }
 
@@ -207,6 +211,31 @@ mod tests {
     fn len_counts_characters() {
         // Counts characters, not bytes: "é" is one char.
         assert!(matches!(call("len", &[s("café")]).unwrap(), Value::String(x) if x == "4"));
+    }
+
+    #[test]
+    fn join_renders_non_string_values() {
+        // `join` stringifies each element via `display_string`, so non-string values
+        // (here a bool) are rendered rather than rejected.
+        let parts = ResolvedArg {
+            name: None,
+            value: Value::List(vec![Value::String("on".to_string()), Value::Bool(true)]),
+        };
+        assert!(matches!(call("join", &[parts, s(":")]).unwrap(), Value::String(x) if x == "on:true"));
+    }
+
+    #[test]
+    fn wrong_argument_type_errors() {
+        // A string method given a non-string positional argument is an error.
+        let b = ResolvedArg { name: None, value: Value::Bool(true) };
+        assert!(call("upper", &[b]).is_err());
+    }
+
+    #[test]
+    fn missing_arguments_error() {
+        // `replace` needs three positionals; fewer is an arity error.
+        assert!(call("replace", &[s("a"), s("b")]).is_err());
+        assert!(call("contains", &[s("a")]).is_err());
     }
 
     #[test]

@@ -104,7 +104,11 @@ mod tests {
 
     fn call_in(method: &str, arg: &str, dir: &Path) -> Result<Value> {
         let span = span();
-        let cx = ModuleCx { span: &span, script_dir: dir };
+        let cx = ModuleCx {
+            span: &span,
+            script_dir: dir,
+            permissions: crate::modules::Permissions::all(),
+        };
         let args = vec![ResolvedArg { name: None, value: Value::String(arg.to_string()) }];
         FsModule.call(method, &args, &cx)
     }
@@ -175,5 +179,28 @@ mod tests {
         let dir = unique_dir("missing");
         assert!(call_in("read", "nope.txt", &dir).is_err());
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn size_and_list_missing_error() {
+        // Unlike the predicate methods, `size` and `list` surface the I/O failure.
+        let dir = unique_dir("missing2");
+        assert!(call_in("size", "nope.txt", &dir).is_err());
+        assert!(call_in("list", "no_such_dir", &dir).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn predicates_are_false_for_missing_paths() {
+        // The boolean predicates never error — a missing path is simply false.
+        let dir = unique_dir("missing3");
+        assert!(matches!(call_in("is_file", "nope", &dir).unwrap(), Value::Bool(false)));
+        assert!(matches!(call_in("is_dir", "nope", &dir).unwrap(), Value::Bool(false)));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn unknown_method_errors() {
+        assert!(call_in("nope", "x", Path::new(".")).is_err());
     }
 }

@@ -13,6 +13,7 @@
 //! with a registry that the rest of the crate is threaded through.
 
 mod builtin;
+mod permissions;
 pub mod plugin;
 
 use std::collections::{HashMap, HashSet};
@@ -23,8 +24,10 @@ use crate::error::{Diagnostic, Error, Result, Span};
 use crate::eval::Value;
 
 pub use builtin::{
-    EnvModule, FsModule, GitModule, HashModule, JsonModule, PathModule, StrModule,
+    EnvModule, FsModule, GitModule, HashModule, HttpModule, JsonModule, PathModule, ShellModule,
+    StrModule, TimeModule,
 };
+pub use permissions::{Capability, Permissions};
 pub use plugin::ExternalModule;
 
 // ── Resolved argument ─────────────────────────────────────────────────────────
@@ -135,12 +138,33 @@ impl MethodSig {
 pub struct ModuleCx<'a> {
     pub span: &'a Span,
     pub script_dir: &'a Path,
+    /// Capabilities granted to this run; consulted by side-effecting modules via
+    /// [`ModuleCx::require`]. Defaults (everything denied) unless the user opts in.
+    pub permissions: Permissions,
 }
 
 impl ModuleCx<'_> {
     /// Build an eval [`Error`] carrying this call's span.
     pub fn error(&self, msg: impl Into<String>) -> Error {
         Error::Eval(vec![Diagnostic::new(msg).with_span(self.span.clone())])
+    }
+
+    /// Ensure `cap` is granted, or fail with a diagnostic that names the flag and
+    /// manifest key the user can add to grant it. Side-effecting modules call this
+    /// before performing the gated operation.
+    pub fn require(&self, cap: Capability) -> Result<()> {
+        if self.permissions.grants(cap) {
+            Ok(())
+        } else {
+            Err(self.error(format!(
+                "permission denied: this operation needs the '{}' capability — re-run with {} \
+                 or add `{} = true` under [permissions] in {}",
+                cap.name(),
+                cap.flag(),
+                cap.name(),
+                plugin::MANIFEST,
+            )))
+        }
     }
 }
 
@@ -171,6 +195,11 @@ pub trait Module: Send + Sync {
 #[derive(Clone)]
 pub struct ModuleRegistry {
     modules: Arc<HashMap<String, Arc<dyn Module>>>,
+    /// Capabilities granted to this run, threaded into every [`ModuleCx`] the
+    /// evaluator builds. Defaults to all-denied; set via [`with_permissions`].
+    ///
+    /// [`with_permissions`]: ModuleRegistry::with_permissions
+    permissions: Permissions,
 }
 
 impl ModuleRegistry {
@@ -206,12 +235,28 @@ impl ModuleRegistry {
             Arc::new(HashModule),
             Arc::new(FsModule),
             Arc::new(JsonModule),
+            Arc::new(ShellModule),
+            Arc::new(HttpModule),
+            Arc::new(TimeModule),
         ]
     }
 
     fn from_modules(mods: Vec<Arc<dyn Module>>) -> Self {
         let map = mods.into_iter().map(|m| (m.name().to_string(), m)).collect();
-        Self { modules: Arc::new(map) }
+        // Capabilities default to denied; the CLI opts in via `with_permissions`.
+        Self { modules: Arc::new(map), permissions: Permissions::default() }
+    }
+
+    /// Return this registry with `permissions` granted. Threaded into every
+    /// [`ModuleCx`] so side-effecting modules can gate on the granted capabilities.
+    pub fn with_permissions(mut self, permissions: Permissions) -> Self {
+        self.permissions = permissions;
+        self
+    }
+
+    /// The capabilities granted to this run.
+    pub fn permissions(&self) -> Permissions {
+        self.permissions
     }
 
     /// Look up a module by its raw name.

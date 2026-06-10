@@ -33,7 +33,8 @@ use protocol::{CallResponse, DescribeResponse, Request, WireArg};
 /// The directory under the project root scanned for plugin executables.
 const PLUGINS_DIR: &str = ".mainstage/plugins";
 /// The manifest file (relative to the project root) mapping names to executables.
-const MANIFEST: &str = "plugins.toml";
+/// Also carries the optional `[permissions]` block (see [`Permissions::from_manifest`]).
+pub(crate) const MANIFEST: &str = "plugins.toml";
 
 // ── External module ─────────────────────────────────────────────────────────────
 
