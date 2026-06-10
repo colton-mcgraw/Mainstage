@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use crate::{
     ast::*,
     error::{Diagnostic, Error, Result, Span},
+    modules::ModuleRegistry,
 };
 
 // ── Public API ─────────────────────────────────────────────────────────────────
@@ -14,12 +15,19 @@ pub struct AnalysisResult {
     pub dependency_graph: HashMap<String, Vec<String>>,
 }
 
-/// Run all Phase 2 semantic checks on `program`.
+/// Run all Phase 2 semantic checks on `program`, using the standard module registry.
 ///
 /// Returns `Ok(AnalysisResult)` when the program is semantically valid, or
 /// `Err(Error::Semantic(...))` with every diagnostic found during analysis.
 pub fn analyze(program: &Program) -> Result<AnalysisResult> {
-    let mut a = Analyzer::new();
+    analyze_with(program, &ModuleRegistry::standard())
+}
+
+/// Like [`analyze`], but validates against the provided module `registry`. Pass the
+/// same registry used by [`eval_program_with`](crate::eval::eval_program_with) so
+/// analysis and evaluation agree on the available modules.
+pub fn analyze_with(program: &Program, registry: &ModuleRegistry) -> Result<AnalysisResult> {
+    let mut a = Analyzer::new(registry.clone());
     let result = a.run(program);
     if a.errors.is_empty() {
         Ok(result)
@@ -32,11 +40,15 @@ pub fn analyze(program: &Program) -> Result<AnalysisResult> {
 
 struct Analyzer {
     errors: Vec<Diagnostic>,
+    /// The module registry. Threaded in now; consumed by Phase 10 (semantic call
+    /// validation) to check module names, method names, and argument types.
+    #[allow(dead_code)]
+    registry: ModuleRegistry,
 }
 
 impl Analyzer {
-    fn new() -> Self {
-        Self { errors: Vec::new() }
+    fn new(registry: ModuleRegistry) -> Self {
+        Self { errors: Vec::new(), registry }
     }
 
     fn error(&mut self, msg: impl Into<String>, span: Span) {

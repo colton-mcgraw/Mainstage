@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use crate::{
     ast::*,
     error::{Diagnostic, Error, Result, Span},
-    modules,
+    modules::{self, ModuleRegistry},
 };
 
 // ── Value types ───────────────────────────────────────────────────────────────
@@ -110,6 +110,9 @@ pub struct EvalContext {
     /// name. Lets `<stage>.outputs` references evaluate at runtime once the producing
     /// stage has run; populated by the Phase 6 runner in dependency order.
     pub stage_output_refs: HashMap<String, Value>,
+    /// The module registry used to resolve and dispatch `import`ed module calls.
+    /// `Arc`-backed, so cloning this context per stage / loop iteration is cheap.
+    pub registry: ModuleRegistry,
 }
 
 impl EvalContext {
@@ -162,6 +165,7 @@ impl EvalContext {
             stage_outputs:  None,
             stage_names:    self.stage_names.clone(),
             stage_output_refs: self.stage_output_refs.clone(),
+            registry:       self.registry.clone(),
         }
     }
 }
@@ -173,7 +177,22 @@ impl EvalContext {
 ///
 /// `import`, `stage`, and `pipeline` items are skipped — they belong to later phases.
 /// Errors are accumulated; the first fatal non-eval error short-circuits immediately.
+///
+/// Uses the standard-library [`ModuleRegistry`]; see [`eval_program_with`] to supply
+/// a custom registry (e.g. one extended with plugins).
 pub fn eval_program(program: &Program, script_dir: &Path) -> Result<EvalContext> {
+    eval_program_with(program, script_dir, ModuleRegistry::standard())
+}
+
+/// Like [`eval_program`], but uses the provided module `registry` to resolve and
+/// dispatch module calls. Construct the registry once and share it with
+/// [`analyze_with`](crate::sema::analyze_with) so analysis and evaluation agree on
+/// the set of available modules.
+pub fn eval_program_with(
+    program: &Program,
+    script_dir: &Path,
+    registry: ModuleRegistry,
+) -> Result<EvalContext> {
     // Collect all stage names in one pass before evaluation so bare stage-name
     // identifiers (e.g. in `stages: [compile, test]`) resolve to their string value.
     let stage_names: HashSet<String> = program
@@ -193,6 +212,7 @@ pub fn eval_program(program: &Program, script_dir: &Path) -> Result<EvalContext>
         stage_outputs: None,
         stage_names,
         stage_output_refs: HashMap::new(),
+        registry,
     };
     let mut errors: Vec<Diagnostic> = Vec::new();
 
@@ -281,7 +301,8 @@ impl<'a> Evaluator<'a> {
                         })
                     })
                     .collect::<Result<_>>()?;
-                modules::dispatch(&module_name, &c.method, &resolved, &c.span, &self.ctx.script_dir)
+                let cx = modules::ModuleCx { span: &c.span, script_dir: &self.ctx.script_dir };
+                self.ctx.registry.dispatch(&module_name, &c.method, &resolved, &cx)
             }
             Expr::StageRef(r)     => self
                 .ctx
@@ -473,6 +494,7 @@ mod tests {
             stage_outputs: None,
             stage_names: HashSet::new(),
             stage_output_refs: HashMap::new(),
+            registry: ModuleRegistry::standard(),
         }
     }
 

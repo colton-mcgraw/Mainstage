@@ -137,12 +137,12 @@ Today the module system is a hardcoded `match` in `core/src/modules.rs` that rou
 
 Replace the hardcoded `dispatch` match with a `Module` trait and a `ModuleRegistry`. A pure refactor — `env` and `git` behave identically and no user-visible features change. Mirrors the existing `Reporter` trait idiom in `core/src/runner.rs`.
 
-- [ ] Define the `Module` trait and `MethodSig` / `Param` / `NamedParam` / `ValueTy` / `ModuleCx` / `ResolvedArg` in `core/src/modules/mod.rs`
-- [ ] Implement `ModuleRegistry` (`standard`, `get`, `method_sig`, `dispatch`) — `Arc`-backed and cheaply clonable
-- [ ] Port `env` → `EnvModule` and `git` → `GitModule`, with their unit tests, into `core/src/modules/builtin/`
-- [ ] Thread `ModuleRegistry` through `EvalContext` (and `clone_base`) and `eval_program_with`
-- [ ] Pass the same registry into `analyze_with`; construct it once in `cli/src/commands.rs::prepare`
-- [ ] Update `core/src/lib.rs` re-exports (`ModuleRegistry`, `Module`)
+- [x] Define the `Module` trait and `MethodSig` / `Param` / `NamedParam` / `ValueTy` / `ModuleCx` / `ResolvedArg` in `core/src/modules/mod.rs`
+- [x] Implement `ModuleRegistry` (`standard`, `get`, `method_sig`, `dispatch`) — `Arc`-backed and cheaply clonable
+- [x] Port `env` → `EnvModule` and `git` → `GitModule`, with their unit tests, into `core/src/modules/builtin/`
+- [x] Thread `ModuleRegistry` through `EvalContext` (and `clone_base`) and `eval_program_with`
+- [x] Pass the same registry into `analyze_with`; construct it once in `cli/src/commands.rs::prepare`
+- [x] Update `core/src/lib.rs` re-exports (`ModuleRegistry`, `Module`)
 
 ---
 
