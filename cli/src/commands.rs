@@ -210,8 +210,22 @@ fn prepare(file: &str) -> Option<(Program, AnalysisResult, EvalContext)> {
         }
     };
     // Construct the registry once and share it between analysis and evaluation so
-    // both agree on the set of available modules.
-    let registry = ModuleRegistry::standard();
+    // both agree on the set of available modules. Discover and load any plugins the
+    // program imports before analysis, so plugin calls are validated like built-ins.
+    let mut registry = ModuleRegistry::standard();
+    let imports: Vec<&str> = program
+        .items
+        .iter()
+        .filter_map(|item| match item {
+            ast::Item::Import(d) => Some(d.module.as_str()),
+            _ => None,
+        })
+        .collect();
+    if let Err(e) = registry.load_plugins(&imports, script_dir(file)) {
+        fail(e);
+        return None;
+    }
+
     let analysis = match analyze_with(&program, &registry) {
         Ok(a) => a,
         Err(e) => {

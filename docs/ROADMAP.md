@@ -181,11 +181,11 @@ Add side-effecting but read-only modules. File mutation stays in the existing `w
 
 Let users add modules via subprocess plugins that speak JSON over stdio — no core recompile required.
 
-- [ ] `describe` / `call` JSON protocol with `Value` and `MethodSig` (de)serialization
-- [ ] `ExternalModule` implementing the `Module` trait — runs `describe` at load, keeps a long-lived process for `call`
-- [ ] Plugin discovery: built-in registry first (no shadowing), then `.mainstage/plugins/<name>`, then a `plugins.toml` manifest; support namespaced names like `"acme/lint"`
-- [ ] Registry loads discovered plugins so semantic analysis validates plugin calls identically to built-ins
-- [ ] Error mapping (plugin `err` → `Error::Eval` with the call span) and failure modes (missing executable, malformed JSON, non-zero exit)
+- [x] `describe` / `call` JSON protocol with `Value` and `MethodSig` (de)serialization
+- [x] `ExternalModule` implementing the `Module` trait — runs `describe` at load, keeps a long-lived process for `call`
+- [x] Plugin discovery: built-in registry first (no shadowing), then `.mainstage/plugins/<name>`, then a `plugins.toml` manifest; support namespaced names like `"acme/lint"`
+- [x] Registry loads discovered plugins so semantic analysis validates plugin calls identically to built-ins
+- [x] Error mapping (plugin `err` → `Error::Eval` with the call span) and failure modes (missing executable, malformed JSON, non-zero exit)
 
 ---
 

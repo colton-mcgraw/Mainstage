@@ -5,18 +5,22 @@
 //! calls. The [`ModuleRegistry`] resolves a raw module name to its implementation
 //! and routes calls to it.
 //!
-//! Built-in modules (`env`, `git`) live in [`builtin`]. External subprocess
-//! plugins will be added in a later phase behind this same [`Module`] trait, so the
-//! evaluator and semantic analyzer never learn whether a module is built-in or not.
+//! Built-in modules (`env`, `git`, `str`, …) live in [`builtin`]; external
+//! subprocess plugins live in [`external`]. Both implement the same [`Module`]
+//! trait, so the evaluator and semantic analyzer never learn whether a module is
+//! built-in or a plugin.
 //!
 //! This mirrors the [`Reporter`](crate::runner::Reporter) trait idiom: a small trait
 //! with a registry that the rest of the crate is threaded through.
 
 mod builtin;
+mod external;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+
+use serde::{Deserialize, Serialize};
 
 use crate::error::{Diagnostic, Error, Result, Span};
 use crate::eval::Value;
@@ -24,6 +28,7 @@ use crate::eval::Value;
 pub use builtin::{
     EnvModule, FsModule, GitModule, HashModule, JsonModule, PathModule, StrModule,
 };
+pub use external::{ExternalModule, PluginIndex};
 
 // ── Resolved argument ─────────────────────────────────────────────────────────
 
@@ -37,9 +42,10 @@ pub struct ResolvedArg {
 
 // ── Value type tags ───────────────────────────────────────────────────────────
 
-/// The runtime type of a [`Value`], used to declare — and, in a later phase,
-/// statically validate — method parameters and return values.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// The runtime type of a [`Value`], used to declare and statically validate method
+/// parameters and return values. Serialized in the plugin `describe` protocol.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum ValueTy {
     String,
     Bool,
@@ -47,6 +53,13 @@ pub enum ValueTy {
     FileSet,
     /// Matches any value type — for parameters that are intentionally untyped.
     Any,
+}
+
+impl Default for ValueTy {
+    /// Untyped — the lenient default for plugin-declared signatures.
+    fn default() -> Self {
+        ValueTy::Any
+    }
 }
 
 impl ValueTy {
@@ -77,34 +90,47 @@ impl ValueTy {
 // ── Method signatures ─────────────────────────────────────────────────────────
 
 /// A positional parameter in a [`MethodSig`].
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Param {
     pub name: String,
+    #[serde(default)]
     pub ty: ValueTy,
     /// `false` for trailing optional positionals (defines the minimum arity).
+    /// Defaults to `true` so plugin signatures can omit it for required params.
+    #[serde(default = "default_true")]
     pub required: bool,
 }
 
 /// A keyword (named) parameter in a [`MethodSig`], e.g. `default:` in `env.get`.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NamedParam {
     pub name: String,
+    #[serde(default)]
     pub ty: ValueTy,
+    /// Defaults to `false`: keyword arguments are optional unless declared required.
+    #[serde(default)]
     pub required: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 /// The signature of a single module method: its positional and keyword parameters
 /// and its return type.
 ///
-/// Owned (no borrows) so that built-in and plugin modules — the latter
-/// deserialized from a subprocess `describe` response in a later phase — share one
-/// representation. The semantic analyzer will consume these to validate calls, and
-/// tooling (LSP, `mainstage modules`) will render them.
-#[derive(Debug, Clone)]
+/// Owned (no borrows) so that built-in and plugin modules — the latter deserialized
+/// from a subprocess `describe` response — share one representation. The semantic
+/// analyzer consumes these to validate calls, and tooling (LSP, `mainstage modules`)
+/// renders them.
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MethodSig {
     pub name: String,
+    #[serde(default)]
     pub params: Vec<Param>,
+    #[serde(default)]
     pub named: Vec<NamedParam>,
+    #[serde(default)]
     pub returns: ValueTy,
 }
 
@@ -169,6 +195,8 @@ pub trait Module: Send + Sync {
 #[derive(Clone)]
 pub struct ModuleRegistry {
     modules: Arc<HashMap<String, Arc<dyn Module>>>,
+    /// Names of the built-in standard modules, which plugins may never shadow.
+    builtins: Arc<HashSet<String>>,
 }
 
 impl ModuleRegistry {
@@ -187,8 +215,9 @@ impl ModuleRegistry {
     }
 
     fn from_modules(mods: Vec<Arc<dyn Module>>) -> Self {
+        let builtins = mods.iter().map(|m| m.name().to_string()).collect();
         let map = mods.into_iter().map(|m| (m.name().to_string(), m)).collect();
-        Self { modules: Arc::new(map) }
+        Self { modules: Arc::new(map), builtins: Arc::new(builtins) }
     }
 
     /// Look up a module by its raw name.
@@ -199,6 +228,11 @@ impl ModuleRegistry {
     /// Whether a module with this raw name is registered.
     pub fn contains(&self, name: &str) -> bool {
         self.modules.contains_key(name)
+    }
+
+    /// Whether `name` is a built-in standard module (which plugins may not shadow).
+    pub fn is_builtin(&self, name: &str) -> bool {
+        self.builtins.contains(name)
     }
 
     /// Look up the signature of `module.method`, if both exist.
@@ -218,6 +252,52 @@ impl ModuleRegistry {
             Some(m) => m.call(method, args, cx),
             None => Err(cx.error(format!("unknown module '{}'", module))),
         }
+    }
+
+    /// Register a plugin module. Errors if its name shadows a built-in or collides
+    /// with an already-registered module. Call before the registry is shared/cloned.
+    pub fn register_plugin(&mut self, module: Arc<dyn Module>) -> std::result::Result<(), String> {
+        let name = module.name().to_string();
+        if self.is_builtin(&name) {
+            return Err(format!(
+                "plugin '{name}' may not shadow the built-in module of the same name"
+            ));
+        }
+        // Arc refcount is 1 before the registry is shared, so this mutates in place.
+        let map = Arc::make_mut(&mut self.modules);
+        if map.contains_key(&name) {
+            return Err(format!("a plugin named '{name}' is already registered"));
+        }
+        map.insert(name, module);
+        Ok(())
+    }
+
+    /// Discover and load the plugins named in `names` (typically the program's
+    /// non-built-in `import` names) from `project_dir`, registering each.
+    ///
+    /// Built-in names and already-registered names are skipped, as are names with no
+    /// discovered executable — those are left for semantic analysis to report as
+    /// unknown modules. A discovered-but-unloadable plugin (failed spawn, bad
+    /// `describe`) is a hard error.
+    pub fn load_plugins(&mut self, names: &[&str], project_dir: &Path) -> Result<()> {
+        let wanted: Vec<&str> = names
+            .iter()
+            .copied()
+            .filter(|n| !self.is_builtin(n) && !self.contains(n))
+            .collect();
+        if wanted.is_empty() {
+            return Ok(());
+        }
+
+        let index = external::discover(project_dir);
+        for name in wanted {
+            if let Some(path) = index.get(name) {
+                let module = external::load(name, path)?;
+                self.register_plugin(Arc::new(module))
+                    .map_err(|e| Error::Eval(vec![Diagnostic::new(e)]))?;
+            }
+        }
+        Ok(())
     }
 }
 
@@ -309,4 +389,60 @@ pub(crate) fn named_bool(args: &[ResolvedArg], name: &str) -> Option<bool> {
             Value::Bool(b) => Some(b),
             _ => None,
         })
+}
+
+// ── Tests ─────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A minimal in-process module for testing registry behavior without a plugin.
+    struct Fake(&'static str);
+
+    impl Module for Fake {
+        fn name(&self) -> &str {
+            self.0
+        }
+        fn methods(&self) -> &[MethodSig] {
+            &[]
+        }
+        fn call(&self, _method: &str, _args: &[ResolvedArg], cx: &ModuleCx) -> Result<Value> {
+            Err(cx.error("fake"))
+        }
+    }
+
+    #[test]
+    fn register_plugin_refuses_to_shadow_a_builtin() {
+        let mut reg = ModuleRegistry::standard();
+        let err = reg.register_plugin(Arc::new(Fake("str"))).unwrap_err();
+        assert!(err.contains("shadow"), "got: {err}");
+        // The built-in is untouched.
+        assert!(reg.is_builtin("str"));
+    }
+
+    #[test]
+    fn register_plugin_adds_then_rejects_duplicates() {
+        let mut reg = ModuleRegistry::standard();
+        reg.register_plugin(Arc::new(Fake("lint"))).unwrap();
+        assert!(reg.contains("lint"));
+        assert!(!reg.is_builtin("lint"));
+        assert!(reg.register_plugin(Arc::new(Fake("lint"))).is_err());
+    }
+
+    #[test]
+    fn load_plugins_skips_builtin_and_undiscovered_names() {
+        // An empty project directory has no plugin sources, so loading is a no-op and
+        // unknown names are simply left unregistered.
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("ms_loadplugins_{nanos}"));
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut reg = ModuleRegistry::standard();
+        reg.load_plugins(&["str", "no_such_plugin"], &dir).unwrap();
+        assert!(!reg.contains("no_such_plugin"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }
