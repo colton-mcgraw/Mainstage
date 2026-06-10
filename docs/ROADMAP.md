@@ -161,10 +161,10 @@ Validate module names, method names, and argument arity and types during semanti
 
 Add the deterministic, low-risk standard-library modules.
 
-- [ ] `str` — `upper`, `lower`, `trim`, `replace`, `split`, `join`, `contains`, `starts_with`, `ends_with`, `len`
-- [ ] `path` — `join`, `dir`, `base`, `stem`, `ext`, `with_ext`, `abs` (relative to the script directory)
-- [ ] `hash` — `sha256`, `sha256_file`, reusing the Phase 7 hasher
-- [ ] `env.has("VAR")` addition
+- [x] `str` — `upper`, `lower`, `trim`, `replace`, `split`, `join`, `contains`, `starts_with`, `ends_with`, `len`
+- [x] `path` — `join`, `dir`, `base`, `stem`, `ext`, `with_ext`, `abs` (relative to the script directory)
+- [x] `hash` — `sha256`, `sha256_file`, reusing the Phase 7 hasher
+- [x] `env.has("VAR")` addition
 
 ---
 

@@ -21,7 +21,7 @@ use std::sync::Arc;
 use crate::error::{Diagnostic, Error, Result, Span};
 use crate::eval::Value;
 
-pub use builtin::{EnvModule, GitModule};
+pub use builtin::{EnvModule, GitModule, HashModule, PathModule, StrModule};
 
 // ── Resolved argument ─────────────────────────────────────────────────────────
 
@@ -172,7 +172,13 @@ pub struct ModuleRegistry {
 impl ModuleRegistry {
     /// The registry of built-in standard-library modules.
     pub fn standard() -> Self {
-        let mods: Vec<Arc<dyn Module>> = vec![Arc::new(EnvModule), Arc::new(GitModule)];
+        let mods: Vec<Arc<dyn Module>> = vec![
+            Arc::new(EnvModule),
+            Arc::new(GitModule),
+            Arc::new(StrModule),
+            Arc::new(PathModule),
+            Arc::new(HashModule),
+        ];
         Self::from_modules(mods)
     }
 
@@ -244,6 +250,27 @@ pub(crate) fn require_positional_string(
         Some(a) => match &a.value {
             Value::String(s) => Ok(s.clone()),
             _ => Err(cx.error(format!("{}: argument {} must be a string", fn_name, idx + 1))),
+        },
+        None => Err(cx.error(format!(
+            "{} requires at least {} positional argument(s)",
+            fn_name,
+            idx + 1
+        ))),
+    }
+}
+
+/// Return the `idx`-th positional (unnamed) argument as a `List`, or error.
+pub(crate) fn require_positional_list(
+    args: &[ResolvedArg],
+    idx: usize,
+    fn_name: &str,
+    cx: &ModuleCx,
+) -> Result<Vec<Value>> {
+    let positional: Vec<&ResolvedArg> = args.iter().filter(|a| a.name.is_none()).collect();
+    match positional.get(idx) {
+        Some(a) => match &a.value {
+            Value::List(items) => Ok(items.clone()),
+            _ => Err(cx.error(format!("{}: argument {} must be a list", fn_name, idx + 1))),
         },
         None => Err(cx.error(format!(
             "{} requires at least {} positional argument(s)",

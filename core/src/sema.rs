@@ -285,7 +285,7 @@ impl Analyzer {
             Expr::If(if_expr) => {
                 self.resolve_expr(&if_expr.then_expr, scope, ctx);
                 self.resolve_expr(&if_expr.else_expr, scope, ctx);
-                self.check_if_type_compat(if_expr);
+                self.check_if_type_compat(if_expr, scope);
             }
             Expr::ModuleCall(call) => {
                 // Resolve argument expressions for name resolution, then validate the
@@ -385,9 +385,35 @@ impl Analyzer {
 
     // ── Type compatibility ────────────────────────────────────────────────────
 
-    fn check_if_type_compat(&mut self, if_expr: &IfExpr) {
-        let then_ty = infer_expr_type(&if_expr.then_expr);
-        let else_ty = infer_expr_type(&if_expr.else_expr);
+    /// Statically infer an expression's type, when known. Module-call results are
+    /// resolved from the registry's declared return types; identifiers (whose type
+    /// needs binding lookup) yield `None`.
+    fn infer_type(&self, expr: &Expr, scope: &Scope) -> Option<ExprType> {
+        match expr {
+            Expr::String(_) => Some(ExprType::String),
+            Expr::Bool(_) => Some(ExprType::Bool),
+            Expr::List(_) => Some(ExprType::List),
+            Expr::Glob(_) | Expr::StageRef(_) => Some(ExprType::FileSet),
+            Expr::If(if_expr) => {
+                let t = self.infer_type(&if_expr.then_expr, scope);
+                let e = self.infer_type(&if_expr.else_expr, scope);
+                if t == e { t } else { None }
+            }
+            Expr::ModuleCall(call) => {
+                let module = scope.import_aliases.get(&call.module)?;
+                let sig = self.registry.method_sig(module, &call.method)?;
+                exprtype_of_valuety(sig.returns)
+            }
+            // Project field access and file properties are always strings.
+            Expr::MemberAccess(_) => Some(ExprType::String),
+            // Identifier types require binding lookup — not available statically.
+            Expr::Ident(_) => None,
+        }
+    }
+
+    fn check_if_type_compat(&mut self, if_expr: &IfExpr, scope: &Scope) {
+        let then_ty = self.infer_type(&if_expr.then_expr, scope);
+        let else_ty = self.infer_type(&if_expr.else_expr, scope);
         if let (Some(t), Some(e)) = (then_ty, else_ty) {
             if t != e {
                 self.error(
@@ -441,10 +467,16 @@ impl Analyzer {
             }
         };
 
-        self.check_call_args(call, &module_name, &sig);
+        self.check_call_args(call, &module_name, &sig, scope);
     }
 
-    fn check_call_args(&mut self, call: &ModuleCallExpr, module: &str, sig: &MethodSig) {
+    fn check_call_args(
+        &mut self,
+        call: &ModuleCallExpr,
+        module: &str,
+        sig: &MethodSig,
+        scope: &Scope,
+    ) {
         let positional: Vec<&CallArg> = call.args.iter().filter(|a| a.name.is_none()).collect();
 
         // Positional arity: within [min, max] required/declared positionals.
@@ -470,6 +502,7 @@ impl Analyzer {
                     arg,
                     param.ty,
                     &format!("{}.{} positional argument {}", module, sig.name, i + 1),
+                    scope,
                 );
             }
         }
@@ -482,6 +515,7 @@ impl Analyzer {
                     arg,
                     np.ty,
                     &format!("{}.{} argument '{}'", module, sig.name, name),
+                    scope,
                 ),
                 None => self.error(
                     format!("{}.{} has no named argument '{}'", module, sig.name, name),
@@ -504,8 +538,8 @@ impl Analyzer {
 
     /// Check a single argument's statically-inferable type against its declared type.
     /// Arguments whose type is not known until runtime (e.g. identifiers) are skipped.
-    fn check_arg_type(&mut self, arg: &CallArg, expected: ValueTy, what: &str) {
-        if let Some(actual) = infer_expr_type(&arg.value)
+    fn check_arg_type(&mut self, arg: &CallArg, expected: ValueTy, what: &str, scope: &Scope) {
+        if let Some(actual) = self.infer_type(&arg.value, scope)
             && !accepts_ty(expected, &actual)
         {
             self.error(
@@ -580,21 +614,15 @@ impl ExprType {
     }
 }
 
-fn infer_expr_type(expr: &Expr) -> Option<ExprType> {
-    match expr {
-        Expr::String(_) => Some(ExprType::String),
-        Expr::Bool(_) => Some(ExprType::Bool),
-        Expr::List(_) => Some(ExprType::List),
-        Expr::Glob(_) | Expr::StageRef(_) => Some(ExprType::FileSet),
-        Expr::If(if_expr) => {
-            let t = infer_expr_type(&if_expr.then_expr);
-            let e = infer_expr_type(&if_expr.else_expr);
-            if t == e { t } else { None }
-        }
-        // Module calls and project field access always produce strings
-        Expr::ModuleCall(_) | Expr::MemberAccess(_) => Some(ExprType::String),
-        // Ident types require binding lookup — not available statically
-        Expr::Ident(_) => None,
+/// The `ExprType` corresponding to a declared module-return `ValueTy`, or `None`
+/// for `ValueTy::Any` (no statically-known type).
+fn exprtype_of_valuety(ty: ValueTy) -> Option<ExprType> {
+    match ty {
+        ValueTy::String => Some(ExprType::String),
+        ValueTy::Bool => Some(ExprType::Bool),
+        ValueTy::List => Some(ExprType::List),
+        ValueTy::FileSet => Some(ExprType::FileSet),
+        ValueTy::Any => None,
     }
 }
 

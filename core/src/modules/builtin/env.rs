@@ -13,16 +13,24 @@ use crate::modules::{
 pub struct EnvModule;
 
 static METHODS: LazyLock<Vec<MethodSig>> = LazyLock::new(|| {
-    vec![MethodSig {
-        name: "get".to_string(),
-        params: vec![Param { name: "var".to_string(), ty: ValueTy::String, required: true }],
-        named: vec![NamedParam {
-            name: "default".to_string(),
-            ty: ValueTy::String,
-            required: false,
-        }],
-        returns: ValueTy::String,
-    }]
+    vec![
+        MethodSig {
+            name: "get".to_string(),
+            params: vec![Param { name: "var".to_string(), ty: ValueTy::String, required: true }],
+            named: vec![NamedParam {
+                name: "default".to_string(),
+                ty: ValueTy::String,
+                required: false,
+            }],
+            returns: ValueTy::String,
+        },
+        MethodSig {
+            name: "has".to_string(),
+            params: vec![Param { name: "var".to_string(), ty: ValueTy::String, required: true }],
+            named: vec![],
+            returns: ValueTy::Bool,
+        },
+    ]
 });
 
 impl Module for EnvModule {
@@ -44,6 +52,10 @@ impl Module for EnvModule {
                     Err(_) => named_string(args, "default").unwrap_or_default(),
                 };
                 Ok(Value::String(val))
+            }
+            "has" => {
+                let var = require_positional_string(args, 0, "env.has", cx)?;
+                Ok(Value::Bool(std::env::var_os(&var).is_some()))
             }
             _ => Err(cx.error(format!("env has no method '{}'", method))),
         }
@@ -101,6 +113,15 @@ mod tests {
         ];
         let result = call("get", &args).unwrap();
         assert!(matches!(result, Value::String(s) if s == "fallback"));
+    }
+
+    #[test]
+    fn env_has_reflects_presence() {
+        // SAFETY: single-threaded test process; no concurrent env reads.
+        unsafe { std::env::set_var("_MS_TEST_HAS", "1") };
+        assert!(matches!(call("has", &[str_arg("_MS_TEST_HAS")]).unwrap(), Value::Bool(true)));
+        unsafe { std::env::remove_var("_MS_TEST_HAS") };
+        assert!(matches!(call("has", &[str_arg("_MS_TEST_HAS")]).unwrap(), Value::Bool(false)));
     }
 
     #[test]

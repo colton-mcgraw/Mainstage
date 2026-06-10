@@ -179,3 +179,73 @@ fn glob_with_no_matches_is_empty_fileset() {
     assert!(matches!(let_val(&ctx, "f"), Value::FileSet(entries) if entries.is_empty()));
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+// ── Standard-library modules (Phase 11) ──────────────────────────────────────────
+
+fn string_of<'a>(ctx: &'a EvalContext, name: &str) -> &'a str {
+    match let_val(ctx, name) {
+        Value::String(s) => s,
+        other => panic!("expected string for '{name}', got {other:?}"),
+    }
+}
+
+#[test]
+fn str_module_transforms_and_predicates() {
+    let ctx = eval(
+        r#"
+        import "str" as str;
+        let up = str.upper("abc");
+        let rep = str.replace("a.b.c", ".", "/");
+        let has = str.contains("hello", "ell");
+        let n = str.len("café");
+        "#,
+    );
+    assert_eq!(string_of(&ctx, "up"), "ABC");
+    assert_eq!(string_of(&ctx, "rep"), "a/b/c");
+    assert!(matches!(let_val(&ctx, "has"), Value::Bool(true)));
+    assert_eq!(string_of(&ctx, "n"), "4");
+}
+
+#[test]
+fn str_split_join_nested_passes_analysis_and_evaluates() {
+    // The nested call exercises registry-aware type inference: `str.split` returns a
+    // list, which `str.join` accepts — this must not be a static type error.
+    let ctx = eval(
+        r#"
+        import "str" as str;
+        let joined = str.join(str.split("a,b,c", ","), "/");
+        "#,
+    );
+    assert_eq!(string_of(&ctx, "joined"), "a/b/c");
+}
+
+#[test]
+fn path_module_components() {
+    let ctx = eval(
+        r#"
+        import "path" as path;
+        let p = path.join("src", "main.rs");
+        let d = path.dir(p);
+        let stem = path.stem(p);
+        let renamed = path.with_ext(p, "o");
+        "#,
+    );
+    assert_eq!(string_of(&ctx, "p"), "src/main.rs");
+    assert_eq!(string_of(&ctx, "d"), "src");
+    assert_eq!(string_of(&ctx, "stem"), "main");
+    assert_eq!(string_of(&ctx, "renamed"), "src/main.o");
+}
+
+#[test]
+fn hash_module_sha256() {
+    let ctx = eval(
+        r#"
+        import "hash" as hash;
+        let empty = hash.sha256("");
+        "#,
+    );
+    assert_eq!(
+        string_of(&ctx, "empty"),
+        "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    );
+}
