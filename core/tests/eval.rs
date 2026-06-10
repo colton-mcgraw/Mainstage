@@ -295,3 +295,27 @@ fn json_module_reads_and_queries_a_file() {
 
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn env_module_reads_variables_and_defaults() {
+    // A uniquely named variable keeps this hermetic under parallel test execution.
+    // SAFETY: the variable name is unique to this test, so no other test races on it.
+    unsafe { std::env::set_var("_MS_EVAL_ENV_PRESENT", "yes") };
+
+    let ctx = eval(
+        r#"
+        import "env" as env;
+        let present = env.get("_MS_EVAL_ENV_PRESENT");
+        let here = env.has("_MS_EVAL_ENV_PRESENT");
+        let fallback = env.get("_MS_EVAL_ENV_ABSENT", default: "dflt");
+        let absent = env.has("_MS_EVAL_ENV_ABSENT");
+        "#,
+    );
+
+    assert_eq!(string_of(&ctx, "present"), "yes");
+    assert!(matches!(let_val(&ctx, "here"), Value::Bool(true)));
+    assert_eq!(string_of(&ctx, "fallback"), "dflt");
+    assert!(matches!(let_val(&ctx, "absent"), Value::Bool(false)));
+
+    unsafe { std::env::remove_var("_MS_EVAL_ENV_PRESENT") };
+}

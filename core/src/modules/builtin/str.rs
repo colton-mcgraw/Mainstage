@@ -210,6 +210,31 @@ mod tests {
     }
 
     #[test]
+    fn join_renders_non_string_values() {
+        // `join` stringifies each element via `display_string`, so non-string values
+        // (here a bool) are rendered rather than rejected.
+        let parts = ResolvedArg {
+            name: None,
+            value: Value::List(vec![Value::String("on".to_string()), Value::Bool(true)]),
+        };
+        assert!(matches!(call("join", &[parts, s(":")]).unwrap(), Value::String(x) if x == "on:true"));
+    }
+
+    #[test]
+    fn wrong_argument_type_errors() {
+        // A string method given a non-string positional argument is an error.
+        let b = ResolvedArg { name: None, value: Value::Bool(true) };
+        assert!(call("upper", &[b]).is_err());
+    }
+
+    #[test]
+    fn missing_arguments_error() {
+        // `replace` needs three positionals; fewer is an arity error.
+        assert!(call("replace", &[s("a"), s("b")]).is_err());
+        assert!(call("contains", &[s("a")]).is_err());
+    }
+
+    #[test]
     fn unknown_method_errors() {
         assert!(call("nope", &[s("x")]).is_err());
     }

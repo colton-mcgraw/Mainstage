@@ -178,6 +178,32 @@ mod tests {
     }
 
     #[test]
+    fn stringify_invalid_json_errors() {
+        assert!(call("stringify", &["{nope}"]).is_err());
+    }
+
+    #[test]
+    fn get_empty_path_returns_root() {
+        // An empty path navigates nowhere and yields the (compacted) root document.
+        assert_eq!(unwrap_str(call("get", &[r#"{ "a" : 1 }"#, ""]).unwrap()), r#"{"a":1}"#);
+    }
+
+    #[test]
+    fn get_renders_scalar_kinds_unquoted() {
+        let doc = r#"{"s": "txt", "n": 3, "b": false, "nil": null}"#;
+        assert_eq!(unwrap_str(call("get", &[doc, "s"]).unwrap()), "txt");
+        assert_eq!(unwrap_str(call("get", &[doc, "n"]).unwrap()), "3");
+        assert_eq!(unwrap_str(call("get", &[doc, "b"]).unwrap()), "false");
+        assert_eq!(unwrap_str(call("get", &[doc, "nil"]).unwrap()), "null");
+    }
+
+    #[test]
+    fn get_into_scalar_errors() {
+        // A path segment descending into a scalar has nowhere to go.
+        assert!(call("get", &[r#"{"a": 1}"#, "a.b"]).is_err());
+    }
+
+    #[test]
     fn unknown_method_errors() {
         assert!(call("nope", &["{}"]).is_err());
     }
