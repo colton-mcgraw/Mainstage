@@ -732,6 +732,7 @@ dependencies = [
 name = "mainstage"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "clap",
  "console",
  "mainstage_core",

@@ -13,3 +13,4 @@ path = "src/main.rs"
 mainstage_core.workspace = true
 clap = { version = "4.5.49", features = ["derive"] }
 console = "0.16.1"
+chrono = "0.4.24"

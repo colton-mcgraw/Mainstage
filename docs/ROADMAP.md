@@ -200,13 +200,27 @@ Introduce a capability model, then the modules that require it.
 
 ---
 
-### Phase 15: Docs, Grammar & Tooling Integration
+### Phase 15: Docs, Grammar, and Testing
+
+= [ ] Add support for integer and boolean literal types in the `ValueTy` system, then update the grammar and docs to reflect them.
 
 Make the module system discoverable and tool-assisted.
 
 - [ ] Document every standard-library module and the plugin protocol in `docs/GRAMMAR.md` and a new `docs/MODULES.md`
 - [ ] Update the `import_decl` grammar notes if namespaced plugin names require lexer changes
-- [ ] LSP completion, signature help, and hover driven by `Module::methods()` — the registry as the single source of truth
 - [ ] `mainstage modules` CLI subcommand listing available modules and their signatures (built-in and plugin)
+- [ ] Add example scripts to `tests/` that use the new standard library modules and a test plugin, covering both successful calls and validation errors.
+
+## Goal 3: IDE Integration & Developer Experience
+
+TODO ...
+
+- [ ] LSP completion, signature help, and hover driven by `Module::methods()` — the registry as the single source of truth for available modules and their capabilities
+- [ ] LSP diagnostics for semantic errors — name resolution, forward references, type errors, and module call validation all reported with source spans in the editor
+- [ ] `mainstage format` CLI subcommand for consistent code formatting and auto-fixing
+
+## Goal 4: Performance, Scalability, Stability & Polishing
+
+## Goal 5: Deployment & Ecosystem
 
 ---

@@ -4,6 +4,7 @@
 //! terminal output. Every command returns a process exit code (0 = success).
 
 use std::path::Path;
+use chrono::{DateTime, Local};
 
 use clap::{Arg, ArgAction, Command};
 use console::style;
@@ -114,7 +115,7 @@ fn cmd_run(file: &str, pipeline: Option<&str>, perms: Permissions) -> i32 {
         None => println!("{} {}", style("running").bold(), style("default pipeline").cyan()),
     }
 
-    let reporter = TermReporter;
+    let reporter = TermReporter::new();
     match run_pipeline_reported(&program, pipeline, &ctx, &analysis, &reporter) {
         Ok(()) => 0,
         // Print the conclusion for every failure mode — including ones that occur
@@ -286,8 +287,28 @@ fn fail(e: mainstage_core::Error) -> i32 {
 
 // ── Terminal reporter ────────────────────────────────────────────────────────────
 
+fn format_duration(d: chrono::TimeDelta) -> String {
+    let ms = d.num_milliseconds();
+    if ms < 1_000 {
+        format!("{ms}ms")
+    } else if ms < 60_000 {
+        format!("{:.1}s", ms as f64 / 1_000.0)
+    } else {
+        let secs = ms / 1_000;
+        format!("{}m {}s", secs / 60, secs % 60)
+    }
+}
+
 /// Renders pipeline progress to the terminal with status glyphs.
-struct TermReporter;
+struct TermReporter {
+    start_time: DateTime<Local>,
+}
+
+impl TermReporter {
+    fn new() -> Self {
+        Self { start_time: Local::now() }
+    }
+}
 
 impl Reporter for TermReporter {
     fn stage_start(&self, stage: &str) {
@@ -316,6 +337,8 @@ impl Reporter for TermReporter {
     }
 
     fn pipeline_finished(&self, pipeline: &str, failed_stage: Option<&str>) {
+        let elapsed = Local::now().signed_duration_since(self.start_time);
+        let elapsed_str = format_duration(elapsed);
         // Only the success banner is rendered here; failures (including those with no
         // failing stage) are reported by `cmd_run` from the returned error, avoiding a
         // redundant summary line.
@@ -323,7 +346,7 @@ impl Reporter for TermReporter {
             println!(
                 "\n{} {}",
                 style("✓").green().bold(),
-                style(format!("pipeline '{pipeline}' succeeded")).green()
+                style(format!("pipeline '{pipeline}' succeeded in {elapsed_str}")).green()
             );
         }
     }
