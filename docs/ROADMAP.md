@@ -212,11 +212,96 @@ Make the module system discoverable and tool-assisted.
 
 ## Goal 3: IDE Integration & Developer Experience
 
-TODO ...
+Brings Mainstage into the editor: a Language Server (the scaffolded `lsp` crate) that surfaces the analyzer's diagnostics live, offers completion, hover, and signature help driven by the module registry, and supports navigation — plus a `mainstage format` formatter for consistent, comment-preserving code style.
 
-- [ ] LSP completion, signature help, and hover driven by `Module::methods()` — the registry as the single source of truth for available modules and their capabilities
-- [ ] LSP diagnostics for semantic errors — name resolution, forward references, type errors, and module call validation all reported with source spans in the editor
-- [ ] `mainstage format` CLI subcommand for consistent code formatting and auto-fixing
+The language server is a thin protocol shell over `core`: it reuses the same `parse` / `analyze_with` pipeline and `ModuleRegistry` the CLI already builds, so editor behavior never diverges from command-line behavior. The formatter is the one piece that needs new groundwork — the grammar discards comments today — so a trivia-preserving syntax layer is added before the formatter is built on top of it.
+
+**Design decisions:**
+
+- **LSP stack:** the `lsp` crate runs a `tower-lsp` (0.20) server over stdio on a `tokio` runtime (both already wired into the workspace; the crate is a stub today). Editors launch it via a new `mainstage lsp` subcommand.
+- **Single source of truth:** the server calls `core`'s `parse` and `analyze_with` with the same `ModuleRegistry` as the CLI — no duplicated language logic. Completion, hover, and signature help read `Module::methods()` and `MethodSig::signature()`; diagnostics are the existing `Vec<Diagnostic>` carried by `Error::Parse` / `Error::Semantic`.
+- **Position mapping:** core `Span`s are 1-based `(line, col)` start/end pairs; the server converts them to 0-based LSP `Range`s with UTF-16 column semantics.
+- **Document sync:** full-document sync in V1; incremental sync is deferred.
+- **Formatter needs trivia:** `COMMENT` is a silent pest rule, so comments never reach the AST. The formatter is therefore built on a comment/trivia-preserving layer (Phase 20) rather than the lossy AST, guaranteeing comments survive a format.
+
+---
+
+### Phase 16: Language Server Foundation & Document Sync
+
+Stand up the server and the analysis loop every later feature builds on. Output: an editor can connect, open a `.ms` file, and the server keeps an up-to-date parsed view of it.
+
+- [ ] Replace the `lsp` stub with a `tower-lsp` server over stdio on a `tokio` runtime — implement `initialize` (advertising server capabilities), `initialized`, and `shutdown`
+- [ ] In-memory document store keyed by document URI — handle `didOpen` / `didChange` (full sync) / `didClose`
+- [ ] Shared analysis entry point: a non-panicking helper that takes document text and script directory, runs `parse` → `analyze_with(registry)`, and returns the `Program` plus collected diagnostics for reuse by every feature
+- [ ] `Span` → LSP `Range` conversion (1-based core spans to 0-based, UTF-16 columns), with unit tests
+- [ ] `mainstage lsp` CLI subcommand that launches the server (the editor entry point)
+
+---
+
+### Phase 17: Live Diagnostics
+
+Surface parse and semantic errors in the editor as the user types. Output: squiggles with the analyzer's messages, spans, and notes.
+
+- [ ] Publish `textDocument/publishDiagnostics` on open and change, debounced
+- [ ] Map `Error::Parse` / `Error::Semantic` (and the defensive `Error::Eval`) `Vec<Diagnostic>` to LSP `Diagnostic`s — message, span range, and `notes` as related information
+- [ ] Clear stale diagnostics when a document becomes valid again
+- [ ] Build the per-document `ModuleRegistry` with plugin discovery so import and plugin-call validation surfaces in the editor exactly as it does in the CLI
+
+---
+
+### Phase 18: Completion, Hover & Signature Help
+
+Make the module registry discoverable from the editor — the registry as the single source of truth for available modules and their capabilities.
+
+- [ ] Module-name completion inside `import "<here>"`, sourced from `ModuleRegistry::module_names()`
+- [ ] Method completion after `<alias>.` — resolve the alias to its module from the parsed imports, list `Module::methods()`, and insert a call snippet derived from the `MethodSig`
+- [ ] Signature help inside a module call's `(...)` — render `MethodSig::signature()` and highlight the active positional or named parameter
+- [ ] Hover over a module alias or method showing its signature and return type; hover over `let` bindings, stage names, and `project.<field>` showing their resolved form
+- [ ] Completion for `let` bindings, stage names, and `project.<field>` in expression positions
+
+---
+
+### Phase 19: Navigation & Symbols
+
+Let users move around a script. Output: jump-to-definition and an outline, reusing links the analyzer already builds.
+
+- [ ] Go-to-definition for `let`, import-alias, and `<stage>.outputs` references — reusing the resolution links from semantic analysis
+- [ ] Document symbols / outline: pipelines, stages, and top-level `let` bindings
+- [ ] Find references for stages and `let` bindings (rename deferred unless it falls out cheaply)
+
+---
+
+### Phase 20: Trivia-Preserving Syntax Layer
+
+Groundwork for the formatter: stop throwing comments away. Output: a syntax representation that round-trips source exactly, including comments and blank-line grouping.
+
+- [ ] Capture comments (and blank-line grouping) during lexing/parsing instead of discarding them — un-silence the `COMMENT` rule or add a lossless token pass
+- [ ] Attach trivia to AST nodes as leading and trailing comments, distinguishing end-of-line from standalone comments
+- [ ] Round-trip guarantee: a no-op render of the trivia-aware tree reproduces the original source byte-for-byte, covered by golden tests across the example scripts
+
+---
+
+### Phase 21: `mainstage format`
+
+Consistent, comment-preserving formatting from the CLI and the editor.
+
+- [ ] Pretty-printer over the trivia-aware tree: canonical indentation, spacing, and block layout for `import` / `let` / `project` / `stage` / `pipeline` / `steps` and their expressions, steps, and conditions
+- [ ] Preserve attached comments through formatting and keep blank-line grouping between top-level items
+- [ ] `mainstage format [FILES...]` formats in place; `--check` exits non-zero when any file is unformatted (CI gate); `--stdout` prints without writing
+- [ ] Idempotency and stability golden tests (`format(format(x)) == format(x)`)
+- [ ] LSP `textDocument/formatting` (and optional range formatting) reusing the same engine
+
+---
+
+### Phase 22: Docs, Editor Integration & Testing
+
+Make the tooling usable and keep it covered.
+
+- [ ] Document the LSP feature set and editor setup (a minimal VS Code client plus generic LSP configuration) in `docs/`
+- [ ] Document `mainstage format` and recommend `format --check` alongside tests in CI
+- [ ] Integration tests: server lifecycle, a diagnostics fixture, completion / hover / signature-help snapshots, and formatter golden + idempotency suites
+
+---
 
 ## Goal 4: Performance, Scalability, Stability & Polishing
 
