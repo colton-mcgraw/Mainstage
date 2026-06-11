@@ -253,11 +253,11 @@ Surface parse and semantic errors in the editor as the user types. Output: squig
 
 Make the module registry discoverable from the editor — the registry as the single source of truth for available modules and their capabilities.
 
-- [ ] Module-name completion inside `import "<here>"`, sourced from `ModuleRegistry::module_names()`
-- [ ] Method completion after `<alias>.` — resolve the alias to its module from the parsed imports, list `Module::methods()`, and insert a call snippet derived from the `MethodSig`
-- [ ] Signature help inside a module call's `(...)` — render `MethodSig::signature()` and highlight the active positional or named parameter
-- [ ] Hover over a module alias or method showing its signature and return type; hover over `let` bindings, stage names, and `project.<field>` showing their resolved form
-- [ ] Completion for `let` bindings, stage names, and `project.<field>` in expression positions
+- [x] Module-name completion inside `import "<here>"`, sourced from `ModuleRegistry::module_names()`
+- [x] Method completion after `<alias>.` — resolve the alias to its module from the parsed imports, list `Module::methods()`, and insert a call snippet derived from the `MethodSig`
+- [x] Signature help inside a module call's `(...)` — render `MethodSig::signature()` and highlight the active positional or named parameter
+- [x] Hover over a module alias or method showing its signature and return type; hover over `let` bindings, stage names, and `project.<field>` showing their resolved form
+- [x] Completion for `let` bindings, stage names, and `project.<field>` in expression positions
 
 ---
 

@@ -7,10 +7,15 @@
 //! `mainstage-lsp` binary or the `mainstage lsp` CLI subcommand.
 
 pub mod analysis;
+pub mod completion;
 pub mod convert;
+pub mod cursor;
+pub mod hover;
+pub mod index;
 pub mod server;
+pub mod signature;
 
-pub use analysis::{analyze_document, analyze_uri, Analysis};
+pub use analysis::{analyze, build_registry, parse_text, Analysis};
 pub use convert::{span_to_range, to_lsp_diagnostic, to_lsp_diagnostics};
 pub use server::{serve, Backend};
 
