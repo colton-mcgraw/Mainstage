@@ -47,6 +47,7 @@ pub struct ResolvedArg {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ValueTy {
     String,
+    Int,
     Bool,
     List,
     FileSet,
@@ -59,6 +60,7 @@ impl ValueTy {
     pub fn describe(&self) -> &'static str {
         match self {
             ValueTy::String => "string",
+            ValueTy::Int => "int",
             ValueTy::Bool => "bool",
             ValueTy::List => "list",
             ValueTy::FileSet => "fileset",
@@ -72,6 +74,7 @@ impl ValueTy {
             (self, value),
             (ValueTy::Any, _)
                 | (ValueTy::String, Value::String(_))
+                | (ValueTy::Int, Value::Int(_))
                 | (ValueTy::Bool, Value::Bool(_))
                 | (ValueTy::List, Value::List(_))
                 | (ValueTy::FileSet, Value::FileSet(_))
@@ -127,6 +130,23 @@ impl MethodSig {
     /// Find a declared keyword parameter by name.
     pub fn named_param(&self, name: &str) -> Option<&NamedParam> {
         self.named.iter().find(|p| p.name == name)
+    }
+
+    /// Render this signature in call form for documentation and tooling, e.g.
+    /// `get(var: string, default?: string) -> string`. Positional parameters are
+    /// listed first, then keyword parameters (which are always passed by name at the
+    /// call site); optional parameters are suffixed with `?`.
+    pub fn signature(&self) -> String {
+        let mut parts: Vec<String> = Vec::with_capacity(self.params.len() + self.named.len());
+        for p in &self.params {
+            let opt = if p.required { "" } else { "?" };
+            parts.push(format!("{}{}: {}", p.name, opt, p.ty.describe()));
+        }
+        for p in &self.named {
+            let opt = if p.required { "" } else { "?" };
+            parts.push(format!("{}{}: {}", p.name, opt, p.ty.describe()));
+        }
+        format!("{}({}) -> {}", self.name, parts.join(", "), self.returns.describe())
     }
 }
 
@@ -267,6 +287,14 @@ impl ModuleRegistry {
     /// Whether a module with this raw name is registered.
     pub fn contains(&self, name: &str) -> bool {
         self.modules.contains_key(name)
+    }
+
+    /// The names of every registered module (built-in and plugin), sorted. Used by
+    /// the `mainstage modules` command and other tooling to enumerate capabilities.
+    pub fn module_names(&self) -> Vec<&str> {
+        let mut names: Vec<&str> = self.modules.keys().map(String::as_str).collect();
+        names.sort_unstable();
+        names
     }
 
     /// Look up the signature of `module.method`, if both exist.

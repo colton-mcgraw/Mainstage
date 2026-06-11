@@ -1,0 +1,7 @@
+# Plugin manifest (Phase 15 example).
+#
+# Maps a module name to the executable that implements it. Paths are resolved
+# relative to this file's directory. The directory source (.mainstage/plugins/) is
+# gitignored, so the example uses a manifest to keep the plugin under version control.
+[plugins]
+greet = "greet.sh"

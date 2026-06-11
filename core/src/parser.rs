@@ -293,6 +293,7 @@ impl Builder {
             Rule::member_access => Expr::MemberAccess(self.build_member_access(inner)),
             Rule::list_expr => Expr::List(self.build_list_expr(inner)),
             Rule::string => Expr::String(self.build_string(inner)),
+            Rule::int_lit => Expr::Int(self.build_int_lit(inner)),
             Rule::bool_lit => Expr::Bool(self.build_bool_lit(inner)),
             Rule::ident => Expr::Ident(self.build_ident_expr(inner)),
             r => unreachable!("unexpected expr rule: {:?}", r),
@@ -373,6 +374,19 @@ impl Builder {
         let span = self.span(&pair);
         let value = pair.as_str() == "true";
         BoolExpr { value, span }
+    }
+
+    fn build_int_lit(&mut self, pair: Pair<Rule>) -> IntExpr {
+        let span = self.span(&pair);
+        // The grammar guarantees `[-]?digits`; the only failure mode is i64 overflow.
+        let value = pair.as_str().parse::<i64>().unwrap_or_else(|_| {
+            self.error(
+                format!("integer literal '{}' is out of range for a 64-bit integer", pair.as_str()),
+                span.clone(),
+            );
+            0
+        });
+        IntExpr { value, span }
     }
 
     fn build_ident_expr(&self, pair: Pair<Rule>) -> IdentExpr {

@@ -276,7 +276,7 @@ impl Analyzer {
     fn resolve_expr(&mut self, expr: &Expr, scope: &Scope, ctx: ExprCtx<'_>) {
         match expr {
             Expr::String(s) => self.resolve_string_parts(&s.parts, scope, ctx),
-            Expr::Bool(_) | Expr::Glob(_) => {}
+            Expr::Int(_) | Expr::Bool(_) | Expr::Glob(_) => {}
             Expr::List(list) => {
                 for item in &list.items {
                     self.resolve_expr(item, scope, ctx);
@@ -391,6 +391,7 @@ impl Analyzer {
     fn infer_type(&self, expr: &Expr, scope: &Scope) -> Option<ExprType> {
         match expr {
             Expr::String(_) => Some(ExprType::String),
+            Expr::Int(_) => Some(ExprType::Int),
             Expr::Bool(_) => Some(ExprType::Bool),
             Expr::List(_) => Some(ExprType::List),
             Expr::Glob(_) | Expr::StageRef(_) => Some(ExprType::FileSet),
@@ -555,6 +556,7 @@ fn accepts_ty(expected: ValueTy, actual: &ExprType) -> bool {
     match expected {
         ValueTy::Any => true,
         ValueTy::String => matches!(actual, ExprType::String),
+        ValueTy::Int => matches!(actual, ExprType::Int),
         ValueTy::Bool => matches!(actual, ExprType::Bool),
         ValueTy::List => matches!(actual, ExprType::List),
         ValueTy::FileSet => matches!(actual, ExprType::FileSet),
@@ -598,6 +600,7 @@ fn collect_stage_refs(expr: &Expr, out: &mut Vec<String>) {
 #[derive(Debug, PartialEq)]
 enum ExprType {
     String,
+    Int,
     Bool,
     List,
     FileSet,
@@ -607,6 +610,7 @@ impl ExprType {
     fn describe(&self) -> &'static str {
         match self {
             ExprType::String => "string",
+            ExprType::Int => "int",
             ExprType::Bool => "bool",
             ExprType::List => "list",
             ExprType::FileSet => "fileset",
@@ -619,6 +623,7 @@ impl ExprType {
 fn exprtype_of_valuety(ty: ValueTy) -> Option<ExprType> {
     match ty {
         ValueTy::String => Some(ExprType::String),
+        ValueTy::Int => Some(ExprType::Int),
         ValueTy::Bool => Some(ExprType::Bool),
         ValueTy::List => Some(ExprType::List),
         ValueTy::FileSet => Some(ExprType::FileSet),

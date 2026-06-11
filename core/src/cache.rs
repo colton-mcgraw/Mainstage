@@ -138,7 +138,8 @@ fn collect_paths(value: &Value, out: &mut Vec<PathBuf>) {
         Value::FileSet(entries) => out.extend(entries.iter().map(|e| e.path.clone())),
         Value::List(items) => items.iter().for_each(|v| collect_paths(v, out)),
         Value::String(s) => out.push(PathBuf::from(s)),
-        Value::Bool(_) => {}
+        // Ints and bools are not paths — they never appear in an `outputs` position.
+        Value::Int(_) | Value::Bool(_) => {}
     }
 }
 

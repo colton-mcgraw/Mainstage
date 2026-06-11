@@ -56,6 +56,7 @@ impl FileEntry {
 #[derive(Debug, Clone)]
 pub enum Value {
     String(String),
+    Int(i64),
     Bool(bool),
     List(Vec<Value>),
     FileSet(Vec<FileEntry>),
@@ -66,6 +67,7 @@ impl Value {
     pub fn display_string(&self) -> String {
         match self {
             Value::String(s) => s.clone(),
+            Value::Int(n) => n.to_string(),
             Value::Bool(b) => b.to_string(),
             Value::List(items) => {
                 items.iter().map(|v| v.display_string()).collect::<Vec<_>>().join(", ")
@@ -272,6 +274,7 @@ impl<'a> Evaluator<'a> {
     fn eval(&self, expr: &Expr) -> Result<Value> {
         match expr {
             Expr::String(s)       => self.eval_string(s),
+            Expr::Int(i)          => Ok(Value::Int(i.value)),
             Expr::Bool(b)         => Ok(Value::Bool(b.value)),
             Expr::List(list)      => self.eval_list(list),
             Expr::Glob(g)         => self.eval_glob(g),

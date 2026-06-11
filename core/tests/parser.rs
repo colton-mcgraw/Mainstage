@@ -173,6 +173,37 @@ fn parses_bool_literal() {
 }
 
 #[test]
+fn parses_integer_literal() {
+    assert!(matches!(first_let_value("let x = 42;"), Expr::Int(i) if i.value == 42));
+    assert!(matches!(first_let_value("let x = 0;"), Expr::Int(i) if i.value == 0));
+    assert!(matches!(first_let_value("let x = -7;"), Expr::Int(i) if i.value == -7));
+}
+
+#[test]
+fn integer_literals_appear_in_lists() {
+    match first_let_value("let x = [1, 2, 3];") {
+        Expr::List(l) => {
+            assert_eq!(l.items.len(), 3);
+            assert!(matches!(&l.items[0], Expr::Int(i) if i.value == 1));
+        }
+        other => panic!("expected list, got {other:?}"),
+    }
+}
+
+#[test]
+fn integer_with_trailing_letters_is_a_parse_error() {
+    // `12abc` must not silently parse as the integer `12`.
+    parse_err("let x = 12abc;");
+}
+
+#[test]
+fn integer_out_of_range_errors() {
+    // Beyond i64::MAX — reported rather than wrapping.
+    let diags = parse_err("let x = 99999999999999999999;");
+    assert!(diags.iter().any(|d| d.message.contains("out of range")), "{diags:?}");
+}
+
+#[test]
 fn parses_list_expr() {
     match first_let_value(r#"let x = ["a", "b", "c"];"#) {
         Expr::List(l) => assert_eq!(l.items.len(), 3),

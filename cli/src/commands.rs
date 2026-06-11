@@ -66,6 +66,11 @@ pub fn setup(cli: Command) -> Command {
                 .about("Parse, analyze, and evaluate a .ms file; print the context (debug tool)")
                 .arg(Arg::new("file").required(true).help("Path to the .ms script")),
         )
+        .subcommand(
+            Command::new("modules")
+                .about("List available modules and their method signatures (built-in and plugin)")
+                .arg(file_arg()),
+        )
 }
 
 /// Dispatch the matched command and return the process exit code.
@@ -81,6 +86,7 @@ pub fn dispatch(matches: &clap::ArgMatches) -> i32 {
         Some(("clean", sub)) => cmd_clean(file_of(sub)),
         Some(("parse", sub)) => cmd_parse(file_of(sub)),
         Some(("eval", sub)) => cmd_eval(file_of(sub), flags),
+        Some(("modules", sub)) => cmd_modules(file_of(sub), flags),
         // No subcommand: run the default pipeline.
         None => cmd_run(file_of(matches), None, flags),
         Some((other, _)) => {
@@ -213,6 +219,33 @@ fn cmd_eval(file: &str, perms: Permissions) -> i32 {
         }
         None => 1,
     }
+}
+
+// ── modules ──────────────────────────────────────────────────────────────────────
+
+/// List every available module — built-in and plugins discovered under the script
+/// directory — with each method rendered in call form. Granted capabilities are
+/// irrelevant here: gated modules (`shell`, `http`) are always registered and listed;
+/// permission is only enforced when a method is actually called.
+fn cmd_modules(file: &str, _perms: Permissions) -> i32 {
+    let registry = match ModuleRegistry::with_plugins(script_dir(file)) {
+        Ok(r) => r,
+        Err(e) => return fail(e),
+    };
+
+    for name in registry.module_names() {
+        let Some(module) = registry.get(name) else { continue };
+        println!("{}", style(name).cyan().bold());
+        let methods = module.methods();
+        if methods.is_empty() {
+            println!("  {}", style("(no methods)").dim());
+        } else {
+            for m in methods {
+                println!("  {}", m.signature());
+            }
+        }
+    }
+    0
 }
 
 // ── Shared pipeline preparation ──────────────────────────────────────────────────

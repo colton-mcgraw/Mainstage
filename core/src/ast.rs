@@ -113,6 +113,7 @@ pub struct PipelineBlock {
 #[derive(Debug, Clone)]
 pub enum Expr {
     String(StringExpr),
+    Int(IntExpr),
     Bool(BoolExpr),
     List(ListExpr),
     Glob(GlobExpr),
@@ -130,6 +131,7 @@ impl Expr {
     pub fn span(&self) -> &Span {
         match self {
             Expr::String(e) => &e.span,
+            Expr::Int(e) => &e.span,
             Expr::Bool(e) => &e.span,
             Expr::List(e) => &e.span,
             Expr::Glob(e) => &e.span,
@@ -156,6 +158,13 @@ pub enum StringPart {
     Literal(String),
     /// A `${<expr>}` interpolation embedded within a string.
     Interpolation(Box<Expr>),
+}
+
+/// A signed integer literal (e.g. `42`, `-7`), parsed as an `i64`.
+#[derive(Debug, Clone)]
+pub struct IntExpr {
+    pub value: i64,
+    pub span: Span,
 }
 
 /// A `true` or `false` boolean literal.

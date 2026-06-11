@@ -125,7 +125,16 @@ struct PluginProcess {
 
 impl PluginProcess {
     fn spawn(exe: &Path, script_dir: &Path) -> std::result::Result<Self, String> {
-        let mut child = Command::new(exe)
+        // Resolve the executable to an absolute path before spawning. With
+        // `current_dir(script_dir)` set, a relative program path would be resolved
+        // against the *new* working directory (platform-dependent and wrong here), so
+        // anchor it to the caller's cwd first.
+        let exe = if exe.is_absolute() {
+            exe.to_path_buf()
+        } else {
+            std::env::current_dir().map(|cwd| cwd.join(exe)).unwrap_or_else(|_| exe.to_path_buf())
+        };
+        let mut child = Command::new(&exe)
             .current_dir(script_dir)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())

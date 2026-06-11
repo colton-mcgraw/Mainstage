@@ -40,6 +40,25 @@ fn wire_value_round_trips_every_variant() {
 }
 
 #[test]
+fn wire_value_round_trips_integers() {
+    let restored = WireValue::from_value(&Value::Int(-42)).into_value();
+    assert!(matches!(restored, Value::Int(-42)), "{restored:?}");
+    let json = serde_json::to_string(&WireValue::from_value(&Value::Int(7))).unwrap();
+    assert_eq!(json, r#"{"type":"int","value":7}"#);
+}
+
+#[test]
+fn int_type_tag_round_trips_in_signatures() {
+    let wire: WireMethodSig = serde_json::from_str(
+        r#"{"name":"add","params":[{"name":"a","type":"int","required":true}],"returns":"int"}"#,
+    )
+    .unwrap();
+    let sig = wire.into_sig().unwrap();
+    assert_eq!(sig.params[0].ty, ValueTy::Int);
+    assert_eq!(sig.returns, ValueTy::Int);
+}
+
+#[test]
 fn wire_value_json_is_internally_tagged() {
     let json = serde_json::to_string(&WireValue::from_value(&Value::String("x".into()))).unwrap();
     assert_eq!(json, r#"{"type":"string","value":"x"}"#);
