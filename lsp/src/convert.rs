@@ -5,8 +5,10 @@
 //! and measure columns in UTF-16 code units, so converting a column requires the
 //! line's text to re-encode the leading characters.
 
-use mainstage_core::Span;
-use tower_lsp::lsp_types::{Position, Range};
+use mainstage_core::{Diagnostic as CoreDiagnostic, Span};
+use tower_lsp::lsp_types::{
+    Diagnostic, DiagnosticRelatedInformation, DiagnosticSeverity, Location, Position, Range, Url,
+};
 
 /// Convert a 1-based, char-counted `(line, col)` core position into a 0-based
 /// LSP [`Position`] with UTF-16 column semantics.
@@ -30,6 +32,37 @@ pub fn span_to_range(text: &str, span: &Span) -> Range {
         position(text, span.line_start, span.col_start),
         position(text, span.line_end, span.col_end),
     )
+}
+
+/// Convert a core [`CoreDiagnostic`] into an LSP [`Diagnostic`] for `uri`.
+///
+/// The diagnostic's span maps to the LSP range (defaulting to the document
+/// start when the diagnostic carries no span); its `notes` become related
+/// information anchored at the same location. Every core diagnostic is an error.
+pub fn to_lsp_diagnostic(uri: &Url, text: &str, diag: &CoreDiagnostic) -> Diagnostic {
+    let range = diag.span.as_ref().map(|span| span_to_range(text, span)).unwrap_or_default();
+    let related_information = (!diag.notes.is_empty()).then(|| {
+        diag.notes
+            .iter()
+            .map(|note| DiagnosticRelatedInformation {
+                location: Location::new(uri.clone(), range),
+                message: note.clone(),
+            })
+            .collect()
+    });
+    Diagnostic {
+        range,
+        severity: Some(DiagnosticSeverity::ERROR),
+        source: Some("mainstage".to_string()),
+        message: diag.message.clone(),
+        related_information,
+        ..Diagnostic::default()
+    }
+}
+
+/// Convert a batch of core diagnostics into LSP diagnostics for `uri`.
+pub fn to_lsp_diagnostics(uri: &Url, text: &str, diags: &[CoreDiagnostic]) -> Vec<Diagnostic> {
+    diags.iter().map(|diag| to_lsp_diagnostic(uri, text, diag)).collect()
 }
 
 #[cfg(test)]
@@ -85,5 +118,42 @@ mod tests {
     fn line_past_end_yields_empty_line() {
         let range = span_to_range("ab", &span(5, 1, 5, 1));
         assert_eq!(range, Range::new(Position::new(4, 0), Position::new(4, 0)));
+    }
+
+    fn uri() -> Url {
+        Url::parse("file:///tmp/main.ms").unwrap()
+    }
+
+    #[test]
+    fn diagnostic_maps_span_message_and_severity() {
+        let core = CoreDiagnostic::new("bad thing").with_span(span(1, 1, 1, 3));
+        let lsp = to_lsp_diagnostic(&uri(), "abc", &core);
+        assert_eq!(lsp.message, "bad thing");
+        assert_eq!(lsp.range, Range::new(Position::new(0, 0), Position::new(0, 2)));
+        assert_eq!(lsp.severity, Some(DiagnosticSeverity::ERROR));
+        assert_eq!(lsp.source.as_deref(), Some("mainstage"));
+        assert!(lsp.related_information.is_none());
+    }
+
+    #[test]
+    fn diagnostic_notes_become_related_information() {
+        let core = CoreDiagnostic::new("oops")
+            .with_span(span(1, 1, 1, 2))
+            .with_note("first hint")
+            .with_note("second hint");
+        let lsp = to_lsp_diagnostic(&uri(), "abc", &core);
+        let related = lsp.related_information.expect("notes should map to related info");
+        assert_eq!(related.len(), 2);
+        assert_eq!(related[0].message, "first hint");
+        assert_eq!(related[1].message, "second hint");
+        assert_eq!(related[0].location.uri, uri());
+        assert_eq!(related[0].location.range, lsp.range);
+    }
+
+    #[test]
+    fn spanless_diagnostic_defaults_to_document_start() {
+        let core = CoreDiagnostic::new("no location");
+        let lsp = to_lsp_diagnostic(&uri(), "abc", &core);
+        assert_eq!(lsp.range, Range::default());
     }
 }

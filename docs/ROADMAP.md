@@ -242,10 +242,10 @@ Stand up the server and the analysis loop every later feature builds on. Output:
 
 Surface parse and semantic errors in the editor as the user types. Output: squiggles with the analyzer's messages, spans, and notes.
 
-- [ ] Publish `textDocument/publishDiagnostics` on open and change, debounced
-- [ ] Map `Error::Parse` / `Error::Semantic` (and the defensive `Error::Eval`) `Vec<Diagnostic>` to LSP `Diagnostic`s — message, span range, and `notes` as related information
-- [ ] Clear stale diagnostics when a document becomes valid again
-- [ ] Build the per-document `ModuleRegistry` with plugin discovery so import and plugin-call validation surfaces in the editor exactly as it does in the CLI
+- [x] Publish `textDocument/publishDiagnostics` on open and change, debounced
+- [x] Map `Error::Parse` / `Error::Semantic` (and the defensive `Error::Eval`) `Vec<Diagnostic>` to LSP `Diagnostic`s — message, span range, and `notes` as related information
+- [x] Clear stale diagnostics when a document becomes valid again
+- [x] Build the per-document `ModuleRegistry` with plugin discovery so import and plugin-call validation surfaces in the editor exactly as it does in the CLI
 
 ---
 

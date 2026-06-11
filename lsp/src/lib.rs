@@ -11,7 +11,7 @@ pub mod convert;
 pub mod server;
 
 pub use analysis::{analyze_document, analyze_uri, Analysis};
-pub use convert::span_to_range;
+pub use convert::{span_to_range, to_lsp_diagnostic, to_lsp_diagnostics};
 pub use server::{serve, Backend};
 
 /// Launch the language server on stdio, blocking until the client disconnects.
