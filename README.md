@@ -96,6 +96,7 @@ mainstage list          # lists all pipelines and their stages
 | `mainstage` | Run the `default pipeline`. Error if none is declared. |
 | `mainstage run <name>` | Run a named pipeline. |
 | `mainstage list` | List all pipelines and their stages. |
+| `mainstage modules` | List available modules and their method signatures. |
 | `mainstage parse <file>` | Print the parsed AST (debug tool). |
 | `mainstage clean` | Clear the change-detection cache. |
 
@@ -149,6 +150,7 @@ The CLI binary is at `target/release/mainstage`.
 ## Documentation
 
 - [Grammar Specification](docs/GRAMMAR.md) — full language syntax and semantics reference
+- [Modules](docs/MODULES.md) — standard-library modules, capabilities, and the plugin protocol
 - [Roadmap](docs/ROADMAP.md) — planned features and milestones
 
 ## Contributing

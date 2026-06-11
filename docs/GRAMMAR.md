@@ -62,6 +62,19 @@ import "env" as env;
 import "git" as git;
 ```
 
+The module name is a **string literal**, so it is not constrained by identifier rules.
+This is what lets external plugins use namespaced names like `"acme/lint"` without any
+lexer or grammar change — the `/` lives inside the quoted string, never in the token
+stream:
+
+```mainstage
+import "acme/lint" as lint;
+```
+
+The alias, by contrast, is a plain identifier and must be a valid `ident`. See
+[`MODULES.md`](MODULES.md) for the full list of built-in modules and the plugin
+mechanism.
+
 The semicolon is required on `import` and `let` declarations. It is optional on block constructs (`project`, `stage`, `pipeline`).
 
 ---
@@ -245,6 +258,27 @@ let path = "dist/${project.name}-${project.version}.tar.gz"
 ```
 
 Note: `${}` is interpolation (expression inside braces). `$` alone (no braces, at the start of a step) is the exec operator — the two are distinct and unambiguous by position.
+
+### Integer Literals
+
+A signed whole number, stored as a 64-bit integer (`i64`). An optional leading `-`
+denotes a negative value. Integers may be used in `let` bindings, list elements,
+module-call arguments (where a parameter is typed `int`), and string interpolations.
+
+```mainstage
+let retries = 3
+let offset  = -5
+let ports   = [8080, 8081, 8082]
+```
+
+When interpolated into a string, an integer renders as its decimal form:
+
+```mainstage
+let url = "http://localhost:${ports[0]}"   // "http://localhost:8080"
+```
+
+A literal outside the `i64` range, or one immediately followed by identifier
+characters (e.g. `12abc`), is a parse error.
 
 ### Boolean Literals
 
@@ -676,6 +710,7 @@ for_step        = "for" ident "in" expr "{" step* "}" ;
 
 (* Expressions *)
 expr            = string
+                | int
                 | bool
                 | list_expr
                 | glob_expr
@@ -707,8 +742,10 @@ platform_val    = '"windows"' | '"linux"' | '"macos"' ;
 (* Primitives *)
 string          = '"' ( char | interpolation )* '"' ;
 interpolation   = "${" expr "}" ;
+int             = "-"? digit+ ;
 bool            = "true" | "false" ;
 ident           = [a-zA-Z_] [a-zA-Z0-9_]* ;
+digit           = [0-9] ;
 ```
 
 ---

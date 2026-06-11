@@ -65,6 +65,29 @@ fn evaluates_project_fields() {
 }
 
 #[test]
+fn evaluates_integer_lets() {
+    let ctx = eval(
+        r#"
+        let year   = 2026;
+        let offset = -5;
+        "#,
+    );
+    assert!(matches!(let_val(&ctx, "year"), Value::Int(2026)));
+    assert!(matches!(let_val(&ctx, "offset"), Value::Int(-5)));
+}
+
+#[test]
+fn integers_interpolate_as_their_decimal_form() {
+    let ctx = eval(
+        r#"
+        let port = 8080;
+        let url  = "http://localhost:${port}/";
+        "#,
+    );
+    assert!(matches!(let_val(&ctx, "url"), Value::String(s) if s == "http://localhost:8080/"));
+}
+
+#[test]
 fn evaluates_list_let() {
     let ctx = eval(r#"let items = ["a", "b", "c"];"#);
     match let_val(&ctx, "items") {

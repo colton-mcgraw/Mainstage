@@ -182,6 +182,18 @@ fn wrong_named_arg_type_errors() {
 }
 
 #[test]
+fn integer_literal_in_string_position_errors() {
+    // An integer literal is rejected where a string parameter is declared.
+    let diags = analyze_err(
+        r#"
+        import "str" as str;
+        let v = str.upper(42);
+        "#,
+    );
+    assert!(has_msg(&diags, "must be string, found int"));
+}
+
+#[test]
 fn valid_calls_with_args_ok() {
     analyze_ok(
         r#"

@@ -26,6 +26,7 @@ use crate::modules::{MethodSig, NamedParam, Param, ResolvedArg, ValueTy};
 fn ty_to_wire(ty: ValueTy) -> &'static str {
     match ty {
         ValueTy::String => "string",
+        ValueTy::Int => "int",
         ValueTy::Bool => "bool",
         ValueTy::List => "list",
         ValueTy::FileSet => "fileset",
@@ -37,6 +38,7 @@ fn ty_to_wire(ty: ValueTy) -> &'static str {
 fn ty_from_wire(s: &str) -> Option<ValueTy> {
     Some(match s {
         "string" => ValueTy::String,
+        "int" => ValueTy::Int,
         "bool" => ValueTy::Bool,
         "list" => ValueTy::List,
         "fileset" => ValueTy::FileSet,
@@ -61,6 +63,7 @@ pub struct WireFile {
 #[serde(tag = "type", content = "value", rename_all = "lowercase")]
 pub enum WireValue {
     String(String),
+    Int(i64),
     Bool(bool),
     List(Vec<WireValue>),
     Fileset(Vec<WireFile>),
@@ -71,6 +74,7 @@ impl WireValue {
     pub fn from_value(value: &Value) -> Self {
         match value {
             Value::String(s) => WireValue::String(s.clone()),
+            Value::Int(n) => WireValue::Int(*n),
             Value::Bool(b) => WireValue::Bool(*b),
             Value::List(items) => {
                 WireValue::List(items.iter().map(WireValue::from_value).collect())
@@ -94,6 +98,7 @@ impl WireValue {
     pub fn into_value(self) -> Value {
         match self {
             WireValue::String(s) => Value::String(s),
+            WireValue::Int(n) => Value::Int(n),
             WireValue::Bool(b) => Value::Bool(b),
             WireValue::List(items) => {
                 Value::List(items.into_iter().map(WireValue::into_value).collect())

@@ -82,7 +82,8 @@ impl Module for StrModule {
             "upper" => str1(args, "str.upper", cx, |s| Value::String(s.to_uppercase())),
             "lower" => str1(args, "str.lower", cx, |s| Value::String(s.to_lowercase())),
             "trim" => str1(args, "str.trim", cx, |s| Value::String(s.trim().to_string())),
-            // Character count, rendered as a string (the language has no integer type).
+            // Character count, returned as a string so existing scripts and
+            // interpolations that consume `str.len` keep working unchanged.
             "len" => str1(args, "str.len", cx, |s| Value::String(s.chars().count().to_string())),
             "replace" => {
                 let s = require_positional_string(args, 0, "str.replace", cx)?;

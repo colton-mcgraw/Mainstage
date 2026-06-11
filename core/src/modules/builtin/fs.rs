@@ -64,7 +64,8 @@ impl Module for FsModule {
             "size" => {
                 let meta = std::fs::metadata(&path)
                     .map_err(|e| cx.error(format!("fs.size '{}': {}", path.display(), e)))?;
-                // No integer type in the language — render the byte count as a string.
+                // Byte count returned as a string for parity with the other `fs`
+                // string getters and to keep interpolation output stable.
                 Ok(Value::String(meta.len().to_string()))
             }
             "list" => list_dir(&raw, &path, cx),

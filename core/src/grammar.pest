@@ -60,7 +60,7 @@ for_step    = { "for" ~ ident ~ "in" ~ expr ~ "{" ~ step* ~ "}" }
 // module_call  = ident.ident(...)  must precede stage_ref and member_access
 // stage_ref    = ident.outputs     must precede member_access = ident.ident
 
-expr          = { if_expr | glob_expr | module_call | stage_ref | member_access | list_expr | string | bool_lit | ident }
+expr          = { if_expr | glob_expr | module_call | stage_ref | member_access | list_expr | string | int_lit | bool_lit | ident }
 if_expr       = { "if" ~ condition ~ "{" ~ expr ~ "}" ~ "else" ~ "{" ~ expr ~ "}" }
 glob_expr     = { "glob" ~ "(" ~ string ~ ("," ~ string)* ~ ")" }
 module_call   = { ident ~ "." ~ ident ~ "(" ~ arg_list? ~ ")" }
@@ -92,6 +92,10 @@ compare_op   = { "==" | "!=" }
 
 // Word-boundary check prevents "true" from matching the prefix of "trueish".
 bool_lit = @{ ("true" | "false") ~ !(ASCII_ALPHANUMERIC | "_") }
+
+// Signed integer literal (i64). The trailing check rejects identifier-like suffixes
+// (`12abc`) so such input is a parse error rather than a silently truncated `12`.
+int_lit  = @{ "-"? ~ ASCII_DIGIT+ ~ !(ASCII_ALPHANUMERIC | "_") }
 
 // Reserved words that cannot be used as identifiers.
 keyword = _{

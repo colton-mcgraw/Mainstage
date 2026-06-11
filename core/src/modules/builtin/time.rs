@@ -57,7 +57,8 @@ impl Module for TimeModule {
     fn call(&self, method: &str, args: &[ResolvedArg], cx: &ModuleCx) -> Result<Value> {
         match method {
             "now" => Ok(Value::String(Utc::now().to_rfc3339())),
-            // No integer type in the language — render the epoch second count as a string.
+            // Epoch second count returned as a string to keep interpolation output
+            // stable and avoid feeding a live clock into a typed numeric position.
             "unix" => Ok(Value::String(Utc::now().timestamp().to_string())),
             "format" => {
                 let fmt = require_positional_string(args, 0, "time.format", cx)?;

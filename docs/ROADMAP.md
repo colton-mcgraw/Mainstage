@@ -202,14 +202,13 @@ Introduce a capability model, then the modules that require it.
 
 ### Phase 15: Docs, Grammar, and Testing
 
-= [ ] Add support for integer and boolean literal types in the `ValueTy` system, then update the grammar and docs to reflect them.
-
 Make the module system discoverable and tool-assisted.
 
-- [ ] Document every standard-library module and the plugin protocol in `docs/GRAMMAR.md` and a new `docs/MODULES.md`
-- [ ] Update the `import_decl` grammar notes if namespaced plugin names require lexer changes
-- [ ] `mainstage modules` CLI subcommand listing available modules and their signatures (built-in and plugin)
-- [ ] Add example scripts to `tests/` that use the new standard library modules and a test plugin, covering both successful calls and validation errors.
+- [x] Add support for integer and boolean literal types in the `ValueTy` system, then update the grammar and docs to reflect them.
+- [x] Document every standard-library module and the plugin protocol in `docs/GRAMMAR.md` and a new `docs/MODULES.md`
+- [x] Update the `import_decl` grammar notes if namespaced plugin names require lexer changes
+- [x] `mainstage modules` CLI subcommand listing available modules and their signatures (built-in and plugin)
+- [x] Add example scripts to `tests/` that use the new standard library modules and a test plugin, covering both successful calls and validation errors.
 
 ## Goal 3: IDE Integration & Developer Experience
 
