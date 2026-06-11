@@ -29,11 +29,7 @@ pub fn analyze(program: &Program) -> Result<AnalysisResult> {
 pub fn analyze_with(program: &Program, registry: &ModuleRegistry) -> Result<AnalysisResult> {
     let mut a = Analyzer::new(registry.clone());
     let result = a.run(program);
-    if a.errors.is_empty() {
-        Ok(result)
-    } else {
-        Err(Error::Semantic(a.errors))
-    }
+    if a.errors.is_empty() { Ok(result) } else { Err(Error::Semantic(a.errors)) }
 }
 
 // ── Analyzer ───────────────────────────────────────────────────────────────────
@@ -162,8 +158,11 @@ impl Analyzer {
             match item {
                 Item::Import(_) => {}
                 Item::Let(d) => {
-                    let ctx =
-                        ExprCtx { current_let_index: Some(let_idx), for_vars: &[], in_steps: false };
+                    let ctx = ExprCtx {
+                        current_let_index: Some(let_idx),
+                        for_vars: &[],
+                        in_steps: false,
+                    };
                     self.resolve_expr(&d.value, scope, ctx);
                     let_idx += 1;
                 }
@@ -316,12 +315,7 @@ impl Analyzer {
         }
     }
 
-    fn resolve_member_access(
-        &mut self,
-        m: &MemberAccessExpr,
-        scope: &Scope,
-        ctx: ExprCtx<'_>,
-    ) {
+    fn resolve_member_access(&mut self, m: &MemberAccessExpr, scope: &Scope, ctx: ExprCtx<'_>) {
         if m.object == "project" {
             if !scope.has_project {
                 self.error(
@@ -329,10 +323,7 @@ impl Analyzer {
                     m.span.clone(),
                 );
             } else if !scope.project_fields.contains_key(&m.field) {
-                self.error(
-                    format!("unknown project field '{}'", m.field),
-                    m.span.clone(),
-                );
+                self.error(format!("unknown project field '{}'", m.field), m.span.clone());
             }
         } else if ctx.for_vars.contains(&m.object) || scope.let_index(&m.object).is_some() {
             // for-loop variables and let-bound names are valid member-access targets
@@ -351,9 +342,7 @@ impl Analyzer {
         }
         // Context variables only valid inside step blocks
         if ctx.in_steps
-            && (ident.name == "inputs"
-                || ident.name == "outputs"
-                || ident.name == "failed_stage")
+            && (ident.name == "inputs" || ident.name == "outputs" || ident.name == "failed_stage")
         {
             return;
         }

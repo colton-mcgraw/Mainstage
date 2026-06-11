@@ -6,8 +6,8 @@
 //! command-line semantics. References are gathered by walking the parsed
 //! [`Program`] once and collecting every identifier and `<stage>.outputs` site.
 
-use mainstage_core::ast::{Condition, Expr, Item, Program, Step, StringPart};
 use mainstage_core::Span;
+use mainstage_core::ast::{Condition, Expr, Item, Program, Step, StringPart};
 use tower_lsp::lsp_types::{Position, Range};
 
 use crate::cursor::{ident_at, offset_at, position_at, receiver_before, span_offsets};

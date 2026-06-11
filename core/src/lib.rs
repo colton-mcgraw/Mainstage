@@ -13,11 +13,11 @@ pub mod source;
 
 pub use error::{Diagnostic, Error, Result, Span};
 pub use eval::{
-    eval_condition, eval_expr, eval_program, eval_program_with, EvalContext, FileEntry, Value,
+    EvalContext, FileEntry, Value, eval_condition, eval_expr, eval_program, eval_program_with,
 };
 pub use executor::{execute_step, execute_steps};
 pub use modules::{Capability, ExternalModule, Module, ModuleRegistry, Permissions};
-pub use runner::{run_pipeline, run_pipeline_reported, NoopReporter, Reporter};
 pub use parser::parse;
-pub use sema::{analyze, analyze_with, AnalysisResult};
+pub use runner::{NoopReporter, Reporter, run_pipeline, run_pipeline_reported};
+pub use sema::{AnalysisResult, analyze, analyze_with};
 pub use source::Source;

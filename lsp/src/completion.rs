@@ -3,13 +3,13 @@
 //! expression positions. The [`ModuleRegistry`] is the single source of truth
 //! for available modules and their methods.
 
+use mainstage_core::ModuleRegistry;
 use mainstage_core::ast::Program;
 use mainstage_core::modules::MethodSig;
-use mainstage_core::ModuleRegistry;
 use tower_lsp::lsp_types::{CompletionItem, CompletionItemKind, InsertTextFormat, Position};
 
 use crate::cursor::{line_prefix, offset_at};
-use crate::index::{import_aliases, DocumentIndex};
+use crate::index::{DocumentIndex, import_aliases};
 
 /// Compute completion items for the cursor at `pos`. `program` is the latest
 /// successful parse, if any; completion still works without it (e.g. mid-edit)

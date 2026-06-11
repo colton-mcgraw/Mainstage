@@ -4,8 +4,8 @@
 
 use std::collections::HashMap;
 
-use mainstage_core::ast::{Item, Program};
 use mainstage_core::Span;
+use mainstage_core::ast::{Item, Program};
 
 /// An `import "<module>" as <alias>` declaration.
 pub struct ImportInfo {

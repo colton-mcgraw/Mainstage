@@ -1,12 +1,12 @@
 //! Hover: show a module alias's binding, a method's signature and return type,
 //! and the resolved form of `let` bindings, stage names, and `project.<field>`.
 
-use mainstage_core::ast::Program;
 use mainstage_core::ModuleRegistry;
+use mainstage_core::ast::Program;
 use tower_lsp::lsp_types::{Hover, HoverContents, MarkupContent, MarkupKind, Position, Range};
 
 use crate::cursor::{ident_at, offset_at, position_at, receiver_before, slice_span};
-use crate::index::{import_aliases, DocumentIndex};
+use crate::index::{DocumentIndex, import_aliases};
 
 /// Compute hover information for the cursor at `pos`, or `None` when there is
 /// nothing to show.
@@ -52,7 +52,10 @@ fn member_hover(
     let index = index?;
     if receiver == "project" {
         let field = index.project_fields.iter().find(|f| f.name == word)?;
-        return Some(code_block(&format!("project.{word} = {}", slice_span(text, &field.value_span))));
+        return Some(code_block(&format!(
+            "project.{word} = {}",
+            slice_span(text, &field.value_span)
+        )));
     }
     if let Some(stage) = index.stages.iter().find(|s| s.name == receiver)
         && word == "outputs"

@@ -3,16 +3,16 @@
 //! Wires the CLI subcommands to the `mainstage_core` runtime and renders structured
 //! terminal output. Every command returns a process exit code (0 = success).
 
-use std::path::Path;
 use chrono::{DateTime, Local};
+use std::path::Path;
 
 use clap::{Arg, ArgAction, Command};
 use console::style;
-use mainstage_core::{
-    analyze_with, ast, cache, eval_program_with, parse, run_pipeline_reported, AnalysisResult,
-    EvalContext, ModuleRegistry, Permissions, Reporter, Source,
-};
 use mainstage_core::ast::Program;
+use mainstage_core::{
+    AnalysisResult, EvalContext, ModuleRegistry, Permissions, Reporter, Source, analyze_with, ast,
+    cache, eval_program_with, parse, run_pipeline_reported,
+};
 
 /// Default script file used by `run` / `list` / `clean` and the no-subcommand run.
 const DEFAULT_SCRIPT: &str = "main.ms";
@@ -51,11 +51,7 @@ pub fn setup(cli: Command) -> Command {
                 .about("List all declared pipelines and their stages")
                 .arg(file_arg()),
         )
-        .subcommand(
-            Command::new("clean")
-                .about("Clear the change-detection cache")
-                .arg(file_arg()),
-        )
+        .subcommand(Command::new("clean").about("Clear the change-detection cache").arg(file_arg()))
         .subcommand(
             Command::new("parse")
                 .about("Parse a .ms file and print its AST (debug tool)")
@@ -158,11 +154,8 @@ fn cmd_list(file: &str, perms: Permissions) -> i32 {
     }
 
     for p in pipelines {
-        let marker = if p.is_default {
-            format!(" {}", style("(default)").dim())
-        } else {
-            String::new()
-        };
+        let marker =
+            if p.is_default { format!(" {}", style("(default)").dim()) } else { String::new() };
         println!("{}{}", style(&p.name).cyan().bold(), marker);
 
         let stages = p.stages.as_ref().map(stage_names).unwrap_or_default();

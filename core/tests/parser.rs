@@ -4,7 +4,7 @@
 //! asserting on the shape of the produced AST, source spans, and parse-error paths.
 
 use mainstage_core::ast::*;
-use mainstage_core::{parse, Error, Source};
+use mainstage_core::{Error, Source, parse};
 
 /// Parse `src`, asserting success, and return the `Program`.
 fn parse_ok(src: &str) -> Program {
@@ -44,7 +44,9 @@ fn parses_let_decl_with_string() {
         Item::Let(d) => {
             assert_eq!(d.name, "target");
             match &d.value {
-                Expr::String(s) => assert!(matches!(&s.parts[0], StringPart::Literal(l) if l == "release")),
+                Expr::String(s) => {
+                    assert!(matches!(&s.parts[0], StringPart::Literal(l) if l == "release"))
+                }
                 other => panic!("expected string expr, got {other:?}"),
             }
         }
@@ -250,9 +252,7 @@ fn parses_stage_ref_vs_member_access() {
 
 #[test]
 fn parses_if_else_expr() {
-    match first_let_value(
-        r#"let x = if platform == "windows" { "win" } else { "unix" };"#,
-    ) {
+    match first_let_value(r#"let x = if platform == "windows" { "win" } else { "unix" };"#) {
         Expr::If(e) => {
             assert!(matches!(e.condition, Condition::Platform(_)));
         }

@@ -12,7 +12,7 @@ use serde_json::Value as Json;
 use crate::error::Result;
 use crate::eval::Value;
 use crate::modules::{
-    require_positional_string, MethodSig, Module, ModuleCx, Param, ResolvedArg, ValueTy,
+    MethodSig, Module, ModuleCx, Param, ResolvedArg, ValueTy, require_positional_string,
 };
 
 /// `json.parse(text)`, `json.stringify(text)`, `json.get(text, "a.b.0")`.
@@ -128,7 +128,13 @@ mod tests {
     use std::path::{Path, PathBuf};
 
     fn span() -> Span {
-        Span { file: PathBuf::from("test.ms"), line_start: 1, col_start: 1, line_end: 1, col_end: 1 }
+        Span {
+            file: PathBuf::from("test.ms"),
+            line_start: 1,
+            col_start: 1,
+            line_end: 1,
+            col_end: 1,
+        }
     }
 
     fn call(method: &str, args: &[&str]) -> Result<Value> {

@@ -7,8 +7,8 @@
 use std::path::PathBuf;
 
 use mainstage_core::{
-    eval_program, eval_program_with, parse, EvalContext, Error, ModuleRegistry, Permissions,
-    Source, Value,
+    Error, EvalContext, ModuleRegistry, Permissions, Source, Value, eval_program,
+    eval_program_with, parse,
 };
 
 /// Parse `src` and evaluate it relative to `script_dir`, asserting success.
@@ -34,10 +34,8 @@ fn let_val<'a>(ctx: &'a EvalContext, name: &str) -> &'a Value {
 
 /// A unique temporary directory for filesystem-touching tests.
 fn unique_dir(tag: &str) -> PathBuf {
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
+    let nanos =
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
     let dir = std::env::temp_dir().join(format!("ms_eval_{tag}_{nanos}"));
     std::fs::create_dir_all(&dir).unwrap();
     dir

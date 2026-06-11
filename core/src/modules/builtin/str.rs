@@ -5,8 +5,8 @@ use std::sync::LazyLock;
 use crate::error::Result;
 use crate::eval::Value;
 use crate::modules::{
-    require_positional_list, require_positional_string, MethodSig, Module, ModuleCx, Param,
-    ResolvedArg, ValueTy,
+    MethodSig, Module, ModuleCx, Param, ResolvedArg, ValueTy, require_positional_list,
+    require_positional_string,
 };
 
 /// `str.upper`, `str.lower`, `str.trim`, `str.replace`, `str.split`, `str.join`,
@@ -110,7 +110,9 @@ impl Module for StrModule {
                 Ok(Value::String(joined))
             }
             "contains" => str2(args, "str.contains", cx, |s, n| Value::Bool(s.contains(n))),
-            "starts_with" => str2(args, "str.starts_with", cx, |s, p| Value::Bool(s.starts_with(p))),
+            "starts_with" => {
+                str2(args, "str.starts_with", cx, |s, p| Value::Bool(s.starts_with(p)))
+            }
             "ends_with" => str2(args, "str.ends_with", cx, |s, p| Value::Bool(s.ends_with(p))),
             _ => Err(cx.error(format!("str has no method '{}'", method))),
         }
@@ -149,7 +151,13 @@ mod tests {
     use std::path::{Path, PathBuf};
 
     fn span() -> Span {
-        Span { file: PathBuf::from("test.ms"), line_start: 1, col_start: 1, line_end: 1, col_end: 1 }
+        Span {
+            file: PathBuf::from("test.ms"),
+            line_start: 1,
+            col_start: 1,
+            line_end: 1,
+            col_end: 1,
+        }
     }
 
     fn call(method: &str, args: &[ResolvedArg]) -> Result<Value> {
@@ -222,7 +230,9 @@ mod tests {
             name: None,
             value: Value::List(vec![Value::String("on".to_string()), Value::Bool(true)]),
         };
-        assert!(matches!(call("join", &[parts, s(":")]).unwrap(), Value::String(x) if x == "on:true"));
+        assert!(
+            matches!(call("join", &[parts, s(":")]).unwrap(), Value::String(x) if x == "on:true")
+        );
     }
 
     #[test]

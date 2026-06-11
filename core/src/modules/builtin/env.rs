@@ -5,8 +5,8 @@ use std::sync::LazyLock;
 use crate::error::Result;
 use crate::eval::Value;
 use crate::modules::{
-    named_string, require_positional_string, MethodSig, Module, ModuleCx, NamedParam, Param,
-    ResolvedArg, ValueTy,
+    MethodSig, Module, ModuleCx, NamedParam, Param, ResolvedArg, ValueTy, named_string,
+    require_positional_string,
 };
 
 /// `env.get("VAR")`, `env.get("VAR", default: "...")`.
@@ -71,7 +71,13 @@ mod tests {
     use std::path::{Path, PathBuf};
 
     fn span() -> Span {
-        Span { file: PathBuf::from("test.ms"), line_start: 1, col_start: 1, line_end: 1, col_end: 1 }
+        Span {
+            file: PathBuf::from("test.ms"),
+            line_start: 1,
+            col_start: 1,
+            line_end: 1,
+            col_end: 1,
+        }
     }
 
     fn call(method: &str, args: &[ResolvedArg]) -> Result<Value> {

@@ -133,9 +133,7 @@ impl LanguageServer for Backend {
     }
 
     async fn initialized(&self, _params: InitializedParams) {
-        self.client
-            .log_message(MessageType::INFO, "mainstage language server initialized")
-            .await;
+        self.client.log_message(MessageType::INFO, "mainstage language server initialized").await;
     }
 
     async fn shutdown(&self) -> RpcResult<()> {
@@ -150,8 +148,7 @@ impl LanguageServer for Backend {
     async fn did_change(&self, params: DidChangeTextDocumentParams) {
         // Full-document sync: the last change carries the entire document text.
         if let Some(change) = params.content_changes.into_iter().next_back() {
-            self.update(params.text_document.uri, change.text, params.text_document.version)
-                .await;
+            self.update(params.text_document.uri, change.text, params.text_document.version).await;
         }
     }
 

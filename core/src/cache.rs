@@ -171,10 +171,8 @@ mod tests {
     use crate::eval::FileEntry;
 
     fn unique_dir(tag: &str) -> PathBuf {
-        let nanos = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
+        let nanos =
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
         let dir = std::env::temp_dir().join(format!("ms_cache_{tag}_{nanos}"));
         std::fs::create_dir_all(&dir).unwrap();
         dir
@@ -246,10 +244,8 @@ mod tests {
 
     #[test]
     fn output_paths_flatten_list() {
-        let value = Value::List(vec![
-            Value::String("a/x".to_string()),
-            Value::String("b/y".to_string()),
-        ]);
+        let value =
+            Value::List(vec![Value::String("a/x".to_string()), Value::String("b/y".to_string())]);
         assert_eq!(output_paths(&value), vec!["a/x".to_string(), "b/y".to_string()]);
     }
 }

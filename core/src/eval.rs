@@ -34,8 +34,8 @@ impl FileEntry {
     pub(crate) fn from_path(path: PathBuf) -> Self {
         let name = path.file_name().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
         let stem = path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
-        let ext  = path.extension().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
-        let dir  = path.parent().unwrap_or(Path::new("")).to_path_buf();
+        let ext = path.extension().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+        let dir = path.parent().unwrap_or(Path::new("")).to_path_buf();
         FileEntry { path, name, stem, ext, dir }
     }
 
@@ -45,9 +45,9 @@ impl FileEntry {
             "path" => Some(self.path.display().to_string()),
             "name" => Some(self.name.clone()),
             "stem" => Some(self.stem.clone()),
-            "ext"  => Some(self.ext.clone()),
-            "dir"  => Some(self.dir.display().to_string()),
-            _      => None,
+            "ext" => Some(self.ext.clone()),
+            "dir" => Some(self.dir.display().to_string()),
+            _ => None,
         }
     }
 }
@@ -133,7 +133,7 @@ impl EvalContext {
     /// Return a stage-execution context: fresh `for_vars`, `stage_inputs`, and `stage_outputs` set.
     pub fn with_stage(&self, inputs: Option<Value>, outputs: Option<Value>) -> Self {
         let mut child = self.clone_base();
-        child.stage_inputs  = inputs;
+        child.stage_inputs = inputs;
         child.stage_outputs = outputs;
         child
     }
@@ -149,7 +149,7 @@ impl EvalContext {
     /// Return a context where `failed_stage` resolves to `stage_name` (for pipeline on_failure).
     pub fn with_failed_stage(&self, stage_name: String) -> Self {
         let mut child = self.clone_base();
-        child.stage_inputs  = self.stage_inputs.clone();
+        child.stage_inputs = self.stage_inputs.clone();
         child.stage_outputs = self.stage_outputs.clone();
         child.let_values.push(("failed_stage".to_string(), Value::String(stage_name)));
         child
@@ -157,17 +157,17 @@ impl EvalContext {
 
     fn clone_base(&self) -> Self {
         EvalContext {
-            script_dir:     self.script_dir.clone(),
-            platform:       self.platform.clone(),
-            let_values:     self.let_values.clone(),
+            script_dir: self.script_dir.clone(),
+            platform: self.platform.clone(),
+            let_values: self.let_values.clone(),
             project_fields: self.project_fields.clone(),
-            for_vars:       HashMap::new(),
+            for_vars: HashMap::new(),
             import_aliases: self.import_aliases.clone(),
-            stage_inputs:   None,
-            stage_outputs:  None,
-            stage_names:    self.stage_names.clone(),
+            stage_inputs: None,
+            stage_outputs: None,
+            stage_names: self.stage_names.clone(),
             stage_output_refs: self.stage_output_refs.clone(),
-            registry:       self.registry.clone(),
+            registry: self.registry.clone(),
         }
     }
 }
@@ -243,11 +243,7 @@ pub fn eval_program_with(
         }
     }
 
-    if errors.is_empty() {
-        Ok(ctx)
-    } else {
-        Err(Error::Eval(errors))
-    }
+    if errors.is_empty() { Ok(ctx) } else { Err(Error::Eval(errors)) }
 }
 
 /// Evaluate a single expression within `ctx`.
@@ -273,12 +269,12 @@ impl<'a> Evaluator<'a> {
 
     fn eval(&self, expr: &Expr) -> Result<Value> {
         match expr {
-            Expr::String(s)       => self.eval_string(s),
-            Expr::Int(i)          => Ok(Value::Int(i.value)),
-            Expr::Bool(b)         => Ok(Value::Bool(b.value)),
-            Expr::List(list)      => self.eval_list(list),
-            Expr::Glob(g)         => self.eval_glob(g),
-            Expr::If(if_expr)     => self.eval_if(if_expr),
+            Expr::String(s) => self.eval_string(s),
+            Expr::Int(i) => Ok(Value::Int(i.value)),
+            Expr::Bool(b) => Ok(Value::Bool(b.value)),
+            Expr::List(list) => self.eval_list(list),
+            Expr::Glob(g) => self.eval_glob(g),
+            Expr::If(if_expr) => self.eval_if(if_expr),
             Expr::ModuleCall(c) => {
                 let module_name = self
                     .ctx
@@ -311,19 +307,16 @@ impl<'a> Evaluator<'a> {
                 };
                 self.ctx.registry.dispatch(&module_name, &c.method, &resolved, &cx)
             }
-            Expr::StageRef(r)     => self
-                .ctx
-                .stage_output_refs
-                .get(&r.stage)
-                .cloned()
-                .ok_or_else(|| {
+            Expr::StageRef(r) => {
+                self.ctx.stage_output_refs.get(&r.stage).cloned().ok_or_else(|| {
                     self.eval_err(
                         format!("'{}' outputs are not available until the stage has run", r.stage),
                         &r.span,
                     )
-                }),
+                })
+            }
             Expr::MemberAccess(m) => self.eval_member_access(m),
-            Expr::Ident(ident)    => self.eval_ident(ident),
+            Expr::Ident(ident) => self.eval_ident(ident),
         }
     }
 
@@ -394,8 +387,8 @@ impl<'a> Evaluator<'a> {
             Condition::Platform(c) => {
                 let rhs = match c.value {
                     Platform::Windows => "windows",
-                    Platform::Linux   => "linux",
-                    Platform::MacOs   => "macos",
+                    Platform::Linux => "linux",
+                    Platform::MacOs => "macos",
                 };
                 Ok(match c.op {
                     CompareOp::Eq => self.ctx.platform == rhs,
@@ -403,18 +396,16 @@ impl<'a> Evaluator<'a> {
                 })
             }
             Condition::Not(inner, _) => Ok(!self.eval_condition(inner)?),
-            Condition::And(a, b, _)  => Ok(self.eval_condition(a)? && self.eval_condition(b)?),
-            Condition::Or(a, b, _)   => Ok(self.eval_condition(a)? || self.eval_condition(b)?),
+            Condition::And(a, b, _) => Ok(self.eval_condition(a)? && self.eval_condition(b)?),
+            Condition::Or(a, b, _) => Ok(self.eval_condition(a)? || self.eval_condition(b)?),
         }
     }
 
     fn eval_member_access(&self, m: &MemberAccessExpr) -> Result<Value> {
         if m.object == "project" {
-            return self.ctx.project_fields.get(&m.field)
-                .cloned()
-                .ok_or_else(|| {
-                    self.eval_err(format!("unknown project field '{}'", m.field), &m.span)
-                });
+            return self.ctx.project_fields.get(&m.field).cloned().ok_or_else(|| {
+                self.eval_err(format!("unknown project field '{}'", m.field), &m.span)
+            });
         }
         if let Some(entry) = self.ctx.for_vars.get(&m.object) {
             return entry.get_field(&m.field).map(Value::String).ok_or_else(|| {
@@ -442,12 +433,18 @@ impl<'a> Evaluator<'a> {
         }
         if ident.name == "outputs" {
             return self.ctx.stage_outputs.clone().ok_or_else(|| {
-                self.eval_err("'outputs' is only available inside a stage's step block", &ident.span)
+                self.eval_err(
+                    "'outputs' is only available inside a stage's step block",
+                    &ident.span,
+                )
             });
         }
         if ident.name == "failed_stage" {
             return self.ctx.lookup_let("failed_stage").cloned().ok_or_else(|| {
-                self.eval_err("'failed_stage' is only available inside a pipeline on_failure block", &ident.span)
+                self.eval_err(
+                    "'failed_stage' is only available inside a pipeline on_failure block",
+                    &ident.span,
+                )
             });
         }
         // User let-bindings (take precedence over stage names to respect shadowing)
@@ -486,7 +483,13 @@ mod tests {
     use std::path::PathBuf;
 
     fn dummy_span() -> Span {
-        Span { file: PathBuf::from("test.ms"), line_start: 1, col_start: 1, line_end: 1, col_end: 1 }
+        Span {
+            file: PathBuf::from("test.ms"),
+            line_start: 1,
+            col_start: 1,
+            line_end: 1,
+            col_end: 1,
+        }
     }
 
     fn empty_ctx() -> EvalContext {
@@ -571,8 +574,14 @@ mod tests {
     fn list_literal() {
         let expr = Expr::List(ListExpr {
             items: vec![
-                Expr::String(StringExpr { parts: vec![StringPart::Literal("a".to_string())], span: dummy_span() }),
-                Expr::String(StringExpr { parts: vec![StringPart::Literal("b".to_string())], span: dummy_span() }),
+                Expr::String(StringExpr {
+                    parts: vec![StringPart::Literal("a".to_string())],
+                    span: dummy_span(),
+                }),
+                Expr::String(StringExpr {
+                    parts: vec![StringPart::Literal("b".to_string())],
+                    span: dummy_span(),
+                }),
             ],
             span: dummy_span(),
         });
@@ -597,11 +606,10 @@ mod tests {
     fn stage_ref_resolves_from_registry() {
         // Once a producing stage has run, `<stage>.outputs` resolves to its outputs.
         let mut ctx = empty_ctx();
-        ctx.stage_output_refs.insert(
-            "compile".to_string(),
-            Value::List(vec![Value::String("bin/app".to_string())]),
-        );
-        let expr = Expr::StageRef(StageRefExpr { stage: "compile".to_string(), span: dummy_span() });
+        ctx.stage_output_refs
+            .insert("compile".to_string(), Value::List(vec![Value::String("bin/app".to_string())]));
+        let expr =
+            Expr::StageRef(StageRefExpr { stage: "compile".to_string(), span: dummy_span() });
         let val = eval_expr(&expr, &ctx).unwrap();
         assert!(matches!(val, Value::List(items) if items.len() == 1));
     }

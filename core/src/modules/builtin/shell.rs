@@ -11,7 +11,7 @@ use crate::error::Result;
 use crate::eval::Value;
 use crate::executor::tokenize_command;
 use crate::modules::{
-    require_positional_string, Capability, MethodSig, Module, ModuleCx, Param, ResolvedArg, ValueTy,
+    Capability, MethodSig, Module, ModuleCx, Param, ResolvedArg, ValueTy, require_positional_string,
 };
 
 /// `shell.run("git rev-parse HEAD")` → captured stdout (trailing newline trimmed).
@@ -77,7 +77,13 @@ mod tests {
     use std::path::{Path, PathBuf};
 
     fn span() -> Span {
-        Span { file: PathBuf::from("test.ms"), line_start: 1, col_start: 1, line_end: 1, col_end: 1 }
+        Span {
+            file: PathBuf::from("test.ms"),
+            line_start: 1,
+            col_start: 1,
+            line_end: 1,
+            col_end: 1,
+        }
     }
 
     fn call_with(method: &str, arg: &str, perms: Permissions) -> Result<Value> {
@@ -92,8 +98,7 @@ mod tests {
         // `echo` prints its arguments back; argv tokenization splits the line. On
         // Windows `echo` is a `cmd` builtin rather than a standalone program, so route
         // through `cmd /C` there. Either way the trailing newline is trimmed.
-        let command =
-            if cfg!(windows) { "cmd /C echo hello world" } else { "echo hello world" };
+        let command = if cfg!(windows) { "cmd /C echo hello world" } else { "echo hello world" };
         let out = call_with("run", command, Permissions::all()).unwrap();
         assert!(matches!(out, Value::String(s) if s == "hello world"));
     }

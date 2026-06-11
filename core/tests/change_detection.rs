@@ -7,7 +7,9 @@
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 
-use mainstage_core::{analyze, cache, eval_program, parse, run_pipeline_reported, Reporter, Source};
+use mainstage_core::{
+    Reporter, Source, analyze, cache, eval_program, parse, run_pipeline_reported,
+};
 
 /// Records which stages ran vs. were skipped during a single pipeline run.
 #[derive(Default)]
@@ -35,10 +37,8 @@ impl Recorder {
 }
 
 fn unique_dir(tag: &str) -> PathBuf {
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
+    let nanos =
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
     let dir = std::env::temp_dir().join(format!("ms_cd_{tag}_{nanos}"));
     std::fs::create_dir_all(dir.join("src")).unwrap();
     dir

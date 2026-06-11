@@ -9,8 +9,8 @@ use std::sync::LazyLock;
 use crate::error::Result;
 use crate::eval::Value;
 use crate::modules::{
-    require_positional_string, resolve_path, Capability, MethodSig, Module, ModuleCx, Param,
-    ResolvedArg, ValueTy,
+    Capability, MethodSig, Module, ModuleCx, Param, ResolvedArg, ValueTy,
+    require_positional_string, resolve_path,
 };
 
 /// `http.get(url)` → response body; `http.download(url, path)` → the written path.

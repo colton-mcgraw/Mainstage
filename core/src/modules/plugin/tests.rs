@@ -16,10 +16,8 @@ use crate::error::Span;
 use crate::modules::ModuleRegistry;
 
 fn unique_dir(tag: &str) -> PathBuf {
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
+    let nanos =
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
     let dir = std::env::temp_dir().join(format!("ms_plugin_{tag}_{nanos}"));
     std::fs::create_dir_all(&dir).unwrap();
     dir
@@ -177,11 +175,8 @@ fn external_module_describes_and_calls() {
     assert_eq!(names, ["ping", "echo", "boom"]);
 
     let span = span();
-    let cx = ModuleCx {
-        span: &span,
-        script_dir: &dir,
-        permissions: crate::modules::Permissions::all(),
-    };
+    let cx =
+        ModuleCx { span: &span, script_dir: &dir, permissions: crate::modules::Permissions::all() };
 
     // A successful call returns the plugin's `ok` value.
     let out = module.call("ping", &[], &cx).unwrap();
@@ -201,11 +196,8 @@ fn plugin_err_maps_to_eval_error_with_span() {
     let module = ExternalModule::load("demo", &exe, &dir).unwrap();
 
     let span = span();
-    let cx = ModuleCx {
-        span: &span,
-        script_dir: &dir,
-        permissions: crate::modules::Permissions::all(),
-    };
+    let cx =
+        ModuleCx { span: &span, script_dir: &dir, permissions: crate::modules::Permissions::all() };
     let err = module.call("boom", &[], &cx).unwrap_err();
     match err {
         Error::Eval(diags) => {

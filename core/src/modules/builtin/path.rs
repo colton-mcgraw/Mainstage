@@ -6,8 +6,8 @@ use std::sync::LazyLock;
 use crate::error::Result;
 use crate::eval::Value;
 use crate::modules::{
-    path_to_slash_string, require_positional_string, MethodSig, Module, ModuleCx, Param,
-    ResolvedArg, ValueTy,
+    MethodSig, Module, ModuleCx, Param, ResolvedArg, ValueTy, path_to_slash_string,
+    require_positional_string,
 };
 
 /// `path.join`, `path.dir`, `path.base`, `path.stem`, `path.ext`, `path.with_ext`,
@@ -85,8 +85,7 @@ impl Module for PathModule {
             "abs" => {
                 let p = require_positional_string(args, 0, "path.abs", cx)?;
                 let path = PathBuf::from(&p);
-                let abs =
-                    if path.is_absolute() { path } else { cx.script_dir.join(path) };
+                let abs = if path.is_absolute() { path } else { cx.script_dir.join(path) };
                 Ok(string(abs))
             }
             _ => Err(cx.error(format!("path has no method '{}'", method))),
@@ -130,7 +129,13 @@ mod tests {
     use crate::error::Span;
 
     fn span() -> Span {
-        Span { file: PathBuf::from("test.ms"), line_start: 1, col_start: 1, line_end: 1, col_end: 1 }
+        Span {
+            file: PathBuf::from("test.ms"),
+            line_start: 1,
+            col_start: 1,
+            line_end: 1,
+            col_end: 1,
+        }
     }
 
     fn call_in(method: &str, args: &[ResolvedArg], dir: &Path) -> Result<Value> {
@@ -186,7 +191,10 @@ mod tests {
     #[test]
     fn abs_joins_relative_to_script_dir_and_keeps_absolute() {
         let dir = Path::new("/home/project");
-        assert_eq!(unwrap_str(call_in("abs", &[s("src/main")], dir).unwrap()), "/home/project/src/main");
+        assert_eq!(
+            unwrap_str(call_in("abs", &[s("src/main")], dir).unwrap()),
+            "/home/project/src/main"
+        );
         assert_eq!(unwrap_str(call_in("abs", &[s("/etc/hosts")], dir).unwrap()), "/etc/hosts");
     }
 

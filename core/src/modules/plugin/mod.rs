@@ -26,7 +26,7 @@ use serde::de::DeserializeOwned;
 
 use crate::error::{Diagnostic, Error, Result};
 use crate::eval::Value;
-use crate::modules::{resolve_path, MethodSig, Module, ModuleCx, ResolvedArg};
+use crate::modules::{MethodSig, Module, ModuleCx, ResolvedArg, resolve_path};
 
 use protocol::{CallResponse, DescribeResponse, Request, WireArg};
 
@@ -149,7 +149,10 @@ impl PluginProcess {
     }
 
     /// Send one request line and read exactly one response line, deserialized as `T`.
-    fn request<T: DeserializeOwned>(&mut self, request: &Request) -> std::result::Result<T, String> {
+    fn request<T: DeserializeOwned>(
+        &mut self,
+        request: &Request,
+    ) -> std::result::Result<T, String> {
         let line = serde_json::to_string(request)
             .map_err(|e| format!("could not encode request: {}", e))?;
         self.stdin
@@ -167,9 +170,8 @@ impl PluginProcess {
             return Err(self.exit_diagnosis());
         }
 
-        serde_json::from_str(response.trim()).map_err(|e| {
-            format!("malformed JSON response: {} (in: {})", e, response.trim())
-        })
+        serde_json::from_str(response.trim())
+            .map_err(|e| format!("malformed JSON response: {} (in: {})", e, response.trim()))
     }
 
     /// Describe why the plugin closed its stdout, checking the process exit status.
@@ -236,7 +238,9 @@ fn collect_dir(root: &Path, dir: &Path, specs: &mut BTreeMap<String, PathBuf>) {
         let path = entry.path();
         if path.is_dir() {
             collect_dir(root, &path, specs);
-        } else if is_executable(&path) && let Some(name) = module_name(root, &path) {
+        } else if is_executable(&path)
+            && let Some(name) = module_name(root, &path)
+        {
             specs.entry(name).or_insert(path);
         }
     }
@@ -253,11 +257,8 @@ fn module_name(root: &Path, path: &Path) -> Option<String> {
         (_, Some(stem)) => PathBuf::from(stem),
         _ => with_ext,
     };
-    let name = stem
-        .components()
-        .map(|c| c.as_os_str().to_string_lossy())
-        .collect::<Vec<_>>()
-        .join("/");
+    let name =
+        stem.components().map(|c| c.as_os_str().to_string_lossy()).collect::<Vec<_>>().join("/");
     (!name.is_empty()).then_some(name)
 }
 
@@ -290,8 +291,8 @@ fn read_manifest(script_dir: &Path) -> Result<BTreeMap<String, String>> {
         plugins: BTreeMap<String, String>,
     }
 
-    let parsed: Manifest = toml::from_str(&text)
-        .map_err(|e| load_error(format!("invalid {}: {}", MANIFEST, e)))?;
+    let parsed: Manifest =
+        toml::from_str(&text).map_err(|e| load_error(format!("invalid {}: {}", MANIFEST, e)))?;
     Ok(parsed.plugins)
 }
 

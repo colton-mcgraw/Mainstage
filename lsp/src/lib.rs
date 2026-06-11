@@ -16,9 +16,9 @@ pub mod navigation;
 pub mod server;
 pub mod signature;
 
-pub use analysis::{analyze, build_registry, parse_text, Analysis};
+pub use analysis::{Analysis, analyze, build_registry, parse_text};
 pub use convert::{span_to_range, to_lsp_diagnostic, to_lsp_diagnostics};
-pub use server::{serve, Backend};
+pub use server::{Backend, serve};
 
 /// Launch the language server on stdio, blocking until the client disconnects.
 ///
