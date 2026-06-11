@@ -6,9 +6,8 @@
 
 use super::protocol::*;
 use super::*;
-use crate::error::Span;
 use crate::eval::{FileEntry, Value};
-use crate::modules::{MethodSig, ModuleRegistry, NamedParam, Param, ResolvedArg, ValueTy};
+use crate::modules::{MethodSig, NamedParam, Param, ResolvedArg, ValueTy};
 use std::path::PathBuf;
 
 fn unique_dir(tag: &str) -> PathBuf {
