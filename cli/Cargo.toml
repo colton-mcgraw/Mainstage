@@ -11,6 +11,7 @@ path = "src/main.rs"
 
 [dependencies]
 mainstage_core.workspace = true
+mainstage_lsp = { path = "../lsp" }
 clap = { version = "4.5.49", features = ["derive"] }
 console = "0.16.1"
 chrono = "0.4.24"

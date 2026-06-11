@@ -736,6 +736,7 @@ dependencies = [
  "clap",
  "console",
  "mainstage_core",
+ "mainstage_lsp",
 ]
 
 [[package]]

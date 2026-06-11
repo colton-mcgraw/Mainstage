@@ -230,11 +230,11 @@ The language server is a thin protocol shell over `core`: it reuses the same `pa
 
 Stand up the server and the analysis loop every later feature builds on. Output: an editor can connect, open a `.ms` file, and the server keeps an up-to-date parsed view of it.
 
-- [ ] Replace the `lsp` stub with a `tower-lsp` server over stdio on a `tokio` runtime — implement `initialize` (advertising server capabilities), `initialized`, and `shutdown`
-- [ ] In-memory document store keyed by document URI — handle `didOpen` / `didChange` (full sync) / `didClose`
-- [ ] Shared analysis entry point: a non-panicking helper that takes document text and script directory, runs `parse` → `analyze_with(registry)`, and returns the `Program` plus collected diagnostics for reuse by every feature
-- [ ] `Span` → LSP `Range` conversion (1-based core spans to 0-based, UTF-16 columns), with unit tests
-- [ ] `mainstage lsp` CLI subcommand that launches the server (the editor entry point)
+- [x] Replace the `lsp` stub with a `tower-lsp` server over stdio on a `tokio` runtime — implement `initialize` (advertising server capabilities), `initialized`, and `shutdown`
+- [x] In-memory document store keyed by document URI — handle `didOpen` / `didChange` (full sync) / `didClose`
+- [x] Shared analysis entry point: a non-panicking helper that takes document text and script directory, runs `parse` → `analyze_with(registry)`, and returns the `Program` plus collected diagnostics for reuse by every feature
+- [x] `Span` → LSP `Range` conversion (1-based core spans to 0-based, UTF-16 columns), with unit tests
+- [x] `mainstage lsp` CLI subcommand that launches the server (the editor entry point)
 
 ---
 

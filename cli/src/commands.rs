@@ -71,6 +71,10 @@ pub fn setup(cli: Command) -> Command {
                 .about("List available modules and their method signatures (built-in and plugin)")
                 .arg(file_arg()),
         )
+        .subcommand(
+            Command::new("lsp")
+                .about("Run the language server over stdio (for editor integration)"),
+        )
 }
 
 /// Dispatch the matched command and return the process exit code.
@@ -87,6 +91,7 @@ pub fn dispatch(matches: &clap::ArgMatches) -> i32 {
         Some(("parse", sub)) => cmd_parse(file_of(sub)),
         Some(("eval", sub)) => cmd_eval(file_of(sub), flags),
         Some(("modules", sub)) => cmd_modules(file_of(sub), flags),
+        Some(("lsp", _)) => cmd_lsp(),
         // No subcommand: run the default pipeline.
         None => cmd_run(file_of(matches), None, flags),
         Some((other, _)) => {
@@ -245,6 +250,15 @@ fn cmd_modules(file: &str, _perms: Permissions) -> i32 {
             }
         }
     }
+    0
+}
+
+// ── lsp ──────────────────────────────────────────────────────────────────────────
+
+/// Launch the language server over stdio. Blocks until the editor client
+/// disconnects, then exits successfully. This is the editor entry point.
+fn cmd_lsp() -> i32 {
+    mainstage_lsp::run_stdio();
     0
 }
 
