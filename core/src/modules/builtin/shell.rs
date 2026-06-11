@@ -89,8 +89,12 @@ mod tests {
 
     #[test]
     fn run_captures_stdout_when_allowed() {
-        // `echo` is available on the unix test hosts; argv tokenization splits the line.
-        let out = call_with("run", "echo hello world", Permissions::all()).unwrap();
+        // `echo` prints its arguments back; argv tokenization splits the line. On
+        // Windows `echo` is a `cmd` builtin rather than a standalone program, so route
+        // through `cmd /C` there. Either way the trailing newline is trimmed.
+        let command =
+            if cfg!(windows) { "cmd /C echo hello world" } else { "echo hello world" };
+        let out = call_with("run", command, Permissions::all()).unwrap();
         assert!(matches!(out, Value::String(s) if s == "hello world"));
     }
 

@@ -9,6 +9,11 @@ use super::*;
 use crate::eval::{FileEntry, Value};
 use crate::modules::{MethodSig, NamedParam, Param, ResolvedArg, ValueTy};
 use std::path::PathBuf;
+// Used only by the subprocess-driven plugin tests below, which are gated on `unix`.
+#[cfg(unix)]
+use crate::error::Span;
+#[cfg(unix)]
+use crate::modules::ModuleRegistry;
 
 fn unique_dir(tag: &str) -> PathBuf {
     let nanos = std::time::SystemTime::now()

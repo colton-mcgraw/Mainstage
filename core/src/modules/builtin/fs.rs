@@ -10,8 +10,8 @@ use std::sync::LazyLock;
 use crate::error::Result;
 use crate::eval::Value;
 use crate::modules::{
-    require_positional_string, resolve_path, MethodSig, Module, ModuleCx, Param, ResolvedArg,
-    ValueTy,
+    path_to_slash_string, require_positional_string, resolve_path, MethodSig, Module, ModuleCx,
+    Param, ResolvedArg, ValueTy,
 };
 
 /// `fs.exists`, `fs.read`, `fs.is_dir`, `fs.is_file`, `fs.size`, `fs.list`.
@@ -85,7 +85,7 @@ fn list_dir(base: &str, resolved: &Path, cx: &ModuleCx) -> Result<Value> {
         let entry = entry.map_err(|e| cx.error(format!("fs.list '{}': {}", resolved.display(), e)))?;
         let name = entry.file_name();
         let joined = Path::new(base).join(&name);
-        entries.push(joined.to_string_lossy().into_owned());
+        entries.push(path_to_slash_string(&joined));
     }
     entries.sort();
     Ok(Value::List(entries.into_iter().map(Value::String).collect()))
