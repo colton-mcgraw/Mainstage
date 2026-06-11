@@ -265,9 +265,9 @@ Make the module registry discoverable from the editor — the registry as the si
 
 Let users move around a script. Output: jump-to-definition and an outline, reusing links the analyzer already builds.
 
-- [ ] Go-to-definition for `let`, import-alias, and `<stage>.outputs` references — reusing the resolution links from semantic analysis
-- [ ] Document symbols / outline: pipelines, stages, and top-level `let` bindings
-- [ ] Find references for stages and `let` bindings (rename deferred unless it falls out cheaply)
+- [x] Go-to-definition for `let`, import-alias, and `<stage>.outputs` references — reusing the resolution links from semantic analysis
+- [x] Document symbols / outline: pipelines, stages, and top-level `let` bindings
+- [x] Find references for stages and `let` bindings (rename deferred unless it falls out cheaply)
 
 ---
 

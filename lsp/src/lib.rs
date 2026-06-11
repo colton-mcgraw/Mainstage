@@ -12,6 +12,7 @@ pub mod convert;
 pub mod cursor;
 pub mod hover;
 pub mod index;
+pub mod navigation;
 pub mod server;
 pub mod signature;
 

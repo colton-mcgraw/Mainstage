@@ -79,11 +79,27 @@ pub fn ident_at(text: &str, offset: usize) -> Option<(usize, usize)> {
     (start != end).then_some((start, end))
 }
 
+/// The identifier immediately before the `.` ending at byte `start`, marking a
+/// member access `<receiver>.<word>`. `None` when no `.`-terminated receiver
+/// precedes that position.
+pub fn receiver_before(text: &str, start: usize) -> Option<String> {
+    text[..start]
+        .strip_suffix('.')
+        .and_then(|head| ident_at(text, head.len()).map(|(s, e)| text[s..e].to_string()))
+}
+
 /// The source slice covered by a core [`Span`], clamped to `text`.
 pub fn slice_span<'a>(text: &'a str, span: &Span) -> &'a str {
+    let (start, end) = span_offsets(text, span);
+    &text[start..end]
+}
+
+/// Byte offsets `[start, end)` of a core [`Span`] within `text`, clamped so that
+/// `start <= end <= text.len()`.
+pub fn span_offsets(text: &str, span: &Span) -> (usize, usize) {
     let start = byte_offset(text, span.line_start, span.col_start);
     let end = byte_offset(text, span.line_end, span.col_end).clamp(start, text.len());
-    &text[start..end]
+    (start, end)
 }
 
 /// Byte offset of a 1-based `(line, col)` core position (col counts chars).

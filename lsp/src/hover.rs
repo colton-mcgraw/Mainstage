@@ -5,7 +5,7 @@ use mainstage_core::ast::Program;
 use mainstage_core::ModuleRegistry;
 use tower_lsp::lsp_types::{Hover, HoverContents, MarkupContent, MarkupKind, Position, Range};
 
-use crate::cursor::{ident_at, offset_at, position_at, slice_span};
+use crate::cursor::{ident_at, offset_at, position_at, receiver_before, slice_span};
 use crate::index::{import_aliases, DocumentIndex};
 
 /// Compute hover information for the cursor at `pos`, or `None` when there is
@@ -22,9 +22,7 @@ pub fn hover(
     let index = program.map(DocumentIndex::from_program);
 
     // A `<receiver>.` immediately before the word marks a member access.
-    let receiver = text[..start]
-        .strip_suffix('.')
-        .and_then(|head| ident_at(text, head.len()).map(|(s, e)| text[s..e].to_string()));
+    let receiver = receiver_before(text, start);
 
     let value = match receiver {
         Some(recv) => member_hover(&recv, word, registry, &aliases, index.as_ref(), text)?,
