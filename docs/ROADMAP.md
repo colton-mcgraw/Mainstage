@@ -230,11 +230,11 @@ The language server is a thin protocol shell over `core`: it reuses the same `pa
 
 Stand up the server and the analysis loop every later feature builds on. Output: an editor can connect, open a `.ms` file, and the server keeps an up-to-date parsed view of it.
 
-- [ ] Replace the `lsp` stub with a `tower-lsp` server over stdio on a `tokio` runtime — implement `initialize` (advertising server capabilities), `initialized`, and `shutdown`
-- [ ] In-memory document store keyed by document URI — handle `didOpen` / `didChange` (full sync) / `didClose`
-- [ ] Shared analysis entry point: a non-panicking helper that takes document text and script directory, runs `parse` → `analyze_with(registry)`, and returns the `Program` plus collected diagnostics for reuse by every feature
-- [ ] `Span` → LSP `Range` conversion (1-based core spans to 0-based, UTF-16 columns), with unit tests
-- [ ] `mainstage lsp` CLI subcommand that launches the server (the editor entry point)
+- [x] Replace the `lsp` stub with a `tower-lsp` server over stdio on a `tokio` runtime — implement `initialize` (advertising server capabilities), `initialized`, and `shutdown`
+- [x] In-memory document store keyed by document URI — handle `didOpen` / `didChange` (full sync) / `didClose`
+- [x] Shared analysis entry point: a non-panicking helper that takes document text and script directory, runs `parse` → `analyze_with(registry)`, and returns the `Program` plus collected diagnostics for reuse by every feature
+- [x] `Span` → LSP `Range` conversion (1-based core spans to 0-based, UTF-16 columns), with unit tests
+- [x] `mainstage lsp` CLI subcommand that launches the server (the editor entry point)
 
 ---
 
@@ -242,10 +242,10 @@ Stand up the server and the analysis loop every later feature builds on. Output:
 
 Surface parse and semantic errors in the editor as the user types. Output: squiggles with the analyzer's messages, spans, and notes.
 
-- [ ] Publish `textDocument/publishDiagnostics` on open and change, debounced
-- [ ] Map `Error::Parse` / `Error::Semantic` (and the defensive `Error::Eval`) `Vec<Diagnostic>` to LSP `Diagnostic`s — message, span range, and `notes` as related information
-- [ ] Clear stale diagnostics when a document becomes valid again
-- [ ] Build the per-document `ModuleRegistry` with plugin discovery so import and plugin-call validation surfaces in the editor exactly as it does in the CLI
+- [x] Publish `textDocument/publishDiagnostics` on open and change, debounced
+- [x] Map `Error::Parse` / `Error::Semantic` (and the defensive `Error::Eval`) `Vec<Diagnostic>` to LSP `Diagnostic`s — message, span range, and `notes` as related information
+- [x] Clear stale diagnostics when a document becomes valid again
+- [x] Build the per-document `ModuleRegistry` with plugin discovery so import and plugin-call validation surfaces in the editor exactly as it does in the CLI
 
 ---
 
@@ -253,11 +253,11 @@ Surface parse and semantic errors in the editor as the user types. Output: squig
 
 Make the module registry discoverable from the editor — the registry as the single source of truth for available modules and their capabilities.
 
-- [ ] Module-name completion inside `import "<here>"`, sourced from `ModuleRegistry::module_names()`
-- [ ] Method completion after `<alias>.` — resolve the alias to its module from the parsed imports, list `Module::methods()`, and insert a call snippet derived from the `MethodSig`
-- [ ] Signature help inside a module call's `(...)` — render `MethodSig::signature()` and highlight the active positional or named parameter
-- [ ] Hover over a module alias or method showing its signature and return type; hover over `let` bindings, stage names, and `project.<field>` showing their resolved form
-- [ ] Completion for `let` bindings, stage names, and `project.<field>` in expression positions
+- [x] Module-name completion inside `import "<here>"`, sourced from `ModuleRegistry::module_names()`
+- [x] Method completion after `<alias>.` — resolve the alias to its module from the parsed imports, list `Module::methods()`, and insert a call snippet derived from the `MethodSig`
+- [x] Signature help inside a module call's `(...)` — render `MethodSig::signature()` and highlight the active positional or named parameter
+- [x] Hover over a module alias or method showing its signature and return type; hover over `let` bindings, stage names, and `project.<field>` showing their resolved form
+- [x] Completion for `let` bindings, stage names, and `project.<field>` in expression positions
 
 ---
 
