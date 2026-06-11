@@ -4,7 +4,9 @@ use std::sync::LazyLock;
 
 use crate::error::Result;
 use crate::eval::Value;
-use crate::modules::{named_bool, named_string, MethodSig, Module, ModuleCx, NamedParam, ResolvedArg, ValueTy};
+use crate::modules::{
+    MethodSig, Module, ModuleCx, NamedParam, ResolvedArg, ValueTy, named_bool, named_string,
+};
 
 /// `git.sha()`, `git.sha(short: true)`, `git.tag()`.
 pub struct GitModule;
@@ -53,15 +55,13 @@ impl Module for GitModule {
                     run_git(&["rev-parse", "HEAD"], cx)
                 }
             }
-            "tag" => {
-                match run_git(&["describe", "--tags", "--abbrev=0"], cx) {
-                    Ok(v) => Ok(v),
-                    Err(e) => match named_string(args, "default") {
-                        Some(d) => Ok(Value::String(d)),
-                        None => Err(e),
-                    },
-                }
-            }
+            "tag" => match run_git(&["describe", "--tags", "--abbrev=0"], cx) {
+                Ok(v) => Ok(v),
+                Err(e) => match named_string(args, "default") {
+                    Some(d) => Ok(Value::String(d)),
+                    None => Err(e),
+                },
+            },
             _ => Err(cx.error(format!("git has no method '{}'", method))),
         }
     }
@@ -92,7 +92,13 @@ mod tests {
     use std::process::Command;
 
     fn span() -> Span {
-        Span { file: PathBuf::from("test.ms"), line_start: 1, col_start: 1, line_end: 1, col_end: 1 }
+        Span {
+            file: PathBuf::from("test.ms"),
+            line_start: 1,
+            col_start: 1,
+            line_end: 1,
+            col_end: 1,
+        }
     }
 
     fn call_in(method: &str, args: &[ResolvedArg], dir: &Path) -> Result<Value> {
@@ -118,10 +124,8 @@ mod tests {
 
     /// A unique temporary directory for repo-touching tests.
     fn unique_dir(tag: &str) -> PathBuf {
-        let nanos = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
+        let nanos =
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
         let dir = std::env::temp_dir().join(format!("ms_git_{tag}_{nanos}"));
         std::fs::create_dir_all(&dir).unwrap();
         dir
@@ -172,7 +176,8 @@ mod tests {
     fn sha_short_is_a_prefix_of_full() {
         let dir = repo_with_commit("shashort");
         let full = unwrap_str(call_in("sha", &[], &dir).unwrap());
-        let short = unwrap_str(call_in("sha", &[kw_arg("short", Value::Bool(true))], &dir).unwrap());
+        let short =
+            unwrap_str(call_in("sha", &[kw_arg("short", Value::Bool(true))], &dir).unwrap());
         assert!(short.len() < full.len(), "short ({short}) should be shorter than full ({full})");
         assert!(full.starts_with(&short), "{full} should start with {short}");
         let _ = std::fs::remove_dir_all(&dir);
@@ -191,7 +196,8 @@ mod tests {
         // A repo with a commit but no tags: `git describe` fails, so the `default:`
         // keyword is returned instead of an error.
         let dir = repo_with_commit("tagdefault");
-        let result = call_in("tag", &[kw_arg("default", Value::String("v0.0.0".to_string()))], &dir);
+        let result =
+            call_in("tag", &[kw_arg("default", Value::String("v0.0.0".to_string()))], &dir);
         assert_eq!(unwrap_str(result.unwrap()), "v0.0.0");
         let _ = std::fs::remove_dir_all(&dir);
     }

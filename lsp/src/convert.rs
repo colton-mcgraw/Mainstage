@@ -71,12 +71,7 @@ mod tests {
     use std::path::PathBuf;
 
     /// Build a span on `file.ms` from explicit 1-based coordinates.
-    fn span(
-        line_start: usize,
-        col_start: usize,
-        line_end: usize,
-        col_end: usize,
-    ) -> Span {
+    fn span(line_start: usize, col_start: usize, line_end: usize, col_end: usize) -> Span {
         Span { file: PathBuf::from("file.ms"), line_start, col_start, line_end, col_end }
     }
 

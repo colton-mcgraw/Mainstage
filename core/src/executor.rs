@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use crate::{
     ast::*,
     error::{Diagnostic, Error, Result, Span},
-    eval::{eval_condition, eval_expr, EvalContext, FileEntry, Value},
+    eval::{EvalContext, FileEntry, Value, eval_condition, eval_expr},
 };
 
 // ── Public API ─────────────────────────────────────────────────────────────────
@@ -24,14 +24,14 @@ pub fn execute_steps(steps: &[Step], ctx: &EvalContext) -> Result<()> {
 /// Execute a single step.
 pub fn execute_step(step: &Step, ctx: &EvalContext) -> Result<()> {
     match step {
-        Step::Exec(s)   => exec_step(s, ctx),
-        Step::Copy(s)   => copy_step(s, ctx),
-        Step::Move(s)   => move_step(s, ctx),
-        Step::Mkdir(s)  => mkdir_step(s, ctx),
+        Step::Exec(s) => exec_step(s, ctx),
+        Step::Copy(s) => copy_step(s, ctx),
+        Step::Move(s) => move_step(s, ctx),
+        Step::Mkdir(s) => mkdir_step(s, ctx),
         Step::Delete(s) => delete_step(s, ctx),
-        Step::Write(s)  => write_step(s, ctx),
-        Step::If(s)     => if_step(s, ctx),
-        Step::For(s)    => for_step(s, ctx),
+        Step::Write(s) => write_step(s, ctx),
+        Step::If(s) => if_step(s, ctx),
+        Step::For(s) => for_step(s, ctx),
     }
 }
 
@@ -55,20 +55,20 @@ fn exec_step(s: &ExecStep, ctx: &EvalContext) -> Result<()> {
 }
 
 fn copy_step(s: &CopyStep, ctx: &EvalContext) -> Result<()> {
-    let src  = eval_as_path(&s.src, ctx)?;
+    let src = eval_as_path(&s.src, ctx)?;
     let dest = eval_as_path(&s.dest, ctx)?;
     if src.is_dir() {
         copy_dir_recursive(&src, &dest, &s.span)
     } else {
         ensure_parent(&dest, &s.span)?;
-        std::fs::copy(&src, &dest)
-            .map(|_| ())
-            .map_err(|e| step_err(format!("copy '{}' → '{}': {}", src.display(), dest.display(), e), &s.span))
+        std::fs::copy(&src, &dest).map(|_| ()).map_err(|e| {
+            step_err(format!("copy '{}' → '{}': {}", src.display(), dest.display(), e), &s.span)
+        })
     }
 }
 
 fn move_step(s: &MoveStep, ctx: &EvalContext) -> Result<()> {
-    let src  = eval_as_path(&s.src, ctx)?;
+    let src = eval_as_path(&s.src, ctx)?;
     let dest = eval_as_path(&s.dest, ctx)?;
     ensure_parent(&dest, &s.span)?;
     // Try an atomic rename first; fall back to copy+delete across filesystems.
@@ -78,8 +78,9 @@ fn move_step(s: &MoveStep, ctx: &EvalContext) -> Result<()> {
             std::fs::remove_dir_all(&src)
                 .map_err(|e| step_err(format!("delete '{}': {}", src.display(), e), &s.span))?;
         } else {
-            std::fs::copy(&src, &dest)
-                .map_err(|e| step_err(format!("copy '{}' → '{}': {}", src.display(), dest.display(), e), &s.span))?;
+            std::fs::copy(&src, &dest).map_err(|e| {
+                step_err(format!("copy '{}' → '{}': {}", src.display(), dest.display(), e), &s.span)
+            })?;
             std::fs::remove_file(&src)
                 .map_err(|e| step_err(format!("delete '{}': {}", src.display(), e), &s.span))?;
         }
@@ -118,11 +119,7 @@ fn write_step(s: &WriteStep, ctx: &EvalContext) -> Result<()> {
 }
 
 fn if_step(s: &IfStep, ctx: &EvalContext) -> Result<()> {
-    let branch = if eval_condition(&s.condition, ctx)? {
-        &s.then_steps
-    } else {
-        &s.else_steps
-    };
+    let branch = if eval_condition(&s.condition, ctx)? { &s.then_steps } else { &s.else_steps };
     execute_steps(branch, ctx)
 }
 
@@ -140,7 +137,11 @@ fn for_step(s: &ForStep, ctx: &EvalContext) -> Result<()> {
 /// Substitute every `${ident}` or `${ident.field}` in `raw` with its evaluated value.
 /// Interpolation is applied before tokenization so substituted values with spaces
 /// are split normally unless the caller wraps them in quotes.
-pub(crate) fn interpolate_exec_command(raw: &str, ctx: &EvalContext, span: &Span) -> Result<String> {
+pub(crate) fn interpolate_exec_command(
+    raw: &str,
+    ctx: &EvalContext,
+    span: &Span,
+) -> Result<String> {
     let mut result = String::with_capacity(raw.len());
     let mut chars = raw.chars().peekable();
     while let Some(c) = chars.next() {
@@ -149,14 +150,17 @@ pub(crate) fn interpolate_exec_command(raw: &str, ctx: &EvalContext, span: &Span
             let mut inner = String::new();
             let mut closed = false;
             for ch in chars.by_ref() {
-                if ch == '}' { closed = true; break; }
+                if ch == '}' {
+                    closed = true;
+                    break;
+                }
                 inner.push(ch);
             }
             if !closed {
                 return Err(step_err("unclosed `${` in exec command", span));
             }
             let expr = build_simple_expr(inner.trim(), span)?;
-            let val  = eval_expr(&expr, ctx)?;
+            let val = eval_expr(&expr, ctx)?;
             result.push_str(&val.display_string());
         } else {
             result.push(c);
@@ -181,15 +185,15 @@ pub(crate) fn tokenize_command(command: &str, span: &Span) -> Result<Vec<String>
             '"' => loop {
                 match chars.next() {
                     Some('"') => break,
-                    Some(ch)  => current.push(ch),
-                    None      => return Err(step_err("unclosed double quote in exec command", span)),
+                    Some(ch) => current.push(ch),
+                    None => return Err(step_err("unclosed double quote in exec command", span)),
                 }
             },
             '\'' => loop {
                 match chars.next() {
                     Some('\'') => break,
-                    Some(ch)   => current.push(ch),
-                    None       => return Err(step_err("unclosed single quote in exec command", span)),
+                    Some(ch) => current.push(ch),
+                    None => return Err(step_err("unclosed single quote in exec command", span)),
                 }
             },
             ch => current.push(ch),
@@ -207,15 +211,15 @@ fn build_simple_expr(s: &str, span: &Span) -> Result<Expr> {
         return Err(step_err("empty interpolation '${}'", span));
     }
     if let Some((obj, field)) = s.split_once('.') {
-        let obj   = obj.trim();
+        let obj = obj.trim();
         let field = field.trim();
         if obj.is_empty() || field.is_empty() {
             return Err(step_err(format!("malformed interpolation expression '${{{}}}'", s), span));
         }
         Ok(Expr::MemberAccess(MemberAccessExpr {
             object: obj.to_string(),
-            field:  field.to_string(),
-            span:   span.clone(),
+            field: field.to_string(),
+            span: span.clone(),
         }))
     } else {
         Ok(Expr::Ident(IdentExpr { name: s.to_string(), span: span.clone() }))
@@ -262,15 +266,18 @@ fn copy_dir_recursive(src: &Path, dest: &Path, span: &Span) -> Result<()> {
     {
         let entry = entry
             .map_err(|e| step_err(format!("read entry in '{}': {}", src.display(), e), span))?;
-        let ft = entry
-            .file_type()
-            .map_err(|e| step_err(format!("file type '{}': {}", entry.path().display(), e), span))?;
+        let ft = entry.file_type().map_err(|e| {
+            step_err(format!("file type '{}': {}", entry.path().display(), e), span)
+        })?;
         let dst = dest.join(entry.file_name());
         if ft.is_dir() {
             copy_dir_recursive(&entry.path(), &dst, span)?;
         } else {
             std::fs::copy(entry.path(), &dst).map_err(|e| {
-                step_err(format!("copy '{}' → '{}': {}", entry.path().display(), dst.display(), e), span)
+                step_err(
+                    format!("copy '{}' → '{}': {}", entry.path().display(), dst.display(), e),
+                    span,
+                )
             })?;
         }
     }
@@ -294,14 +301,23 @@ mod tests {
     use std::path::PathBuf;
 
     fn span() -> Span {
-        Span { file: PathBuf::from("test.ms"), line_start: 1, col_start: 1, line_end: 1, col_end: 1 }
+        Span {
+            file: PathBuf::from("test.ms"),
+            line_start: 1,
+            col_start: 1,
+            line_end: 1,
+            col_end: 1,
+        }
     }
 
     fn ctx_with(lets: &[(&str, &str)]) -> EvalContext {
         EvalContext {
             script_dir: PathBuf::from("."),
             platform: "linux".to_string(),
-            let_values: lets.iter().map(|(k, v)| (k.to_string(), Value::String(v.to_string()))).collect(),
+            let_values: lets
+                .iter()
+                .map(|(k, v)| (k.to_string(), Value::String(v.to_string())))
+                .collect(),
             project_fields: HashMap::new(),
             for_vars: HashMap::new(),
             import_aliases: HashMap::new(),
@@ -341,10 +357,7 @@ mod tests {
 
     #[test]
     fn tokenize_extra_whitespace() {
-        assert_eq!(
-            tokenize_command("  cargo   test  ", &span()).unwrap(),
-            &["cargo", "test"]
-        );
+        assert_eq!(tokenize_command("  cargo   test  ", &span()).unwrap(), &["cargo", "test"]);
     }
 
     #[test]
@@ -437,8 +450,11 @@ mod tests {
         assert!(tmp.is_dir());
 
         // delete
-        execute_step(&Step::Delete(DeleteStep { path: path_expr.clone(), span: span.clone() }), &ctx)
-            .expect("delete should succeed");
+        execute_step(
+            &Step::Delete(DeleteStep { path: path_expr.clone(), span: span.clone() }),
+            &ctx,
+        )
+        .expect("delete should succeed");
         assert!(!tmp.exists());
 
         // delete on missing path is a no-op

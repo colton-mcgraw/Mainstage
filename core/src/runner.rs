@@ -9,7 +9,7 @@ use crate::{
     ast::*,
     cache::{self, Cache},
     error::{Diagnostic, Error, Result},
-    eval::{eval_expr, EvalContext, Value},
+    eval::{EvalContext, Value, eval_expr},
     executor::execute_steps,
     sema::AnalysisResult,
 };
@@ -78,9 +78,9 @@ pub fn run_pipeline_reported(
     analysis: &AnalysisResult,
     reporter: &dyn Reporter,
 ) -> Result<()> {
-    let pipeline    = find_pipeline(program, pipeline_name)?;
+    let pipeline = find_pipeline(program, pipeline_name)?;
     let stage_names = pipeline_stage_names(pipeline, ctx)?;
-    let sorted      = toposort(&stage_names, &analysis.dependency_graph)?;
+    let sorted = toposort(&stage_names, &analysis.dependency_graph)?;
 
     let project_dir = ctx.script_dir.clone();
     let mut cache = Cache::load(&project_dir);
@@ -106,8 +106,9 @@ pub fn run_pipeline_reported(
             continue;
         }
 
-        let stage = find_stage(program, stage_name)
-            .ok_or_else(|| runner_err(format!("stage '{}' listed in pipeline but not declared", stage_name)))?;
+        let stage = find_stage(program, stage_name).ok_or_else(|| {
+            runner_err(format!("stage '{}' listed in pipeline but not declared", stage_name))
+        })?;
 
         // Evaluate inputs/outputs with prior stages' outputs in scope so that
         // `inputs: [<stage>.outputs]` resolves for stages that actually run.
@@ -195,14 +196,14 @@ fn find_pipeline<'a>(program: &'a Program, name: Option<&str>) -> Result<&'a Pip
         if let Item::Pipeline(p) = item {
             match name {
                 Some(n) if p.name == n => return Ok(p),
-                None if p.is_default   => return Ok(p),
-                _                      => {}
+                None if p.is_default => return Ok(p),
+                _ => {}
             }
         }
     }
     match name {
         Some(n) => Err(runner_err(format!("no pipeline named '{}'", n))),
-        None    => Err(runner_err("no default pipeline declared")),
+        None => Err(runner_err("no default pipeline declared")),
     }
 }
 
@@ -210,7 +211,11 @@ fn find_pipeline<'a>(program: &'a Program, name: Option<&str>) -> Result<&'a Pip
 
 fn find_stage<'a>(program: &'a Program, name: &str) -> Option<&'a StageBlock> {
     program.items.iter().find_map(|item| {
-        if let Item::Stage(s) = item { if s.name == name { return Some(s); } }
+        if let Item::Stage(s) = item {
+            if s.name == name {
+                return Some(s);
+            }
+        }
         None
     })
 }
@@ -219,7 +224,7 @@ fn find_stage<'a>(program: &'a Program, name: &str) -> Option<&'a StageBlock> {
 
 fn pipeline_stage_names(pipeline: &PipelineBlock, ctx: &EvalContext) -> Result<Vec<String>> {
     match &pipeline.stages {
-        None       => Ok(Vec::new()),
+        None => Ok(Vec::new()),
         Some(expr) => collect_stage_names(expr, ctx),
     }
 }
@@ -230,7 +235,7 @@ fn pipeline_stage_names(pipeline: &PipelineBlock, ctx: &EvalContext) -> Result<V
 fn collect_stage_names(expr: &Expr, ctx: &EvalContext) -> Result<Vec<String>> {
     match expr {
         Expr::Ident(i) => Ok(vec![i.name.clone()]),
-        Expr::List(l)  => {
+        Expr::List(l) => {
             let mut names = Vec::new();
             for item in &l.items {
                 names.extend(collect_stage_names(item, ctx)?);
@@ -261,7 +266,7 @@ fn build_stage_ctx(
     // A context in which `<stage>.outputs` references resolve to the outputs of
     // stages that have already run this pipeline.
     let with_refs = base.with_stage_outputs(resolved_outputs.clone());
-    let inputs  = stage.inputs .as_ref().map(|e| eval_expr(e, &with_refs)).transpose()?;
+    let inputs = stage.inputs.as_ref().map(|e| eval_expr(e, &with_refs)).transpose()?;
     let outputs = stage.outputs.as_ref().map(|e| eval_expr(e, &with_refs)).transpose()?;
     Ok(with_refs.with_stage(inputs, outputs))
 }
@@ -272,8 +277,7 @@ fn toposort(stages: &[String], dep_graph: &HashMap<String, Vec<String>>) -> Resu
     let stage_set: HashSet<&str> = stages.iter().map(String::as_str).collect();
 
     // in_degree[s] = number of pipeline-member stages that s directly depends on.
-    let mut in_degree: HashMap<&str, usize> =
-        stages.iter().map(|s| (s.as_str(), 0usize)).collect();
+    let mut in_degree: HashMap<&str, usize> = stages.iter().map(|s| (s.as_str(), 0usize)).collect();
     // reverse_adj[d] = pipeline stages that directly depend on d.
     let mut reverse_adj: HashMap<&str, Vec<&str>> =
         stages.iter().map(|s| (s.as_str(), vec![])).collect();
@@ -289,11 +293,8 @@ fn toposort(stages: &[String], dep_graph: &HashMap<String, Vec<String>>) -> Resu
         }
     }
 
-    let mut queue: VecDeque<&str> = in_degree
-        .iter()
-        .filter(|&(_, d)| *d == 0)
-        .map(|(&s, _)| s)
-        .collect();
+    let mut queue: VecDeque<&str> =
+        in_degree.iter().filter(|&(_, d)| *d == 0).map(|(&s, _)| s).collect();
 
     let mut sorted = Vec::with_capacity(stages.len());
     while let Some(stage) = queue.pop_front() {

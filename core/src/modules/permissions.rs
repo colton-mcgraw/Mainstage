@@ -123,10 +123,8 @@ mod tests {
     }
 
     fn write_manifest(tag: &str, body: &str) -> std::path::PathBuf {
-        let nanos = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
+        let nanos =
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
         let dir = std::env::temp_dir().join(format!("ms_perms_{tag}_{nanos}"));
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join(MANIFEST), body).unwrap();

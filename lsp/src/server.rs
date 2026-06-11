@@ -20,7 +20,7 @@ use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer, LspService, Server};
 
 use crate::convert::to_lsp_diagnostics;
-use crate::{analysis, completion, hover, signature};
+use crate::{analysis, completion, hover, navigation, signature};
 
 /// How long to wait after the last edit before analyzing and publishing
 /// diagnostics. Coalesces rapid keystrokes into a single analysis.
@@ -124,15 +124,16 @@ impl LanguageServer for Backend {
                     retrigger_characters: Some(vec![",".to_string()]),
                     ..Default::default()
                 }),
+                definition_provider: Some(OneOf::Left(true)),
+                references_provider: Some(OneOf::Left(true)),
+                document_symbol_provider: Some(OneOf::Left(true)),
                 ..ServerCapabilities::default()
             },
         })
     }
 
     async fn initialized(&self, _params: InitializedParams) {
-        self.client
-            .log_message(MessageType::INFO, "mainstage language server initialized")
-            .await;
+        self.client.log_message(MessageType::INFO, "mainstage language server initialized").await;
     }
 
     async fn shutdown(&self) -> RpcResult<()> {
@@ -147,8 +148,7 @@ impl LanguageServer for Backend {
     async fn did_change(&self, params: DidChangeTextDocumentParams) {
         // Full-document sync: the last change carries the entire document text.
         if let Some(change) = params.content_changes.into_iter().next_back() {
-            self.update(params.text_document.uri, change.text, params.text_document.version)
-                .await;
+            self.update(params.text_document.uri, change.text, params.text_document.version).await;
         }
     }
 
@@ -188,6 +188,65 @@ impl LanguageServer for Backend {
         let registry = self.registry_for(&script_dir_of(&pos.text_document.uri)).await;
         let program = analysis::parse_text(&text, &path_of(&pos.text_document.uri));
         Ok(signature::signature_help(&text, pos.position, &registry, program.as_ref()))
+    }
+
+    async fn goto_definition(
+        &self,
+        params: GotoDefinitionParams,
+    ) -> RpcResult<Option<GotoDefinitionResponse>> {
+        let pos = params.text_document_position_params;
+        let uri = pos.text_document.uri;
+        let Some(text) = self.text_of(&uri).await else { return Ok(None) };
+        let program = analysis::parse_text(&text, &path_of(&uri));
+        Ok(navigation::definition(&text, pos.position, program.as_ref())
+            .map(|range| GotoDefinitionResponse::Scalar(Location::new(uri, range))))
+    }
+
+    async fn references(&self, params: ReferenceParams) -> RpcResult<Option<Vec<Location>>> {
+        let pos = params.text_document_position;
+        let uri = pos.text_document.uri;
+        let Some(text) = self.text_of(&uri).await else { return Ok(None) };
+        let program = analysis::parse_text(&text, &path_of(&uri));
+        let include = params.context.include_declaration;
+        let locations: Vec<Location> =
+            navigation::references(&text, pos.position, program.as_ref(), include)
+                .into_iter()
+                .map(|range| Location::new(uri.clone(), range))
+                .collect();
+        Ok((!locations.is_empty()).then_some(locations))
+    }
+
+    async fn document_symbol(
+        &self,
+        params: DocumentSymbolParams,
+    ) -> RpcResult<Option<DocumentSymbolResponse>> {
+        let uri = params.text_document.uri;
+        let Some(text) = self.text_of(&uri).await else { return Ok(None) };
+        let program = analysis::parse_text(&text, &path_of(&uri));
+        let symbols = navigation::document_symbols(&text, program.as_ref());
+        Ok((!symbols.is_empty()).then(|| {
+            DocumentSymbolResponse::Nested(symbols.iter().map(to_document_symbol).collect())
+        }))
+    }
+}
+
+/// Convert a navigation [`Symbol`](navigation::Symbol) into an LSP `DocumentSymbol`.
+fn to_document_symbol(symbol: &navigation::Symbol) -> DocumentSymbol {
+    let kind = match symbol.kind {
+        navigation::SymbolKind::Let => SymbolKind::VARIABLE,
+        navigation::SymbolKind::Stage => SymbolKind::CLASS,
+        navigation::SymbolKind::Pipeline => SymbolKind::FUNCTION,
+    };
+    #[allow(deprecated)] // `deprecated` field is mandatory but unused.
+    DocumentSymbol {
+        name: symbol.name.clone(),
+        detail: None,
+        kind,
+        tags: None,
+        deprecated: None,
+        range: symbol.range,
+        selection_range: symbol.selection,
+        children: None,
     }
 }
 

@@ -400,20 +400,16 @@ pub(crate) fn require_positional_list(
 
 /// Return the value of a named `String` argument, or `None` if absent or wrong type.
 pub(crate) fn named_string(args: &[ResolvedArg], name: &str) -> Option<String> {
-    args.iter()
-        .find(|a| a.name.as_deref() == Some(name))
-        .and_then(|a| match &a.value {
-            Value::String(s) => Some(s.clone()),
-            _ => None,
-        })
+    args.iter().find(|a| a.name.as_deref() == Some(name)).and_then(|a| match &a.value {
+        Value::String(s) => Some(s.clone()),
+        _ => None,
+    })
 }
 
 /// Return the value of a named `Bool` argument, or `None` if absent or wrong type.
 pub(crate) fn named_bool(args: &[ResolvedArg], name: &str) -> Option<bool> {
-    args.iter()
-        .find(|a| a.name.as_deref() == Some(name))
-        .and_then(|a| match a.value {
-            Value::Bool(b) => Some(b),
-            _ => None,
-        })
+    args.iter().find(|a| a.name.as_deref() == Some(name)).and_then(|a| match a.value {
+        Value::Bool(b) => Some(b),
+        _ => None,
+    })
 }

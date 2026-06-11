@@ -10,8 +10,8 @@ use std::sync::LazyLock;
 use crate::error::Result;
 use crate::eval::Value;
 use crate::modules::{
-    path_to_slash_string, require_positional_string, resolve_path, MethodSig, Module, ModuleCx,
-    Param, ResolvedArg, ValueTy,
+    MethodSig, Module, ModuleCx, Param, ResolvedArg, ValueTy, path_to_slash_string,
+    require_positional_string, resolve_path,
 };
 
 /// `fs.exists`, `fs.read`, `fs.is_dir`, `fs.is_file`, `fs.size`, `fs.list`.
@@ -82,7 +82,8 @@ fn list_dir(base: &str, resolved: &Path, cx: &ModuleCx) -> Result<Value> {
 
     let mut entries: Vec<String> = Vec::new();
     for entry in read {
-        let entry = entry.map_err(|e| cx.error(format!("fs.list '{}': {}", resolved.display(), e)))?;
+        let entry =
+            entry.map_err(|e| cx.error(format!("fs.list '{}': {}", resolved.display(), e)))?;
         let name = entry.file_name();
         let joined = Path::new(base).join(&name);
         entries.push(path_to_slash_string(&joined));
@@ -100,7 +101,13 @@ mod tests {
     use std::path::PathBuf;
 
     fn span() -> Span {
-        Span { file: PathBuf::from("test.ms"), line_start: 1, col_start: 1, line_end: 1, col_end: 1 }
+        Span {
+            file: PathBuf::from("test.ms"),
+            line_start: 1,
+            col_start: 1,
+            line_end: 1,
+            col_end: 1,
+        }
     }
 
     fn call_in(method: &str, arg: &str, dir: &Path) -> Result<Value> {
@@ -115,10 +122,8 @@ mod tests {
     }
 
     fn unique_dir(tag: &str) -> PathBuf {
-        let nanos = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
+        let nanos =
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
         let dir = std::env::temp_dir().join(format!("ms_fs_{tag}_{nanos}"));
         std::fs::create_dir_all(&dir).unwrap();
         dir
@@ -144,7 +149,9 @@ mod tests {
         let dir = unique_dir("read");
         std::fs::write(dir.join("f.txt"), "hello").unwrap();
 
-        assert!(matches!(call_in("read", "f.txt", &dir).unwrap(), Value::String(s) if s == "hello"));
+        assert!(
+            matches!(call_in("read", "f.txt", &dir).unwrap(), Value::String(s) if s == "hello")
+        );
         assert!(matches!(call_in("size", "f.txt", &dir).unwrap(), Value::String(s) if s == "5"));
 
         let _ = std::fs::remove_dir_all(&dir);

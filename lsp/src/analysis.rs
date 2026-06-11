@@ -8,7 +8,7 @@
 use std::path::Path;
 
 use mainstage_core::{
-    analyze_with, ast::Program, parse, Diagnostic, Error, ModuleRegistry, Source,
+    Diagnostic, Error, ModuleRegistry, Source, analyze_with, ast::Program, parse,
 };
 
 /// The outcome of analyzing one document.

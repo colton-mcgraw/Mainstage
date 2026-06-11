@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use pest::{iterators::Pair, Parser};
+use pest::{Parser, iterators::Pair};
 use pest_derive::Parser;
 
 use crate::{
@@ -18,19 +18,14 @@ struct MainstageParser;
 /// Parse a [`Source`] and return its typed [`Program`] AST, or an [`Error::Parse`]
 /// containing all diagnostics collected during parsing.
 pub fn parse(source: &Source) -> Result<Program> {
-    let pairs = MainstageParser::parse(Rule::program, &source.text).map_err(|e| {
-        Error::Parse(vec![pest_error_to_diagnostic(e, &source.path)])
-    })?;
+    let pairs = MainstageParser::parse(Rule::program, &source.text)
+        .map_err(|e| Error::Parse(vec![pest_error_to_diagnostic(e, &source.path)]))?;
 
     let mut b = Builder { path: source.path.clone(), errors: Vec::new() };
     let program_pair = pairs.into_iter().next().unwrap();
     let program = b.build_program(program_pair);
 
-    if b.errors.is_empty() {
-        Ok(program)
-    } else {
-        Err(Error::Parse(b.errors))
-    }
+    if b.errors.is_empty() { Ok(program) } else { Err(Error::Parse(b.errors)) }
 }
 
 // ── Builder ───────────────────────────────────────────────────────────────────
@@ -156,13 +151,12 @@ impl Builder {
         let span = self.span(&pair);
         let mut inner = pair.into_inner().peekable();
 
-        let is_default =
-            if inner.peek().map(|p| p.as_rule()) == Some(Rule::pipeline_default) {
-                inner.next();
-                true
-            } else {
-                false
-            };
+        let is_default = if inner.peek().map(|p| p.as_rule()) == Some(Rule::pipeline_default) {
+            inner.next();
+            true
+        } else {
+            false
+        };
 
         let name = inner.next().unwrap().as_str().to_string();
 
@@ -212,11 +206,8 @@ impl Builder {
     fn build_exec_step(&mut self, pair: Pair<Rule>) -> ExecStep {
         let span = self.span(&pair);
         // exec_step is compound-atomic ($); exec_line is its only inner rule.
-        let command = pair
-            .into_inner()
-            .next()
-            .map(|p| p.as_str().trim_end().to_string())
-            .unwrap_or_default();
+        let command =
+            pair.into_inner().next().map(|p| p.as_str().trim_end().to_string()).unwrap_or_default();
         ExecStep { command, span }
     }
 
@@ -551,20 +542,12 @@ fn parse_compare_op(s: &str) -> CompareOp {
     }
 }
 
-fn pest_error_to_diagnostic(
-    e: pest::error::Error<Rule>,
-    path: &std::path::PathBuf,
-) -> Diagnostic {
+fn pest_error_to_diagnostic(e: pest::error::Error<Rule>, path: &std::path::PathBuf) -> Diagnostic {
     let (line, col) = match e.line_col {
         pest::error::LineColLocation::Pos((l, c)) => (l, c),
         pest::error::LineColLocation::Span((l, c), _) => (l, c),
     };
-    let span = Span {
-        file: path.clone(),
-        line_start: line,
-        col_start: col,
-        line_end: line,
-        col_end: col,
-    };
+    let span =
+        Span { file: path.clone(), line_start: line, col_start: col, line_end: line, col_end: col };
     Diagnostic::new(e.variant.message().to_string()).with_span(span)
 }

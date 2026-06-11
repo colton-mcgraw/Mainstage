@@ -2,9 +2,9 @@
 //! method's [`MethodSig::signature`] and highlight the active positional or named
 //! parameter.
 
-use mainstage_core::modules::MethodSig;
-use mainstage_core::ast::Program;
 use mainstage_core::ModuleRegistry;
+use mainstage_core::ast::Program;
+use mainstage_core::modules::MethodSig;
 use tower_lsp::lsp_types::{
     ParameterInformation, ParameterLabel, Position, SignatureHelp, SignatureInformation,
 };

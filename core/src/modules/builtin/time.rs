@@ -10,13 +10,13 @@
 
 use std::sync::LazyLock;
 
-use chrono::format::StrftimeItems;
 use chrono::Utc;
+use chrono::format::StrftimeItems;
 
 use crate::error::Result;
 use crate::eval::Value;
 use crate::modules::{
-    require_positional_string, MethodSig, Module, ModuleCx, Param, ResolvedArg, ValueTy,
+    MethodSig, Module, ModuleCx, Param, ResolvedArg, ValueTy, require_positional_string,
 };
 
 /// `time.now()` (RFC 3339), `time.unix()` (seconds since the epoch),
@@ -25,7 +25,12 @@ pub struct TimeModule;
 
 static METHODS: LazyLock<Vec<MethodSig>> = LazyLock::new(|| {
     vec![
-        MethodSig { name: "now".to_string(), params: vec![], named: vec![], returns: ValueTy::String },
+        MethodSig {
+            name: "now".to_string(),
+            params: vec![],
+            named: vec![],
+            returns: ValueTy::String,
+        },
         MethodSig {
             name: "unix".to_string(),
             params: vec![],
@@ -34,11 +39,7 @@ static METHODS: LazyLock<Vec<MethodSig>> = LazyLock::new(|| {
         },
         MethodSig {
             name: "format".to_string(),
-            params: vec![Param {
-                name: "fmt".to_string(),
-                ty: ValueTy::String,
-                required: true,
-            }],
+            params: vec![Param { name: "fmt".to_string(), ty: ValueTy::String, required: true }],
             named: vec![],
             returns: ValueTy::String,
         },
@@ -84,12 +85,22 @@ mod tests {
     use std::path::{Path, PathBuf};
 
     fn span() -> Span {
-        Span { file: PathBuf::from("test.ms"), line_start: 1, col_start: 1, line_end: 1, col_end: 1 }
+        Span {
+            file: PathBuf::from("test.ms"),
+            line_start: 1,
+            col_start: 1,
+            line_end: 1,
+            col_end: 1,
+        }
     }
 
     fn call(method: &str, args: &[ResolvedArg]) -> Result<Value> {
         let span = span();
-        let cx = ModuleCx { span: &span, script_dir: Path::new("."), permissions: Permissions::default() };
+        let cx = ModuleCx {
+            span: &span,
+            script_dir: Path::new("."),
+            permissions: Permissions::default(),
+        };
         TimeModule.call(method, args, &cx)
     }
 

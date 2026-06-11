@@ -4,7 +4,7 @@
 //! resolution, forward-reference enforcement, uniqueness checks, the stage dependency
 //! graph, and `if/else` type compatibility.
 
-use mainstage_core::{analyze, parse, Error, Source};
+use mainstage_core::{Error, Source, analyze, parse};
 
 /// Parse and analyze `src`, asserting both succeed; returns the analysis result.
 fn analyze_ok(src: &str) -> mainstage_core::AnalysisResult {

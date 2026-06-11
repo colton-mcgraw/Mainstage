@@ -184,24 +184,12 @@ impl WireMethodSig {
         let params = self
             .params
             .into_iter()
-            .map(|p| {
-                Ok(Param {
-                    ty: parse_ty(&p.ty)?,
-                    name: p.name,
-                    required: p.required,
-                })
-            })
+            .map(|p| Ok(Param { ty: parse_ty(&p.ty)?, name: p.name, required: p.required }))
             .collect::<std::result::Result<Vec<_>, String>>()?;
         let named = self
             .named
             .into_iter()
-            .map(|p| {
-                Ok(NamedParam {
-                    ty: parse_ty(&p.ty)?,
-                    name: p.name,
-                    required: p.required,
-                })
-            })
+            .map(|p| Ok(NamedParam { ty: parse_ty(&p.ty)?, name: p.name, required: p.required }))
             .collect::<std::result::Result<Vec<_>, String>>()?;
         Ok(MethodSig { name: self.name, params, named, returns: parse_ty(&self.returns)? })
     }

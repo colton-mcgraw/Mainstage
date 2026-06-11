@@ -6,8 +6,8 @@ use crate::cache::sha256_hex;
 use crate::error::Result;
 use crate::eval::Value;
 use crate::modules::{
-    require_positional_string, resolve_path, MethodSig, Module, ModuleCx, Param, ResolvedArg,
-    ValueTy,
+    MethodSig, Module, ModuleCx, Param, ResolvedArg, ValueTy, require_positional_string,
+    resolve_path,
 };
 
 /// `hash.sha256("text")`, `hash.sha256_file("path")`.
@@ -48,8 +48,9 @@ impl Module for HashModule {
             "sha256_file" => {
                 let p = require_positional_string(args, 0, "hash.sha256_file", cx)?;
                 let path = resolve_path(cx.script_dir, &p);
-                let bytes = std::fs::read(&path)
-                    .map_err(|e| cx.error(format!("hash.sha256_file '{}': {}", path.display(), e)))?;
+                let bytes = std::fs::read(&path).map_err(|e| {
+                    cx.error(format!("hash.sha256_file '{}': {}", path.display(), e))
+                })?;
                 Ok(Value::String(sha256_hex(&bytes)))
             }
             _ => Err(cx.error(format!("hash has no method '{}'", method))),
@@ -66,7 +67,13 @@ mod tests {
     use std::path::{Path, PathBuf};
 
     fn span() -> Span {
-        Span { file: PathBuf::from("test.ms"), line_start: 1, col_start: 1, line_end: 1, col_end: 1 }
+        Span {
+            file: PathBuf::from("test.ms"),
+            line_start: 1,
+            col_start: 1,
+            line_end: 1,
+            col_end: 1,
+        }
     }
 
     fn call_in(method: &str, args: &[ResolvedArg], dir: &Path) -> Result<Value> {

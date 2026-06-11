@@ -8,7 +8,7 @@
 use std::path::{Path, PathBuf};
 
 use mainstage_core::{
-    analyze_with, eval_program_with, parse, Error, ModuleRegistry, Source, Value,
+    Error, ModuleRegistry, Source, Value, analyze_with, eval_program_with, parse,
 };
 
 /// The repo-root `tests/` directory (one level above this crate's manifest dir).
@@ -32,8 +32,7 @@ fn run_example(dir: &Path, file: &str) -> Vec<(String, Value)> {
     let program = parse(&source).expect("example should parse");
     let registry = ModuleRegistry::with_plugins(dir).expect("registry should build");
     analyze_with(&program, &registry).expect("example should analyze");
-    let ctx =
-        eval_program_with(&program, dir, registry).expect("example should evaluate");
+    let ctx = eval_program_with(&program, dir, registry).expect("example should evaluate");
     ctx.let_values
 }
 

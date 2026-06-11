@@ -1,0 +1,6 @@
+# Mainstage formatting conventions.
+#
+# Prefer keeping expressions (struct literals, function calls, arrays, etc.) on a
+# single line up to `max_width` rather than eagerly wrapping them — this matches
+# the compact style used across the codebase.
+use_small_heuristics = "Max"

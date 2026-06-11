@@ -7,14 +7,12 @@
 
 use std::path::{Path, PathBuf};
 
-use mainstage_core::{analyze, eval_program, parse, run_pipeline, Source};
+use mainstage_core::{Source, analyze, eval_program, parse, run_pipeline};
 
 /// A unique temporary directory for a single test's marker files.
 fn unique_dir(tag: &str) -> PathBuf {
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
+    let nanos =
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
     let dir = std::env::temp_dir().join(format!("ms_run_{tag}_{nanos}"));
     std::fs::create_dir_all(&dir).unwrap();
     dir
