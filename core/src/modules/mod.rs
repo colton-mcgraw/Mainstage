@@ -366,6 +366,17 @@ pub(crate) fn resolve_path(script_dir: &Path, p: &str) -> PathBuf {
     if raw.is_absolute() { raw } else { script_dir.join(raw) }
 }
 
+/// Render a path as a string with forward-slash separators on every platform.
+///
+/// Mainstage scripts treat `/` as the path separator regardless of host OS — the
+/// same convention the evaluator applies to `glob` patterns — so path-producing
+/// module methods funnel their output through this to keep results stable across
+/// Unix and Windows. Replacing only [`MAIN_SEPARATOR`](std::path::MAIN_SEPARATOR)
+/// leaves any literal backslashes in Unix filenames untouched.
+pub(crate) fn path_to_slash_string(path: &Path) -> String {
+    path.to_string_lossy().replace(std::path::MAIN_SEPARATOR, "/")
+}
+
 /// Return the `idx`-th positional (unnamed) argument as a `List`, or error.
 pub(crate) fn require_positional_list(
     args: &[ResolvedArg],

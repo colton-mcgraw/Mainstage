@@ -6,7 +6,8 @@ use std::sync::LazyLock;
 use crate::error::Result;
 use crate::eval::Value;
 use crate::modules::{
-    require_positional_string, MethodSig, Module, ModuleCx, Param, ResolvedArg, ValueTy,
+    path_to_slash_string, require_positional_string, MethodSig, Module, ModuleCx, Param,
+    ResolvedArg, ValueTy,
 };
 
 /// `path.join`, `path.dir`, `path.base`, `path.stem`, `path.ext`, `path.with_ext`,
@@ -118,7 +119,7 @@ fn component(
 }
 
 fn string(path: PathBuf) -> Value {
-    Value::String(path.to_string_lossy().into_owned())
+    Value::String(path_to_slash_string(&path))
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
