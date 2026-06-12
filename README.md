@@ -154,6 +154,7 @@ The CLI binary is at `target/release/mainstage`.
 - [Grammar Specification](docs/GRAMMAR.md) — full language syntax and semantics reference
 - [Modules](docs/MODULES.md) — standard-library modules, capabilities, and the plugin protocol
 - [Editor Tooling](docs/TOOLING.md) — language server features, editor setup, and the formatter
+- [Benchmarks](docs/BENCHMARKS.md) — performance harness, fixtures, and baseline timings
 - [Roadmap](docs/ROADMAP.md) — planned features and milestones
 
 ## Contributing

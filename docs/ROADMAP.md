@@ -322,10 +322,10 @@ The headline scalability change is **parallel stage execution**. Today `run_pipe
 
 Establish a measurement baseline before optimizing. Output: reproducible benchmarks and recorded baseline numbers for the phases that follow.
 
-- [ ] Criterion benchmarks for `parse`, `analyze_with`, and `eval_program_with` over representative scripts
-- [ ] An end-to-end `run_pipeline` benchmark over a large synthetic project fixture (many stages, deep dependency chains, large filesets)
-- [ ] A fixture generator for synthetic projects parameterized by stage count, DAG depth, and files-per-stage
-- [ ] Record baseline timings in the repo so Phases 24 and 25 can demonstrate measurable improvement
+- [x] Criterion benchmarks for `parse`, `analyze_with`, and `eval_program_with` over representative scripts
+- [x] An end-to-end `run_pipeline` benchmark over a large synthetic project fixture (many stages, deep dependency chains, large filesets)
+- [x] A fixture generator for synthetic projects parameterized by stage count, DAG depth, and files-per-stage
+- [x] Record baseline timings in the repo so Phases 24 and 25 can demonstrate measurable improvement (`docs/BENCHMARKS.md`)
 
 ---
 
