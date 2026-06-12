@@ -10,6 +10,7 @@ pub mod parser;
 pub mod runner;
 pub mod sema;
 pub mod source;
+pub mod trivia;
 
 pub use error::{Diagnostic, Error, Result, Span};
 pub use eval::{
@@ -21,3 +22,7 @@ pub use parser::parse;
 pub use runner::{NoopReporter, Reporter, run_pipeline, run_pipeline_reported};
 pub use sema::{AnalysisResult, analyze, analyze_with};
 pub use source::Source;
+pub use trivia::{
+    Comment, CommentKind, NodeTrivia, SyntaxToken, TokenKind, TriviaMap, attach as attach_trivia,
+    comments, lex, render,
+};

@@ -275,9 +275,9 @@ Let users move around a script. Output: jump-to-definition and an outline, reusi
 
 Groundwork for the formatter: stop throwing comments away. Output: a syntax representation that round-trips source exactly, including comments and blank-line grouping.
 
-- [ ] Capture comments (and blank-line grouping) during lexing/parsing instead of discarding them — un-silence the `COMMENT` rule or add a lossless token pass
-- [ ] Attach trivia to AST nodes as leading and trailing comments, distinguishing end-of-line from standalone comments
-- [ ] Round-trip guarantee: a no-op render of the trivia-aware tree reproduces the original source byte-for-byte, covered by golden tests across the example scripts
+- [x] Capture comments (and blank-line grouping) during lexing/parsing instead of discarding them — un-silence the `COMMENT` rule or add a lossless token pass
+- [x] Attach trivia to AST nodes as leading and trailing comments, distinguishing end-of-line from standalone comments
+- [x] Round-trip guarantee: a no-op render of the trivia-aware tree reproduces the original source byte-for-byte, covered by golden tests across the example scripts
 
 ---
 
