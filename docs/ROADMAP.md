@@ -305,6 +305,151 @@ Make the tooling usable and keep it covered.
 
 ## Goal 4: Performance, Scalability, Stability & Polishing
 
+Takes the working interpreter from "correct" to "production-grade": measures real workloads, runs independent stages concurrently, makes change detection cheap on large input sets, hardens the runtime against panics and interruptions, and polishes the CLI's output and ergonomics.
+
+The headline scalability change is **parallel stage execution**. Today `run_pipeline_reported` in `core/src/runner.rs` walks a single topologically sorted list one stage at a time (`for stage_name in &sorted`), so independent branches of the dependency DAG never overlap. Goal 4 keeps the existing failure-propagation and change-detection semantics exactly, but lets ready stages run concurrently. The remaining phases — faster hashing, robustness, and UX — are lower-risk and can land independently of the runner change.
+
+**Design decisions:**
+
+- **Measure first:** a criterion-based benchmark harness and recorded baselines land before any optimization, so the parallelism and hashing phases prove their gains against real numbers rather than intuition.
+- **Concurrency model:** bounded worker concurrency over the existing DAG, controlled by a `--jobs N` flag (defaulting to the host core count). The `Reporter` trait gains the contract that per-stage output is buffered and flushed atomically so concurrent stages never interleave on the terminal. Shared `cache` and `resolved_outputs` state is moved behind synchronization; failure propagation and `allow_failure` semantics from Phase 6 are preserved unchanged.
+- **Change detection:** an `mtime` + size fast path short-circuits the SHA-256 digest when a file is provably unchanged; remaining hashing is parallelized. The on-disk cache format from Phase 7 stays compatible.
+- **Stability:** the runtime must never panic on user input — parser fuzzing and property tests enforce this — and an interrupted run (Ctrl-C / SIGTERM) must leave the cache in a consistent state.
+
+---
+
+### Phase 23: Benchmarking & Profiling Harness
+
+Establish a measurement baseline before optimizing. Output: reproducible benchmarks and recorded baseline numbers for the phases that follow.
+
+- [ ] Criterion benchmarks for `parse`, `analyze_with`, and `eval_program_with` over representative scripts
+- [ ] An end-to-end `run_pipeline` benchmark over a large synthetic project fixture (many stages, deep dependency chains, large filesets)
+- [ ] A fixture generator for synthetic projects parameterized by stage count, DAG depth, and files-per-stage
+- [ ] Record baseline timings in the repo so Phases 24 and 25 can demonstrate measurable improvement
+
+---
+
+### Phase 24: Parallel Stage Execution
+
+Run independent branches of the dependency DAG concurrently while preserving the exact ordering and failure semantics of Phase 6. Output: pipelines complete faster on multi-core hosts with identical results.
+
+- [ ] Schedule stages by readiness (all dependencies complete) instead of a single linear toposort, with bounded worker concurrency
+- [ ] `--jobs N` CLI flag (default: host core count; `--jobs 1` forces the current sequential behavior)
+- [ ] Make `Reporter` output deterministic — buffer each stage's output and flush it atomically so concurrent stages never interleave on the terminal
+- [ ] Guard shared `cache` and `resolved_outputs` state behind synchronization; ensure a dependent always observes its dependency's published outputs
+- [ ] Preserve failure propagation, `allow_failure`, and `on_failure` / `on_success` semantics exactly; cover with concurrent-execution tests
+
+---
+
+### Phase 25: Faster Change Detection
+
+Make the skip-check cheap on large input sets. Output: unchanged stages are detected without re-hashing every file.
+
+- [ ] `mtime` + size fast path that short-circuits the SHA-256 digest when a file is provably unchanged, falling back to hashing on ambiguity
+- [ ] Parallelize per-file hashing for the inputs that still require it
+- [ ] Avoid redundant re-globbing and re-hashing of filesets already resolved during a run
+- [ ] Keep the `.mainstage/cache.json` format backward-compatible; benchmark against the Phase 23 baselines
+
+---
+
+### Phase 26: Robustness & Stability
+
+Harden the runtime against malformed input and interruption. Output: no panics on any input, and a clean state after an interrupted run.
+
+- [ ] Handle Ctrl-C / SIGTERM: cancel in-flight stages gracefully and leave the cache in a consistent state
+- [ ] Parser and lexer fuzzing (e.g. `cargo-fuzz`) plus property tests asserting the pipeline never panics on arbitrary input
+- [ ] Stress tests for large filesets, deep DAGs, and wide fan-out, run under the parallel scheduler
+- [ ] Audit `unwrap` / `expect` / `panic!` on user-input paths and convert them to user-facing diagnostics
+
+---
+
+### Phase 27: CLI Polish & UX
+
+Make day-to-day use pleasant. Output: clear, configurable terminal output and convenience commands.
+
+- [ ] TTY-aware colored output with `--verbose`, `--quiet`, and `--no-color` controls (respecting `NO_COLOR`)
+- [ ] `--dry-run` — show the planned execution order and which stages would run or skip, without executing
+- [ ] `mainstage watch` — re-run the pipeline when inputs change
+- [ ] Refined error formatting (source snippets with carets) and an end-of-run timing summary per stage
+
+---
+
 ## Goal 5: Deployment & Ecosystem
+
+Gets Mainstage into users' hands and builds the surrounding ecosystem: continuous integration to keep `main` green, reproducible cross-platform release binaries, distribution through the channels people actually install from, a published editor extension, tooling for plugin authors, and a real documentation and onboarding story.
+
+This goal is mostly new infrastructure rather than language work — there is no `.github/` directory, CI, or release tooling in the repository today. Each phase is largely independent, so they can be tackled in any order once CI (Phase 28) is in place.
+
+**Design decisions:**
+
+- **Licensing:** MIT is treated as the project license for planning purposes. The badge / `license-file` ("Source Available") and the README's "MIT" reference are currently inconsistent; this is reconciled as part of Phase 29 before any public publish, but does not block earlier infrastructure work.
+- **CI as the foundation:** Phase 28 lands first and gates every later phase — releases, package manifests, and the editor extension all build on a green, multi-platform CI matrix that also runs `mainstage format --check`.
+- **Wide distribution:** Goal 5 deliberately targets many install channels (install script, crates.io, Homebrew, Scoop/winget, Docker) so users on any platform can install with one familiar command. Release binaries are built once (Phase 29) and the package manifests in Phase 30 consume those artifacts.
+- **Ecosystem, not just binaries:** the plugin protocol (Phase 13) and the editor client (Phase 22) become first-class, published, documented surfaces so the community can extend Mainstage without forking it.
+
+---
+
+### Phase 28: Continuous Integration
+
+Keep `main` green across platforms. Output: every push and PR is built, tested, linted, and format-checked on all three target OSes.
+
+- [ ] GitHub Actions workflow running `cargo build`, `cargo test`, `cargo clippy -D warnings`, and `cargo fmt --check` for the `core`, `cli`, and `lsp` crates
+- [ ] Run `mainstage format --check` over the example scripts as a CI gate (per Phase 21)
+- [ ] Matrix across Linux, macOS, and Windows on stable Rust (edition 2024)
+- [ ] Cache the cargo registry and build artifacts for fast CI
+
+---
+
+### Phase 29: Release Engineering & Cross-Platform Binaries
+
+Produce reproducible, downloadable binaries on every tagged release. Output: a GitHub Release with signed checksums and binaries for every supported target.
+
+- [ ] Adopt semantic versioning and maintain a `CHANGELOG`
+- [ ] Reconcile the license: pick MIT (or the intended license) consistently across `LICENSE.md`, the README badge, and the workspace `license-file`
+- [ ] Tag-triggered release workflow building Linux (gnu + musl), macOS (x86_64 + arm64), and Windows binaries
+- [ ] Attach binaries and SHA-256 checksums to the GitHub Release
+
+---
+
+### Phase 30: Distribution & Package Managers
+
+Make Mainstage installable through the channels users already use. Output: one-line installs on every major platform. *(Consumes the Phase 29 release artifacts.)*
+
+- [ ] `curl | sh` install script that downloads the right release binary for the host platform
+- [ ] Publish the crates to crates.io so `cargo install mainstage` works
+- [ ] Homebrew tap (macOS / Linux) and Scoop / winget manifests (Windows)
+- [ ] Docker image with the CLI as its entry point
+
+---
+
+### Phase 31: Editor Extension Publishing
+
+Ship the editor experience built in Goal 3. Output: a one-click install for VS Code and clear setup for other editors.
+
+- [ ] Package the Phase 22 VS Code client and publish it to the Visual Studio Marketplace and OpenVSX
+- [ ] Bundle or auto-discover the `mainstage lsp` binary so the extension works without manual configuration
+- [ ] Document generic LSP setup for other editors (Neovim, Helix, etc.)
+
+---
+
+### Phase 32: Plugin Ecosystem & Scaffolding
+
+Make the Phase 13 plugin protocol approachable for authors. Output: scaffolding, a publishing guide, and a discoverable index.
+
+- [ ] `mainstage plugin new` scaffolding that emits a working stdio plugin (`describe` / `call`) skeleton
+- [ ] An authoring and publishing guide for the JSON-over-stdio protocol, including versioning and namespacing conventions
+- [ ] A discoverable index of community plugins and reference example plugins
+- [ ] Validation/lint command that checks a plugin against the protocol before publishing
+
+---
+
+### Phase 33: Project Docs, Website & Onboarding
+
+Give newcomers a clear path in. Output: a docs site, a getting-started guide, and an honest project status.
+
+- [ ] Getting-started guide and an examples gallery beyond the single `main.ms`
+- [ ] A docs site rendering the existing `docs/` (grammar, modules, tooling, roadmap)
+- [ ] `CONTRIBUTING.md` covering the workspace layout, tests, and the CI gates
+- [ ] Update the README "not yet usable" status once Goals 4 and 5 land
 
 ---
