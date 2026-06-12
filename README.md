@@ -97,6 +97,8 @@ mainstage list          # lists all pipelines and their stages
 | `mainstage run <name>` | Run a named pipeline. |
 | `mainstage list` | List all pipelines and their stages. |
 | `mainstage modules` | List available modules and their method signatures. |
+| `mainstage format [FILES...]` | Format scripts to canonical style (`--check` for CI, `--stdout` to preview). |
+| `mainstage lsp` | Run the language server over stdio (for editor integration). |
 | `mainstage parse <file>` | Print the parsed AST (debug tool). |
 | `mainstage clean` | Clear the change-detection cache. |
 
@@ -151,6 +153,7 @@ The CLI binary is at `target/release/mainstage`.
 
 - [Grammar Specification](docs/GRAMMAR.md) — full language syntax and semantics reference
 - [Modules](docs/MODULES.md) — standard-library modules, capabilities, and the plugin protocol
+- [Editor Tooling](docs/TOOLING.md) — language server features, editor setup, and the formatter
 - [Roadmap](docs/ROADMAP.md) — planned features and milestones
 
 ## Contributing

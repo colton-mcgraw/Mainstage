@@ -14,3 +14,9 @@ mainstage_core.workspace = true
 tower-lsp.workspace = true
 tokio.workspace = true
 serde_json.workspace = true
+
+[dev-dependencies]
+# Drive the LspService directly in integration tests: `tower` for the Service /
+# ServiceExt API, `futures` to poll the server-to-client notification stream.
+tower = { version = "0.4", features = ["util"] }
+futures = "0.3"

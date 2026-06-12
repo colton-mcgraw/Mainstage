@@ -297,9 +297,9 @@ Consistent, comment-preserving formatting from the CLI and the editor.
 
 Make the tooling usable and keep it covered.
 
-- [ ] Document the LSP feature set and editor setup (a minimal VS Code client plus generic LSP configuration) in `docs/`
-- [ ] Document `mainstage format` and recommend `format --check` alongside tests in CI
-- [ ] Integration tests: server lifecycle, a diagnostics fixture, completion / hover / signature-help snapshots, and formatter golden + idempotency suites
+- [x] Document the LSP feature set and editor setup (a minimal VS Code client plus generic LSP configuration) in `docs/`
+- [x] Document `mainstage format` and recommend `format --check` alongside tests in CI
+- [x] Integration tests: server lifecycle, a diagnostics fixture, completion / hover / signature-help snapshots, and formatter golden + idempotency suites
 
 ---
 
