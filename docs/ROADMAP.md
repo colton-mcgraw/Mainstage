@@ -275,9 +275,9 @@ Let users move around a script. Output: jump-to-definition and an outline, reusi
 
 Groundwork for the formatter: stop throwing comments away. Output: a syntax representation that round-trips source exactly, including comments and blank-line grouping.
 
-- [ ] Capture comments (and blank-line grouping) during lexing/parsing instead of discarding them — un-silence the `COMMENT` rule or add a lossless token pass
-- [ ] Attach trivia to AST nodes as leading and trailing comments, distinguishing end-of-line from standalone comments
-- [ ] Round-trip guarantee: a no-op render of the trivia-aware tree reproduces the original source byte-for-byte, covered by golden tests across the example scripts
+- [x] Capture comments (and blank-line grouping) during lexing/parsing instead of discarding them — un-silence the `COMMENT` rule or add a lossless token pass
+- [x] Attach trivia to AST nodes as leading and trailing comments, distinguishing end-of-line from standalone comments
+- [x] Round-trip guarantee: a no-op render of the trivia-aware tree reproduces the original source byte-for-byte, covered by golden tests across the example scripts
 
 ---
 
@@ -285,11 +285,11 @@ Groundwork for the formatter: stop throwing comments away. Output: a syntax repr
 
 Consistent, comment-preserving formatting from the CLI and the editor.
 
-- [ ] Pretty-printer over the trivia-aware tree: canonical indentation, spacing, and block layout for `import` / `let` / `project` / `stage` / `pipeline` / `steps` and their expressions, steps, and conditions
-- [ ] Preserve attached comments through formatting and keep blank-line grouping between top-level items
-- [ ] `mainstage format [FILES...]` formats in place; `--check` exits non-zero when any file is unformatted (CI gate); `--stdout` prints without writing
-- [ ] Idempotency and stability golden tests (`format(format(x)) == format(x)`)
-- [ ] LSP `textDocument/formatting` (and optional range formatting) reusing the same engine
+- [x] Pretty-printer over the trivia-aware tree: canonical indentation, spacing, and block layout for `import` / `let` / `project` / `stage` / `pipeline` / `steps` and their expressions, steps, and conditions
+- [x] Preserve attached comments through formatting and keep blank-line grouping between top-level items
+- [x] `mainstage format [FILES...]` formats in place; `--check` exits non-zero when any file is unformatted (CI gate); `--stdout` prints without writing
+- [x] Idempotency and stability golden tests (`format(format(x)) == format(x)`)
+- [x] LSP `textDocument/formatting` (and optional range formatting) reusing the same engine
 
 ---
 
@@ -297,9 +297,9 @@ Consistent, comment-preserving formatting from the CLI and the editor.
 
 Make the tooling usable and keep it covered.
 
-- [ ] Document the LSP feature set and editor setup (a minimal VS Code client plus generic LSP configuration) in `docs/`
-- [ ] Document `mainstage format` and recommend `format --check` alongside tests in CI
-- [ ] Integration tests: server lifecycle, a diagnostics fixture, completion / hover / signature-help snapshots, and formatter golden + idempotency suites
+- [x] Document the LSP feature set and editor setup (a minimal VS Code client plus generic LSP configuration) in `docs/`
+- [x] Document `mainstage format` and recommend `format --check` alongside tests in CI
+- [x] Integration tests: server lifecycle, a diagnostics fixture, completion / hover / signature-help snapshots, and formatter golden + idempotency suites
 
 ---
 
