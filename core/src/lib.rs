@@ -15,13 +15,16 @@ pub mod trivia;
 
 pub use error::{Diagnostic, Error, Result, Span};
 pub use eval::{
-    EvalContext, FileEntry, Value, eval_condition, eval_expr, eval_program, eval_program_with,
+    EvalContext, FileEntry, OutputSink, Value, eval_condition, eval_expr, eval_program,
+    eval_program_with,
 };
 pub use executor::{execute_step, execute_steps};
 pub use format::format;
 pub use modules::{Capability, ExternalModule, Module, ModuleRegistry, Permissions};
 pub use parser::parse;
-pub use runner::{NoopReporter, Reporter, run_pipeline, run_pipeline_reported};
+pub use runner::{
+    NoopReporter, Reporter, run_pipeline, run_pipeline_reported, run_pipeline_reported_jobs,
+};
 pub use sema::{AnalysisResult, analyze, analyze_with};
 pub use source::Source;
 pub use trivia::{

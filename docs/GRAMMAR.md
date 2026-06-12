@@ -610,6 +610,25 @@ A script may declare any number of pipelines. Pipelines are independent entry po
 | `mainstage run <name>`     | Run the named pipeline.                                       |
 | `mainstage list`           | List all declared pipelines and their stages.                 |
 
+### Parallel execution
+
+Independent branches of a pipeline's stage dependency graph run concurrently. A stage
+starts as soon as every stage it depends on has completed, so unrelated stages overlap
+on multi-core hosts while dependency order — and the failure-propagation, `allow_failure`,
+and `on_failure` / `on_success` semantics — are preserved exactly.
+
+The `-j` / `--jobs N` flag caps how many stages run at once (default: the host core
+count). `--jobs 1` forces fully sequential execution with live, unbuffered step output.
+With more than one worker, each stage's terminal output — its status markers and the
+captured stdout/stderr of its steps — is buffered and flushed as one atomic block, so the
+output of concurrent stages never interleaves.
+
+```text
+mainstage run ci              // run with the default worker budget
+mainstage --jobs 4 run ci     // run at most 4 stages concurrently
+mainstage --jobs 1 run ci     // sequential, live output
+```
+
 ### Rules
 
 - Exactly zero or one pipeline may be marked `default`. Two `default` declarations is a parse error.

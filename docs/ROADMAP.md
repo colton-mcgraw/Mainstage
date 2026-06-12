@@ -333,11 +333,11 @@ Establish a measurement baseline before optimizing. Output: reproducible benchma
 
 Run independent branches of the dependency DAG concurrently while preserving the exact ordering and failure semantics of Phase 6. Output: pipelines complete faster on multi-core hosts with identical results.
 
-- [ ] Schedule stages by readiness (all dependencies complete) instead of a single linear toposort, with bounded worker concurrency
-- [ ] `--jobs N` CLI flag (default: host core count; `--jobs 1` forces the current sequential behavior)
-- [ ] Make `Reporter` output deterministic — buffer each stage's output and flush it atomically so concurrent stages never interleave on the terminal
-- [ ] Guard shared `cache` and `resolved_outputs` state behind synchronization; ensure a dependent always observes its dependency's published outputs
-- [ ] Preserve failure propagation, `allow_failure`, and `on_failure` / `on_success` semantics exactly; cover with concurrent-execution tests
+- [x] Schedule stages by readiness (all dependencies complete) instead of a single linear toposort, with bounded worker concurrency
+- [x] `--jobs N` CLI flag (default: host core count; `--jobs 1` forces the current sequential behavior)
+- [x] Make `Reporter` output deterministic — buffer each stage's output and flush it atomically so concurrent stages never interleave on the terminal
+- [x] Guard shared `cache` and `resolved_outputs` state behind synchronization; ensure a dependent always observes its dependency's published outputs
+- [x] Preserve failure propagation, `allow_failure`, and `on_failure` / `on_success` semantics exactly; cover with concurrent-execution tests
 
 ---
 

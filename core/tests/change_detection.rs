@@ -4,35 +4,37 @@
 //! [`Reporter`]) whether a stage runs or is skipped: unchanged inputs skip, changed
 //! inputs re-run, a missing output re-runs, and `clean` forces a full rebuild.
 
-use std::cell::RefCell;
+use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 
 use mainstage_core::{
     Reporter, Source, analyze, cache, eval_program, parse, run_pipeline_reported,
 };
 
-/// Records which stages ran vs. were skipped during a single pipeline run.
+/// Records which stages ran vs. were skipped during a single pipeline run. Uses a
+/// `Mutex` so the recorder is `Sync` and shareable across the runner's worker threads.
 #[derive(Default)]
 struct Recorder {
-    ran: RefCell<Vec<String>>,
-    skipped: RefCell<Vec<String>>,
+    ran: Mutex<Vec<String>>,
+    skipped: Mutex<Vec<String>>,
 }
 
 impl Reporter for Recorder {
-    fn stage_start(&self, stage: &str) {
-        self.ran.borrow_mut().push(stage.to_string());
+    fn stage_start(&self, _out: &mut dyn Write, stage: &str) {
+        self.ran.lock().unwrap().push(stage.to_string());
     }
-    fn stage_skipped(&self, stage: &str) {
-        self.skipped.borrow_mut().push(stage.to_string());
+    fn stage_skipped(&self, _out: &mut dyn Write, stage: &str) {
+        self.skipped.lock().unwrap().push(stage.to_string());
     }
 }
 
 impl Recorder {
     fn ran(&self, stage: &str) -> bool {
-        self.ran.borrow().iter().any(|s| s == stage)
+        self.ran.lock().unwrap().iter().any(|s| s == stage)
     }
     fn skipped(&self, stage: &str) -> bool {
-        self.skipped.borrow().iter().any(|s| s == stage)
+        self.skipped.lock().unwrap().iter().any(|s| s == stage)
     }
 }
 

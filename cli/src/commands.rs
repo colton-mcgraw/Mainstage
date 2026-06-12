@@ -4,6 +4,7 @@
 //! terminal output. Every command returns a process exit code (0 = success).
 
 use chrono::{DateTime, Local};
+use std::io::Write;
 use std::path::Path;
 
 use clap::{Arg, ArgAction, Command};
@@ -11,7 +12,7 @@ use console::style;
 use mainstage_core::ast::Program;
 use mainstage_core::{
     AnalysisResult, EvalContext, ModuleRegistry, Permissions, Reporter, Source, analyze_with, ast,
-    cache, eval_program_with, parse, run_pipeline_reported,
+    cache, eval_program_with, parse, run_pipeline_reported_jobs,
 };
 
 /// Default script file used by `run` / `list` / `clean` and the no-subcommand run.
@@ -40,6 +41,15 @@ pub fn setup(cli: Command) -> Command {
         .arg(capability_flag("allow-run", "Allow the shell module to run external commands"))
         .arg(capability_flag("allow-net", "Allow the http module to make network requests"))
         .arg(capability_flag("allow-all", "Grant every capability (--allow-run and --allow-net)"))
+        .arg(
+            Arg::new("jobs")
+                .short('j')
+                .long("jobs")
+                .value_name("N")
+                .global(true)
+                .value_parser(clap::value_parser!(usize))
+                .help("Max stages to run concurrently (default: host core count; 1 = sequential)"),
+        )
         .subcommand(
             Command::new("run")
                 .about("Run a named pipeline")
@@ -101,9 +111,11 @@ pub fn dispatch(matches: &clap::ArgMatches) -> i32 {
     // Capability flags are global, so reading them from the top-level matches captures
     // them wherever they appear on the command line.
     let flags = flag_permissions(matches);
+    // `--jobs` is global, so it is read from the top-level matches wherever it appears.
+    let jobs = matches.get_one::<usize>("jobs").copied();
     match matches.subcommand() {
         Some(("run", sub)) => {
-            cmd_run(file_of(sub), Some(sub.get_one::<String>("name").unwrap()), flags)
+            cmd_run(file_of(sub), Some(sub.get_one::<String>("name").unwrap()), flags, jobs)
         }
         Some(("list", sub)) => cmd_list(file_of(sub), flags),
         Some(("clean", sub)) => cmd_clean(file_of(sub)),
@@ -119,7 +131,7 @@ pub fn dispatch(matches: &clap::ArgMatches) -> i32 {
             cmd_format(&files, sub.get_flag("check"), sub.get_flag("stdout"))
         }
         // No subcommand: run the default pipeline.
-        None => cmd_run(file_of(matches), None, flags),
+        None => cmd_run(file_of(matches), None, flags, jobs),
         Some((other, _)) => {
             eprintln!("{} unknown command '{}'", style("error:").red().bold(), other);
             2
@@ -142,7 +154,7 @@ fn flag_permissions(matches: &clap::ArgMatches) -> Permissions {
 
 // ── run ─────────────────────────────────────────────────────────────────────────
 
-fn cmd_run(file: &str, pipeline: Option<&str>, perms: Permissions) -> i32 {
+fn cmd_run(file: &str, pipeline: Option<&str>, perms: Permissions, jobs: Option<usize>) -> i32 {
     let Some((program, analysis, ctx)) = prepare(file, perms) else {
         return 1;
     };
@@ -152,8 +164,12 @@ fn cmd_run(file: &str, pipeline: Option<&str>, perms: Permissions) -> i32 {
         None => println!("{} {}", style("running").bold(), style("default pipeline").cyan()),
     }
 
+    // Default to the host core count; `--jobs 1` forces sequential execution.
+    let jobs =
+        jobs.unwrap_or_else(|| std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1));
+
     let reporter = TermReporter::new();
-    match run_pipeline_reported(&program, pipeline, &ctx, &analysis, &reporter) {
+    match run_pipeline_reported_jobs(&program, pipeline, &ctx, &analysis, &reporter, jobs) {
         Ok(()) => 0,
         // Print the conclusion for every failure mode — including ones that occur
         // before any stage runs (unknown pipeline name, dependency cycle, …), which
@@ -442,39 +458,55 @@ impl TermReporter {
 }
 
 impl Reporter for TermReporter {
-    fn stage_start(&self, stage: &str) {
-        println!("{} {}", style("▶").cyan(), style(stage).bold());
+    fn stage_start(&self, out: &mut dyn Write, stage: &str) {
+        let _ = writeln!(out, "{} {}", style("▶").cyan(), style(stage).bold());
     }
 
-    fn stage_skipped(&self, stage: &str) {
-        println!("{} {} {}", style("•").dim(), stage, style("(up to date)").dim());
+    fn stage_skipped(&self, out: &mut dyn Write, stage: &str) {
+        let _ = writeln!(out, "{} {} {}", style("•").dim(), stage, style("(up to date)").dim());
     }
 
-    fn stage_passed(&self, stage: &str) {
-        println!("{} {}", style("✓").green(), stage);
+    fn stage_passed(&self, out: &mut dyn Write, stage: &str) {
+        let _ = writeln!(out, "{} {}", style("✓").green(), stage);
     }
 
-    fn stage_failed(&self, stage: &str, error: &mainstage_core::Error, allow_failure: bool) {
+    fn stage_failed(
+        &self,
+        out: &mut dyn Write,
+        stage: &str,
+        error: &mainstage_core::Error,
+        allow_failure: bool,
+    ) {
         if allow_failure {
-            println!("{} {} {}", style("!").yellow(), stage, style("(failure allowed)").yellow());
+            let _ = writeln!(
+                out,
+                "{} {} {}",
+                style("!").yellow(),
+                stage,
+                style("(failure allowed)").yellow()
+            );
         } else {
-            println!("{} {}", style("✗").red(), style(stage).red());
-            eprintln!("  {error}");
+            // Write the error alongside the marker so a stage's output stays one atomic
+            // block under concurrent execution.
+            let _ = writeln!(out, "{} {}", style("✗").red(), style(stage).red());
+            let _ = writeln!(out, "  {error}");
         }
     }
 
-    fn stage_cancelled(&self, stage: &str) {
-        println!("{} {} {}", style("⊘").yellow(), stage, style("(cancelled)").yellow());
+    fn stage_cancelled(&self, out: &mut dyn Write, stage: &str) {
+        let _ =
+            writeln!(out, "{} {} {}", style("⊘").yellow(), stage, style("(cancelled)").yellow());
     }
 
-    fn pipeline_finished(&self, pipeline: &str, failed_stage: Option<&str>) {
+    fn pipeline_finished(&self, out: &mut dyn Write, pipeline: &str, failed_stage: Option<&str>) {
         let elapsed = Local::now().signed_duration_since(self.start_time);
         let elapsed_str = format_duration(elapsed);
         // Only the success banner is rendered here; failures (including those with no
         // failing stage) are reported by `cmd_run` from the returned error, avoiding a
         // redundant summary line.
         if failed_stage.is_none() {
-            println!(
+            let _ = writeln!(
+                out,
                 "\n{} {}",
                 style("✓").green().bold(),
                 style(format!("pipeline '{pipeline}' succeeded in {elapsed_str}")).green()
