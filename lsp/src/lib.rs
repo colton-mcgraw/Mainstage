@@ -10,6 +10,7 @@ pub mod analysis;
 pub mod completion;
 pub mod convert;
 pub mod cursor;
+pub mod format;
 pub mod hover;
 pub mod index;
 pub mod navigation;

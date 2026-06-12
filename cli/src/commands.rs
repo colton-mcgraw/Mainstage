@@ -71,6 +71,29 @@ pub fn setup(cli: Command) -> Command {
             Command::new("lsp")
                 .about("Run the language server over stdio (for editor integration)"),
         )
+        .subcommand(
+            Command::new("format")
+                .about("Format .ms scripts to canonical style")
+                .arg(
+                    Arg::new("files")
+                        .num_args(0..)
+                        .value_name("FILES")
+                        .help("Scripts to format (defaults to main.ms)"),
+                )
+                .arg(
+                    Arg::new("check")
+                        .long("check")
+                        .action(ArgAction::SetTrue)
+                        .help("Exit non-zero if any file is not already formatted; write nothing"),
+                )
+                .arg(
+                    Arg::new("stdout")
+                        .long("stdout")
+                        .action(ArgAction::SetTrue)
+                        .conflicts_with("check")
+                        .help("Print formatted output to stdout instead of writing files"),
+                ),
+        )
 }
 
 /// Dispatch the matched command and return the process exit code.
@@ -88,6 +111,13 @@ pub fn dispatch(matches: &clap::ArgMatches) -> i32 {
         Some(("eval", sub)) => cmd_eval(file_of(sub), flags),
         Some(("modules", sub)) => cmd_modules(file_of(sub), flags),
         Some(("lsp", _)) => cmd_lsp(),
+        Some(("format", sub)) => {
+            let files: Vec<String> = sub
+                .get_many::<String>("files")
+                .map(|vals| vals.cloned().collect())
+                .unwrap_or_default();
+            cmd_format(&files, sub.get_flag("check"), sub.get_flag("stdout"))
+        }
         // No subcommand: run the default pipeline.
         None => cmd_run(file_of(matches), None, flags),
         Some((other, _)) => {
@@ -253,6 +283,67 @@ fn cmd_modules(file: &str, _perms: Permissions) -> i32 {
 fn cmd_lsp() -> i32 {
     mainstage_lsp::run_stdio();
     0
+}
+
+// ── format ─────────────────────────────────────────────────────────────────────
+
+/// Format one or more scripts to canonical style.
+///
+/// Default: rewrite each file in place. `--check`: write nothing and exit non-zero
+/// when any file is not already formatted (a CI gate). `--stdout`: print the
+/// formatted output without writing. A parse error in any file fails the command.
+fn cmd_format(files: &[String], check: bool, stdout: bool) -> i32 {
+    let owned;
+    let files: &[String] = if files.is_empty() {
+        owned = vec![DEFAULT_SCRIPT.to_string()];
+        &owned
+    } else {
+        files
+    };
+
+    let mut exit = 0;
+    let mut unformatted = 0;
+    for file in files {
+        let source = match Source::from_file(file) {
+            Ok(s) => s,
+            Err(e) => {
+                fail(e);
+                exit = 1;
+                continue;
+            }
+        };
+        let formatted = match mainstage_core::format(&source) {
+            Ok(f) => f,
+            Err(e) => {
+                eprintln!("{} {}", style("error in").red().bold(), style(file).bold());
+                fail(e);
+                exit = 1;
+                continue;
+            }
+        };
+
+        if stdout {
+            print!("{formatted}");
+        } else if check {
+            if formatted != source.text {
+                println!("{} {}", style("would reformat").yellow(), file);
+                unformatted += 1;
+            }
+        } else if formatted != source.text {
+            if let Err(e) = std::fs::write(file, &formatted) {
+                eprintln!("{} writing '{}': {}", style("error:").red().bold(), file, e);
+                exit = 1;
+            } else {
+                println!("{} {}", style("formatted").green(), file);
+            }
+        }
+    }
+
+    if check && unformatted > 0 {
+        eprintln!("{} {unformatted} file(s) need formatting", style("error:").red().bold());
+        return 1;
+    }
+    exit
 }
 
 // ── Shared pipeline preparation ──────────────────────────────────────────────────

@@ -127,6 +127,7 @@ impl LanguageServer for Backend {
                 definition_provider: Some(OneOf::Left(true)),
                 references_provider: Some(OneOf::Left(true)),
                 document_symbol_provider: Some(OneOf::Left(true)),
+                document_formatting_provider: Some(OneOf::Left(true)),
                 ..ServerCapabilities::default()
             },
         })
@@ -227,6 +228,15 @@ impl LanguageServer for Backend {
         Ok((!symbols.is_empty()).then(|| {
             DocumentSymbolResponse::Nested(symbols.iter().map(to_document_symbol).collect())
         }))
+    }
+
+    async fn formatting(
+        &self,
+        params: DocumentFormattingParams,
+    ) -> RpcResult<Option<Vec<TextEdit>>> {
+        let uri = params.text_document.uri;
+        let Some(text) = self.text_of(&uri).await else { return Ok(None) };
+        Ok(crate::format::formatting(&text, &path_of(&uri)))
     }
 }
 

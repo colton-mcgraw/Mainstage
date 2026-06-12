@@ -5,6 +5,7 @@ pub mod cache;
 pub mod error;
 pub mod eval;
 pub mod executor;
+pub mod format;
 pub mod modules;
 pub mod parser;
 pub mod runner;
@@ -17,6 +18,7 @@ pub use eval::{
     EvalContext, FileEntry, Value, eval_condition, eval_expr, eval_program, eval_program_with,
 };
 pub use executor::{execute_step, execute_steps};
+pub use format::format;
 pub use modules::{Capability, ExternalModule, Module, ModuleRegistry, Permissions};
 pub use parser::parse;
 pub use runner::{NoopReporter, Reporter, run_pipeline, run_pipeline_reported};

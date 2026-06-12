@@ -285,11 +285,11 @@ Groundwork for the formatter: stop throwing comments away. Output: a syntax repr
 
 Consistent, comment-preserving formatting from the CLI and the editor.
 
-- [ ] Pretty-printer over the trivia-aware tree: canonical indentation, spacing, and block layout for `import` / `let` / `project` / `stage` / `pipeline` / `steps` and their expressions, steps, and conditions
-- [ ] Preserve attached comments through formatting and keep blank-line grouping between top-level items
-- [ ] `mainstage format [FILES...]` formats in place; `--check` exits non-zero when any file is unformatted (CI gate); `--stdout` prints without writing
-- [ ] Idempotency and stability golden tests (`format(format(x)) == format(x)`)
-- [ ] LSP `textDocument/formatting` (and optional range formatting) reusing the same engine
+- [x] Pretty-printer over the trivia-aware tree: canonical indentation, spacing, and block layout for `import` / `let` / `project` / `stage` / `pipeline` / `steps` and their expressions, steps, and conditions
+- [x] Preserve attached comments through formatting and keep blank-line grouping between top-level items
+- [x] `mainstage format [FILES...]` formats in place; `--check` exits non-zero when any file is unformatted (CI gate); `--stdout` prints without writing
+- [x] Idempotency and stability golden tests (`format(format(x)) == format(x)`)
+- [x] LSP `textDocument/formatting` (and optional range formatting) reusing the same engine
 
 ---
 
