@@ -47,5 +47,10 @@ While Mainstage is pre-`1.0.0`, breaking changes may land in minor releases; onc
   highlighting and zero-config language-server discovery, a tag-triggered workflow
   publishing it to the Visual Studio Marketplace and Open VSX, and documented LSP
   setup for Neovim and Helix.
+- **Docs & onboarding** — a [Getting Started](docs/GETTING_STARTED.md) guide, a
+  runnable [examples gallery](examples/) (`hello`, `static-site`, `data-report`)
+  beyond `main.ms`, an mdBook documentation site rendering `docs/` (published to
+  GitHub Pages), and a [`CONTRIBUTING.md`](CONTRIBUTING.md) covering the workspace
+  layout, tests, and CI gates.
 
 [Unreleased]: https://github.com/ColtMcG1/mainstage/commits/main

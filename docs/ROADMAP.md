@@ -447,9 +447,9 @@ Make the Phase 13 plugin protocol approachable for authors. Output: scaffolding,
 
 Give newcomers a clear path in. Output: a docs site, a getting-started guide, and an honest project status.
 
-- [ ] Getting-started guide and an examples gallery beyond the single `main.ms`
-- [ ] A docs site rendering the existing `docs/` (grammar, modules, tooling, roadmap)
-- [ ] `CONTRIBUTING.md` covering the workspace layout, tests, and the CI gates
-- [ ] Update the README "not yet usable" status once Goals 4 and 5 land
+- [x] Getting-started guide and an examples gallery beyond the single `main.ms`
+- [x] A docs site rendering the existing `docs/` (grammar, modules, tooling, roadmap)
+- [x] `CONTRIBUTING.md` covering the workspace layout, tests, and the CI gates
+- [x] Update the README "not yet usable" status once Goals 4 and 5 land
 
 ---

@@ -10,5 +10,8 @@
 # Mainstage cache
 .mainstage/
 
+# mdBook docs-site output
+/book/
+
 # Misc
 *.log

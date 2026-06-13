@@ -1,0 +1,16 @@
+[book]
+title = "Mainstage"
+authors = ["Colton McGraw"]
+description = "Documentation for Mainstage — a declarative build and automation language."
+src = "docs"
+language = "en"
+
+[output.html]
+default-theme = "rust"
+preferred-dark-theme = "ayu"
+git-repository-url = "https://github.com/ColtMcG1/mainstage"
+edit-url-template = "https://github.com/ColtMcG1/mainstage/edit/main/docs/{path}"
+
+[output.html.fold]
+enable = true
+level = 1
