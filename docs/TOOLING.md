@@ -65,49 +65,27 @@ server ships separately from the CLI.
 
 #### VS Code
 
-A minimal client extension registers the `.ms` language and points VS Code at the
-server. The essential wiring (using
-[`vscode-languageclient`](https://www.npmjs.com/package/vscode-languageclient)):
+Install the **Mainstage** extension from the
+[Visual Studio Marketplace](https://marketplace.visualstudio.com/items?itemName=ColtMcG1.mainstage)
+or [Open VSX](https://open-vsx.org/extension/ColtMcG1/mainstage) (search for
+"Mainstage", or run `code --install-extension ColtMcG1.mainstage`). It registers the
+`.ms` language and manages the language server for you.
 
-```ts
-import { ExtensionContext } from "vscode";
-import { LanguageClient, ServerOptions, TransportKind } from "vscode-languageclient/node";
+The extension needs no configuration when a `mainstage` or `mainstage-lsp` binary is
+installed. On activation it locates the server in this order:
 
-let client: LanguageClient;
+1. the `mainstage.server.path` setting, if set;
+2. `mainstage-lsp` or `mainstage` on your `PATH`;
+3. `mainstage-lsp` or `mainstage` in a common install location (`~/.local/bin`,
+   `~/.cargo/bin`, `/usr/local/bin`, `/opt/homebrew/bin`).
 
-export function activate(_context: ExtensionContext) {
-  const serverOptions: ServerOptions = {
-    // `mainstage lsp` (or the `mainstage-lsp` binary) on PATH.
-    command: "mainstage",
-    args: ["lsp"],
-    transport: TransportKind.stdio,
-  };
+A `mainstage` binary is launched as `mainstage lsp`; a dedicated `mainstage-lsp`
+binary is launched directly. If no binary is found, the extension links to the
+[install instructions](../README.md#installation). Point `mainstage.server.path` at a
+specific executable to override discovery.
 
-  client = new LanguageClient(
-    "mainstage",
-    "Mainstage Language Server",
-    serverOptions,
-    { documentSelector: [{ scheme: "file", language: "mainstage" }] },
-  );
-
-  client.start();
-}
-
-export function deactivate(): Thenable<void> | undefined {
-  return client?.stop();
-}
-```
-
-Associate the `.ms` extension with the `mainstage` language id in the extension's
-`package.json`:
-
-```jsonc
-"contributes": {
-  "languages": [
-    { "id": "mainstage", "extensions": [".ms"], "aliases": ["Mainstage"] }
-  ]
-}
-```
+The extension source lives in [`editors/vscode/`](../editors/vscode/); see its README
+to build and run it from source.
 
 #### Neovim (built-in LSP)
 
@@ -125,6 +103,26 @@ vim.api.nvim_create_autocmd("FileType", {
   end,
 })
 ```
+
+#### Helix
+
+Add a language entry to `~/.config/helix/languages.toml`:
+
+```toml
+[[language]]
+name = "mainstage"
+scope = "source.mainstage"
+file-types = ["ms"]
+comment-token = "//"
+language-servers = ["mainstage"]
+
+[language-server.mainstage]
+command = "mainstage"
+args = ["lsp"]
+```
+
+(Use `command = "mainstage-lsp"` with no `args` if you installed the standalone
+server binary.)
 
 #### Generic LSP client
 

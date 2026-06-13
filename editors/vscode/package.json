@@ -1,0 +1,115 @@
+{
+  "name": "mainstage",
+  "displayName": "Mainstage",
+  "description": "Language support for Mainstage (.ms) build scripts: diagnostics, completion, hover, signature help, navigation, and formatting via the Mainstage language server.",
+  "version": "0.1.0",
+  "publisher": "ColtMcG1",
+  "license": "SEE LICENSE IN LICENSE.md",
+  "icon": "images/icon.png",
+  "engines": {
+    "vscode": "^1.84.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Formatters",
+    "Linters"
+  ],
+  "keywords": [
+    "mainstage",
+    "build",
+    "automation",
+    "language server",
+    "lsp"
+  ],
+  "homepage": "https://github.com/ColtMcG1/mainstage",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ColtMcG1/mainstage.git",
+    "directory": "editors/vscode"
+  },
+  "bugs": {
+    "url": "https://github.com/ColtMcG1/mainstage/issues"
+  },
+  "galleryBanner": {
+    "color": "#4F46E5",
+    "theme": "dark"
+  },
+  "main": "./out/extension.js",
+  "activationEvents": [],
+  "contributes": {
+    "languages": [
+      {
+        "id": "mainstage",
+        "aliases": ["Mainstage", "mainstage"],
+        "extensions": [".ms"],
+        "configuration": "./language-configuration.json",
+        "icon": {
+          "light": "./images/icon.png",
+          "dark": "./images/icon.png"
+        }
+      }
+    ],
+    "grammars": [
+      {
+        "language": "mainstage",
+        "scopeName": "source.mainstage",
+        "path": "./syntaxes/mainstage.tmLanguage.json"
+      }
+    ],
+    "configuration": {
+      "title": "Mainstage",
+      "properties": {
+        "mainstage.server.path": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Absolute path to the `mainstage` or `mainstage-lsp` executable. When empty, the extension auto-discovers a binary on your `PATH` and in common install locations (`~/.local/bin`, `~/.cargo/bin`).",
+          "scope": "machine-overridable"
+        },
+        "mainstage.server.arguments": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": [],
+          "markdownDescription": "Extra command-line arguments passed to the language server after the `lsp` subcommand.",
+          "scope": "resource"
+        },
+        "mainstage.trace.server": {
+          "type": "string",
+          "enum": ["off", "messages", "verbose"],
+          "default": "off",
+          "description": "Trace the communication between VS Code and the Mainstage language server.",
+          "scope": "window"
+        }
+      }
+    },
+    "commands": [
+      {
+        "command": "mainstage.restartServer",
+        "title": "Restart Language Server",
+        "category": "Mainstage"
+      },
+      {
+        "command": "mainstage.showOutput",
+        "title": "Show Language Server Output",
+        "category": "Mainstage"
+      }
+    ]
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "package": "vsce package --out mainstage.vsix",
+    "publish:vsce": "vsce publish",
+    "publish:ovsx": "ovsx publish"
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@types/vscode": "^1.84.0",
+    "@vscode/vsce": "^2.24.0",
+    "ovsx": "^0.9.0",
+    "typescript": "^5.4.0"
+  }
+}
