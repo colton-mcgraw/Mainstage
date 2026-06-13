@@ -6,10 +6,9 @@
 // plugin reports from `describe`.
 //
 // Consumed by `core/tests/examples.rs` (the plugin-driven test is unix-only).
-
 import "greet" as greet;
-import "str"   as str;
+import "str" as str;
 
-let who   = greet.hello("World");   // "hello, World"
-let shout = str.upper(who);         // "HELLO, WORLD"
-let n     = greet.echo_num(21);     // 21  — an int literal round-trips through the plugin
+let who = greet.hello("World"); // "hello, World"
+let shout = str.upper(who); // "HELLO, WORLD"
+let n = greet.echo_num(21); // 21  — an int literal round-trips through the plugin

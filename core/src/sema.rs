@@ -352,16 +352,16 @@ impl Analyzer {
         }
         // let binding — also enforce forward-reference rule
         if let Some(binding_idx) = scope.let_index(&ident.name) {
-            if let Some(current) = ctx.current_let_index {
-                if binding_idx >= current {
-                    self.error(
-                        format!(
-                            "forward reference to '{}': a `let` binding may not reference one declared after it",
-                            ident.name
-                        ),
-                        ident.span.clone(),
-                    );
-                }
+            if let Some(current) = ctx.current_let_index
+                && binding_idx >= current
+            {
+                self.error(
+                    format!(
+                        "forward reference to '{}': a `let` binding may not reference one declared after it",
+                        ident.name
+                    ),
+                    ident.span.clone(),
+                );
             }
             return;
         }
@@ -404,17 +404,17 @@ impl Analyzer {
     fn check_if_type_compat(&mut self, if_expr: &IfExpr, scope: &Scope) {
         let then_ty = self.infer_type(&if_expr.then_expr, scope);
         let else_ty = self.infer_type(&if_expr.else_expr, scope);
-        if let (Some(t), Some(e)) = (then_ty, else_ty) {
-            if t != e {
-                self.error(
-                    format!(
-                        "if/else branches have incompatible types: `then` produces {}, `else` produces {}",
-                        t.describe(),
-                        e.describe()
-                    ),
-                    if_expr.span.clone(),
-                );
-            }
+        if let (Some(t), Some(e)) = (then_ty, else_ty)
+            && t != e
+        {
+            self.error(
+                format!(
+                    "if/else branches have incompatible types: `then` produces {}, `else` produces {}",
+                    t.describe(),
+                    e.describe()
+                ),
+                if_expr.span.clone(),
+            );
         }
     }
 

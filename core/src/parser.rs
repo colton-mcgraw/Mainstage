@@ -542,12 +542,17 @@ fn parse_compare_op(s: &str) -> CompareOp {
     }
 }
 
-fn pest_error_to_diagnostic(e: pest::error::Error<Rule>, path: &std::path::PathBuf) -> Diagnostic {
+fn pest_error_to_diagnostic(e: pest::error::Error<Rule>, path: &std::path::Path) -> Diagnostic {
     let (line, col) = match e.line_col {
         pest::error::LineColLocation::Pos((l, c)) => (l, c),
         pest::error::LineColLocation::Span((l, c), _) => (l, c),
     };
-    let span =
-        Span { file: path.clone(), line_start: line, col_start: col, line_end: line, col_end: col };
+    let span = Span {
+        file: path.to_path_buf(),
+        line_start: line,
+        col_start: col,
+        line_end: line,
+        col_end: col,
+    };
     Diagnostic::new(e.variant.message().to_string()).with_span(span)
 }

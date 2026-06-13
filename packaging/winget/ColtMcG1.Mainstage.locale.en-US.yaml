@@ -1,0 +1,18 @@
+PackageIdentifier: ColtMcG1.Mainstage
+PackageVersion: 0.1.0
+PackageLocale: en-US
+Publisher: Colton McGraw
+PublisherUrl: https://github.com/ColtMcG1
+PackageName: Mainstage
+PackageUrl: https://github.com/ColtMcG1/mainstage
+License: Mainstage Source-Available License
+LicenseUrl: https://github.com/ColtMcG1/mainstage/blob/main/LICENSE.md
+ShortDescription: Declarative build and automation language
+Tags:
+  - build
+  - build-system
+  - automation
+  - ci
+  - cli
+ManifestType: defaultLocale
+ManifestVersion: 1.6.0

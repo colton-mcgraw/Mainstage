@@ -145,6 +145,46 @@ net = false
 A capability granted by *either* the flags or the manifest is in effect. The `time`
 module reads the wall clock but is not gated.
 
+## Installation
+
+Each release publishes prebuilt `mainstage` and `mainstage-lsp` binaries for Linux,
+macOS, and Windows.
+
+**Install script** (Linux / macOS) — downloads the right binary for your platform and
+verifies its checksum:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/ColtMcG1/mainstage/main/install.sh | sh
+```
+
+Set `MAINSTAGE_VERSION` to pin a release or `MAINSTAGE_BIN_DIR` to change the install
+location (default `~/.local/bin`).
+
+**Cargo:**
+
+```sh
+cargo install mainstage
+```
+
+**Homebrew** (macOS / Linux):
+
+```sh
+brew install ColtMcG1/tap/mainstage
+```
+
+**Windows** — Scoop or winget:
+
+```sh
+scoop install mainstage
+winget install ColtMcG1.Mainstage
+```
+
+**Docker** — the image's entry point is the CLI; mount your project at `/work`:
+
+```sh
+docker run --rm -v "$PWD:/work" ghcr.io/coltmcg1/mainstage run release
+```
+
 ## Building from Source
 
 Requires Rust stable (edition 2024).
@@ -181,4 +221,4 @@ The CLI binary is at `target/release/mainstage`.
 
 ## License
 
-[MIT](LICENSE.md)
+[Mainstage Source-Available License](LICENSE.md)

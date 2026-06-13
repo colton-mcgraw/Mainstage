@@ -113,12 +113,10 @@ fn byte_offset(text: &str, line: usize, col: usize) -> usize {
         }
         byte += 1;
     }
-    let mut cur_col = 1;
-    for ch in text[byte..].chars() {
+    for (cur_col, ch) in (1..).zip(text[byte..].chars()) {
         if cur_col >= col || ch == '\n' {
             break;
         }
-        cur_col += 1;
         byte += ch.len_utf8();
     }
     byte
@@ -161,7 +159,7 @@ mod tests {
         assert_eq!(ident_at(text, 0), Some((0, 3))); // start of "git"
         assert_eq!(ident_at(text, 3), Some((0, 3))); // trailing edge of "git"
         assert_eq!(ident_at(text, 4), Some((4, 7))); // start of "sha"
-        assert_eq!(ident_at(text, 3 + 0), Some((0, 3)));
+        assert_eq!(ident_at(text, 3), Some((0, 3)));
         assert_eq!(ident_at(".", 0), None);
     }
 

@@ -1,0 +1,8 @@
+target/
+.git/
+.github/
+.mainstage/
+docs/
+media/
+fuzz/
+**/*.rs.bk

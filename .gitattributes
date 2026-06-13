@@ -1,0 +1,4 @@
+# Normalize line endings to LF on checkout across all platforms so the
+# `cargo fmt --check` and `mainstage format --check` CI gates behave
+# identically on Linux, macOS, and Windows.
+* text=auto eol=lf

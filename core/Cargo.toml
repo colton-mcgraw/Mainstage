@@ -4,6 +4,8 @@ version = "0.1.0"
 edition.workspace = true
 authors.workspace = true
 license-file.workspace = true
+repository.workspace = true
+description = "Parser, semantic analysis, and evaluator for the Mainstage build and automation language"
 
 [lib]
 name = "mainstage_core"

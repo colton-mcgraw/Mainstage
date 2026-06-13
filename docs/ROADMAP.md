@@ -393,10 +393,10 @@ This goal is mostly new infrastructure rather than language work — there is no
 
 Keep `main` green across platforms. Output: every push and PR is built, tested, linted, and format-checked on all three target OSes.
 
-- [ ] GitHub Actions workflow running `cargo build`, `cargo test`, `cargo clippy -D warnings`, and `cargo fmt --check` for the `core`, `cli`, and `lsp` crates
-- [ ] Run `mainstage format --check` over the example scripts as a CI gate (per Phase 21)
-- [ ] Matrix across Linux, macOS, and Windows on stable Rust (edition 2024)
-- [ ] Cache the cargo registry and build artifacts for fast CI
+- [x] GitHub Actions workflow running `cargo build`, `cargo test`, `cargo clippy -D warnings`, and `cargo fmt --check` for the `core`, `cli`, and `lsp` crates
+- [x] Run `mainstage format --check` over the example scripts as a CI gate (per Phase 21)
+- [x] Matrix across Linux, macOS, and Windows on stable Rust (edition 2024)
+- [x] Cache the cargo registry and build artifacts for fast CI
 
 ---
 
@@ -404,10 +404,10 @@ Keep `main` green across platforms. Output: every push and PR is built, tested, 
 
 Produce reproducible, downloadable binaries on every tagged release. Output: a GitHub Release with signed checksums and binaries for every supported target.
 
-- [ ] Adopt semantic versioning and maintain a `CHANGELOG`
-- [ ] Reconcile the license: pick MIT (or the intended license) consistently across `LICENSE.md`, the README badge, and the workspace `license-file`
-- [ ] Tag-triggered release workflow building Linux (gnu + musl), macOS (x86_64 + arm64), and Windows binaries
-- [ ] Attach binaries and SHA-256 checksums to the GitHub Release
+- [x] Adopt semantic versioning and maintain a `CHANGELOG`
+- [x] Reconcile the license: pick MIT (or the intended license) consistently across `LICENSE.md`, the README badge, and the workspace `license-file` — settled on the existing Source-Available License; fixed the README footer to match
+- [x] Tag-triggered release workflow building Linux (gnu + musl), macOS (x86_64 + arm64), and Windows binaries
+- [x] Attach binaries and SHA-256 checksums to the GitHub Release
 
 ---
 
@@ -415,10 +415,10 @@ Produce reproducible, downloadable binaries on every tagged release. Output: a G
 
 Make Mainstage installable through the channels users already use. Output: one-line installs on every major platform. *(Consumes the Phase 29 release artifacts.)*
 
-- [ ] `curl | sh` install script that downloads the right release binary for the host platform
-- [ ] Publish the crates to crates.io so `cargo install mainstage` works
-- [ ] Homebrew tap (macOS / Linux) and Scoop / winget manifests (Windows)
-- [ ] Docker image with the CLI as its entry point
+- [x] `curl | sh` install script that downloads the right release binary for the host platform
+- [x] Publish the crates to crates.io so `cargo install mainstage` works
+- [x] Homebrew tap (macOS / Linux) and Scoop / winget manifests (Windows)
+- [x] Docker image with the CLI as its entry point
 
 ---
 

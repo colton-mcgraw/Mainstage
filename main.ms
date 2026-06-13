@@ -2,17 +2,13 @@ import "env" as env;
 import "git" as git;
 
 project {
-    name:    "my-app"
+    name: "my-app"
     version: git.tag(default: "0.0.0")
 }
 
 let sources = glob("src/**/*.rs");
-let out     = env.get("OUT_DIR", default: "dist");
-let target  = if platform == "windows" {
-    "x86_64-pc-windows-msvc"
-} else {
-    "x86_64-unknown-linux-gnu"
-};
+let out = env.get("OUT_DIR", default: "dist");
+let target = if platform == "windows" { "x86_64-pc-windows-msvc" } else { "x86_64-unknown-linux-gnu" };
 
 default pipeline dev {
     stages: [compile]
@@ -27,7 +23,7 @@ pipeline release {
 }
 
 stage compile {
-    inputs:  sources
+    inputs: sources
     outputs: ["target/${target}/release/my-app"]
 
     steps {
@@ -40,7 +36,7 @@ stage compile {
 }
 
 stage lint {
-    inputs:        sources
+    inputs: sources
     allow_failure: true
 
     steps {
@@ -57,7 +53,7 @@ stage test {
 }
 
 stage package {
-    inputs:  [compile.outputs]
+    inputs: [compile.outputs]
     outputs: ["${out}/${project.name}-${project.version}.tar.gz"]
 
     steps {
