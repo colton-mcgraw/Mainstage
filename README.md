@@ -95,6 +95,7 @@ mainstage list          # lists all pipelines and their stages
 | --- | --- |
 | `mainstage` | Run the `default pipeline`. Error if none is declared. |
 | `mainstage run <name>` | Run a named pipeline. |
+| `mainstage watch [name]` | Run the pipeline, then re-run it whenever its inputs change. |
 | `mainstage list` | List all pipelines and their stages. |
 | `mainstage modules` | List available modules and their method signatures. |
 | `mainstage format [FILES...]` | Format scripts to canonical style (`--check` for CI, `--stdout` to preview). |
@@ -102,10 +103,25 @@ mainstage list          # lists all pipelines and their stages
 | `mainstage parse <file>` | Print the parsed AST (debug tool). |
 | `mainstage clean` | Clear the change-detection cache. |
 
-`run`, `list`, and `clean` (and the bare `mainstage`) read `main.ms` in the current
-directory by default; pass `-f, --file <FILE>` to point at a different script. Change
-detection persists per project in `.mainstage/cache.json` next to the script — a stage
-is skipped when its `inputs` are unchanged and its declared `outputs` still exist.
+`run`, `watch`, `list`, and `clean` (and the bare `mainstage`) read `main.ms` in the
+current directory by default; pass `-f, --file <FILE>` to point at a different script.
+Change detection persists per project in `.mainstage/cache.json` next to the script — a
+stage is skipped when its `inputs` are unchanged and its declared `outputs` still exist.
+
+### Output control
+
+These global flags work with any command and may appear before or after it:
+
+| Flag | Effect |
+| --- | --- |
+| `--dry-run` | Print the planned execution order (grouped into concurrency *waves*) and which stages would run or skip — without executing anything. |
+| `-v, --verbose` | Print extra detail, including per-stage timings inline. |
+| `-q, --quiet` | Suppress progress output; print only errors. |
+| `--no-color` | Disable colored output (also honored via the `NO_COLOR` env var). |
+
+Colored output is automatically disabled when stdout is not a terminal. Every run prints
+a per-stage timing summary at the end, and errors are shown with a source snippet and a
+caret pointing at the offending span.
 
 ### Capabilities
 

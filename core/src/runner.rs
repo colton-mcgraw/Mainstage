@@ -30,6 +30,18 @@ use crate::{
 
 // ── Reporting ──────────────────────────────────────────────────────────────────
 
+/// How a stage concluded, reported alongside its wall-clock duration to
+/// [`Reporter::stage_finished`] so a frontend can render an end-of-run timing summary.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum StageOutcome {
+    /// The stage ran its steps successfully.
+    Passed,
+    /// The stage was skipped because its inputs were unchanged and outputs present.
+    Skipped,
+    /// The stage's steps failed (whether or not the failure was tolerated).
+    Failed,
+}
+
 /// Receives stage- and pipeline-level lifecycle events during a run so a frontend
 /// (e.g. the CLI) can render progress. Every method has a default no-op body, so
 /// implementors override only the events they care about.
@@ -57,6 +69,17 @@ pub trait Reporter: Sync {
     }
     /// A stage was cancelled because a dependency failed.
     fn stage_cancelled(&self, _out: &mut dyn Write, _stage: &str) {}
+    /// A stage settled (passed, skipped, or failed), with the wall-clock time it took.
+    /// Reported in addition to the live markers so a frontend can accumulate per-stage
+    /// timings and render a summary; this method itself should not write progress output.
+    fn stage_finished(
+        &self,
+        _out: &mut dyn Write,
+        _stage: &str,
+        _outcome: StageOutcome,
+        _elapsed: Duration,
+    ) {
+    }
     /// The pipeline completed; `failed_stage` is `Some` when it failed.
     fn pipeline_finished(
         &self,
@@ -251,6 +274,163 @@ pub fn run_pipeline_cancellable(
 /// The host's available parallelism, falling back to a single worker.
 fn default_jobs() -> usize {
     std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1)
+}
+
+// ── Planning (dry-run / watch) ───────────────────────────────────────────────────
+
+/// Whether a stage would run or be skipped on the next invocation.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum PlanStatus {
+    /// The stage's inputs changed (or it has none), so it would execute.
+    Run,
+    /// The stage's inputs are unchanged and its outputs present, so it would be skipped.
+    Skip,
+}
+
+/// A single stage in a [`Plan`]: its name, whether it would run, and the resolved input
+/// and output paths used to reach that conclusion.
+#[derive(Clone, Debug)]
+pub struct PlannedStage {
+    pub name: String,
+    pub status: PlanStatus,
+    /// Resolved input file paths the stage reads (used by `watch` to decide what to watch).
+    pub inputs: Vec<std::path::PathBuf>,
+    /// Resolved declared output paths.
+    pub outputs: Vec<std::path::PathBuf>,
+}
+
+/// A non-executing plan of a pipeline: the stages it would run, grouped into dependency
+/// "waves". Every stage in a wave can run concurrently once the earlier waves complete,
+/// so the wave structure mirrors how the parallel scheduler would actually run them.
+#[derive(Clone, Debug)]
+pub struct Plan {
+    pub pipeline: String,
+    pub waves: Vec<Vec<PlannedStage>>,
+}
+
+impl Plan {
+    /// All stages across every wave, in topological order.
+    pub fn stages(&self) -> impl Iterator<Item = &PlannedStage> {
+        self.waves.iter().flatten()
+    }
+}
+
+/// Compute what running `pipeline_name` would do, without executing any steps.
+///
+/// Stages are resolved in dependency order — each stage's declared `outputs` are
+/// evaluated and fed forward so a dependent's `inputs: [<stage>.outputs]` reference
+/// resolves exactly as it would during a real run — and change detection is consulted
+/// (read-only; the cache is never written) to determine whether each stage would run or
+/// be skipped. The result groups stages into dependency waves for display.
+pub fn plan_pipeline(
+    program: &Program,
+    pipeline_name: Option<&str>,
+    ctx: &EvalContext,
+    analysis: &AnalysisResult,
+) -> Result<Plan> {
+    let pipeline = find_pipeline(program, pipeline_name)?;
+    let stage_names = pipeline_stage_names(pipeline, ctx)?;
+    let sorted = toposort(&stage_names, &analysis.dependency_graph)?;
+
+    let project_dir = ctx.script_dir.clone();
+    let cache = Cache::load(&project_dir);
+    let run_cache = cache::RunFileCache::new();
+
+    // Resolve stages in topological order, accumulating declared outputs so dependents'
+    // `<stage>.outputs` references resolve, and recording each stage's run/skip status.
+    let mut resolved_outputs: HashMap<String, Value> = HashMap::new();
+    let mut planned: HashMap<String, PlannedStage> = HashMap::new();
+    for name in &sorted {
+        let stage = find_stage(program, name).ok_or_else(|| {
+            runner_err(format!("stage '{name}' listed in pipeline but not declared"))
+        })?;
+        let stage_ctx = build_stage_ctx(stage, ctx, &resolved_outputs)?;
+
+        let inputs = stage_ctx.stage_inputs.as_ref().map(cache::input_paths).unwrap_or_default();
+        let outputs_value = stage_ctx.stage_outputs.clone();
+        let output_strs = outputs_value.as_ref().map(cache::output_paths).unwrap_or_default();
+
+        let status = match &stage_ctx.stage_inputs {
+            Some(inputs_val) => {
+                let prior = cache.input_meta(name);
+                let fp = cache::fingerprint_inputs(inputs_val, &prior, &run_cache);
+                if cache.is_fresh(name, fp.digest(), &project_dir) {
+                    PlanStatus::Skip
+                } else {
+                    PlanStatus::Run
+                }
+            }
+            // A stage with no inputs always runs.
+            None => PlanStatus::Run,
+        };
+
+        if let Some(v) = outputs_value {
+            resolved_outputs.insert(name.clone(), v);
+        }
+        planned.insert(
+            name.clone(),
+            PlannedStage {
+                name: name.clone(),
+                status,
+                inputs,
+                outputs: output_strs.into_iter().map(std::path::PathBuf::from).collect(),
+            },
+        );
+    }
+
+    let waves = dependency_waves(&sorted, &analysis.dependency_graph)
+        .into_iter()
+        .map(|wave| wave.into_iter().map(|n| planned.remove(&n).unwrap()).collect())
+        .collect();
+
+    Ok(Plan { pipeline: pipeline.name.clone(), waves })
+}
+
+/// The resolved input file paths of every stage in `pipeline_name`, de-duplicated.
+/// Used by `watch` to learn the set of files whose changes should trigger a re-run.
+pub fn pipeline_input_paths(
+    program: &Program,
+    pipeline_name: Option<&str>,
+    ctx: &EvalContext,
+    analysis: &AnalysisResult,
+) -> Result<Vec<std::path::PathBuf>> {
+    let plan = plan_pipeline(program, pipeline_name, ctx, analysis)?;
+    let mut paths: Vec<std::path::PathBuf> =
+        plan.stages().flat_map(|s| s.inputs.iter().cloned()).collect();
+    paths.sort();
+    paths.dedup();
+    Ok(paths)
+}
+
+/// Group stages into dependency waves: stages with no in-pipeline dependencies form
+/// wave 0, stages whose dependencies all sit in earlier waves form the next, and so on.
+/// Within a wave, the topological order of `sorted` is preserved.
+fn dependency_waves(
+    sorted: &[String],
+    dep_graph: &HashMap<String, Vec<String>>,
+) -> Vec<Vec<String>> {
+    let stage_set: HashSet<&str> = sorted.iter().map(String::as_str).collect();
+    let mut level: HashMap<&str, usize> = HashMap::new();
+    // `sorted` is already topologically ordered, so each stage's in-pipeline dependencies
+    // have their level assigned before it is visited.
+    for stage in sorted {
+        let lvl = dep_graph
+            .get(stage)
+            .into_iter()
+            .flatten()
+            .filter(|d| stage_set.contains(d.as_str()))
+            .map(|d| level.get(d.as_str()).map(|l| l + 1).unwrap_or(0))
+            .max()
+            .unwrap_or(0);
+        level.insert(stage.as_str(), lvl);
+    }
+
+    let depth = level.values().copied().max().map(|m| m + 1).unwrap_or(0);
+    let mut waves = vec![Vec::new(); depth];
+    for stage in sorted {
+        waves[level[stage.as_str()]].push(stage.clone());
+    }
+    waves
 }
 
 // ── Scheduler ────────────────────────────────────────────────────────────────────
@@ -590,6 +770,7 @@ fn run_one_stage(
     // mtime/size fast path and the within-run cache), then skip the stage when its digest
     // is unchanged and its outputs are all present. The prior run's per-file metadata is
     // snapshotted under the lock so hashing itself happens lock-free.
+    let start = std::time::Instant::now();
     let fingerprint = stage_ctx.stage_inputs.as_ref().map(|inputs| {
         let prior = cache.lock().unwrap().input_meta(name);
         cache::fingerprint_inputs(inputs, &prior, run_cache)
@@ -600,6 +781,9 @@ fn run_one_stage(
         let fresh = cache.lock().unwrap().is_fresh(name, fp.digest(), project_dir);
         if fresh {
             emit(reporter, |r, out| r.stage_skipped(out, name));
+            emit(reporter, |r, out| {
+                r.stage_finished(out, name, StageOutcome::Skipped, start.elapsed())
+            });
             return StageRun::Done { outputs: stage_outputs_value, success: true };
         }
     }
@@ -625,6 +809,8 @@ fn run_one_stage(
         buf.extend_from_slice(&s.take());
     }
 
+    let elapsed = start.elapsed();
+    let outcome = if result.is_ok() { StageOutcome::Passed } else { StageOutcome::Failed };
     let run = match &result {
         Ok(()) => {
             // Record the stage as up-to-date for the next run, persisting per-file
@@ -648,6 +834,9 @@ fn run_one_stage(
             }
         }
     };
+    write_event(reporter, buffered, &mut buf, |r, out| {
+        r.stage_finished(out, name, outcome, elapsed)
+    });
 
     flush_to_stdout(&buf);
     run
@@ -901,5 +1090,32 @@ mod tests {
         let (in_degree, _) = build_dag(&names(&["a", "b"]), &g);
         assert_eq!(in_degree["a"], 0);
         assert_eq!(in_degree["b"], 1);
+    }
+
+    #[test]
+    fn dependency_waves_group_independent_stages() {
+        // Diamond: a → {b, c} → d. Waves are [a], [b, c], [d] — b and c run together.
+        let g = graph(&[("a", &[]), ("b", &["a"]), ("c", &["a"]), ("d", &["b", "c"])]);
+        let waves = dependency_waves(&names(&["a", "b", "c", "d"]), &g);
+        assert_eq!(waves.len(), 3);
+        assert_eq!(waves[0], names(&["a"]));
+        let mut middle = waves[1].clone();
+        middle.sort();
+        assert_eq!(middle, names(&["b", "c"]));
+        assert_eq!(waves[2], names(&["d"]));
+    }
+
+    #[test]
+    fn dependency_waves_single_wave_when_all_independent() {
+        let g = graph(&[("a", &[]), ("b", &[]), ("c", &[])]);
+        let waves = dependency_waves(&names(&["a", "b", "c"]), &g);
+        assert_eq!(waves.len(), 1);
+        assert_eq!(waves[0].len(), 3);
+    }
+
+    #[test]
+    fn dependency_waves_empty() {
+        let waves = dependency_waves(&[], &HashMap::new());
+        assert!(waves.is_empty());
     }
 }

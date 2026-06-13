@@ -6,13 +6,16 @@
 use chrono::{DateTime, Local};
 use std::io::Write;
 use std::path::Path;
+use std::sync::Mutex;
+use std::time::Duration;
 
 use clap::{Arg, ArgAction, Command};
 use console::style;
 use mainstage_core::ast::Program;
 use mainstage_core::{
-    AnalysisResult, CancelToken, EvalContext, ModuleRegistry, Permissions, Reporter, Source,
-    analyze_with, ast, cache, eval_program_with, parse, run_pipeline_cancellable,
+    AnalysisResult, CancelToken, Diagnostic, Error, EvalContext, ModuleRegistry, Permissions, Plan,
+    PlanStatus, Reporter, Source, Span, StageOutcome, analyze_with, ast, cache, eval_program_with,
+    parse, pipeline_input_paths, plan_pipeline, run_pipeline_cancellable,
 };
 
 /// Default script file used by `run` / `list` / `clean` and the no-subcommand run.
@@ -50,10 +53,49 @@ pub fn setup(cli: Command) -> Command {
                 .value_parser(clap::value_parser!(usize))
                 .help("Max stages to run concurrently (default: host core count; 1 = sequential)"),
         )
+        // Global output-control flags, accepted before or after the subcommand.
+        .arg(
+            Arg::new("verbose")
+                .short('v')
+                .long("verbose")
+                .action(ArgAction::SetTrue)
+                .global(true)
+                .conflicts_with("quiet")
+                .help("Print extra detail, including per-stage timings inline"),
+        )
+        .arg(
+            Arg::new("quiet")
+                .short('q')
+                .long("quiet")
+                .action(ArgAction::SetTrue)
+                .global(true)
+                .help("Suppress progress output; print only errors"),
+        )
+        .arg(
+            Arg::new("no-color")
+                .long("no-color")
+                .action(ArgAction::SetTrue)
+                .global(true)
+                .help("Disable colored output (also honored via the NO_COLOR env var)"),
+        )
+        .arg(
+            Arg::new("dry-run").long("dry-run").action(ArgAction::SetTrue).global(true).help(
+                "Show the planned execution order and which stages would run, without executing",
+            ),
+        )
         .subcommand(
             Command::new("run")
                 .about("Run a named pipeline")
                 .arg(Arg::new("name").required(true).help("Pipeline name to run"))
+                .arg(file_arg()),
+        )
+        .subcommand(
+            Command::new("watch")
+                .about("Run the pipeline, then re-run it whenever its inputs change")
+                .arg(
+                    Arg::new("name")
+                        .help("Pipeline name to run (defaults to the default pipeline)"),
+                )
                 .arg(file_arg()),
         )
         .subcommand(
@@ -108,14 +150,33 @@ pub fn setup(cli: Command) -> Command {
 
 /// Dispatch the matched command and return the process exit code.
 pub fn dispatch(matches: &clap::ArgMatches) -> i32 {
+    // Resolve color handling first, so every line printed below respects it. `--no-color`
+    // (or the conventional NO_COLOR env var) forces plain output; otherwise `console`
+    // auto-detects whether stdout is a terminal.
+    if matches.get_flag("no-color") || std::env::var_os("NO_COLOR").is_some() {
+        console::set_colors_enabled(false);
+        console::set_colors_enabled_stderr(false);
+    }
+    let verbosity = Verbosity::from_matches(matches);
+
     // Capability flags are global, so reading them from the top-level matches captures
     // them wherever they appear on the command line.
     let flags = flag_permissions(matches);
     // `--jobs` is global, so it is read from the top-level matches wherever it appears.
     let jobs = matches.get_one::<usize>("jobs").copied();
+    let dry_run = matches.get_flag("dry-run");
     match matches.subcommand() {
         Some(("run", sub)) => {
-            cmd_run(file_of(sub), Some(sub.get_one::<String>("name").unwrap()), flags, jobs)
+            let name = sub.get_one::<String>("name").map(String::as_str);
+            if dry_run {
+                cmd_dry_run(file_of(sub), name, flags)
+            } else {
+                cmd_run(file_of(sub), name, flags, jobs, verbosity)
+            }
+        }
+        Some(("watch", sub)) => {
+            let name = sub.get_one::<String>("name").map(String::as_str);
+            cmd_watch(file_of(sub), name, flags, jobs, verbosity)
         }
         Some(("list", sub)) => cmd_list(file_of(sub), flags),
         Some(("clean", sub)) => cmd_clean(file_of(sub)),
@@ -130,11 +191,36 @@ pub fn dispatch(matches: &clap::ArgMatches) -> i32 {
                 .unwrap_or_default();
             cmd_format(&files, sub.get_flag("check"), sub.get_flag("stdout"))
         }
-        // No subcommand: run the default pipeline.
-        None => cmd_run(file_of(matches), None, flags, jobs),
+        // No subcommand: plan or run the default pipeline.
+        None if dry_run => cmd_dry_run(file_of(matches), None, flags),
+        None => cmd_run(file_of(matches), None, flags, jobs, verbosity),
         Some((other, _)) => {
             eprintln!("{} unknown command '{}'", style("error:").red().bold(), other);
             2
+        }
+    }
+}
+
+/// How much progress output to print. Controlled by the global `--verbose` / `--quiet`
+/// flags; `Normal` is the default.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Verbosity {
+    /// Only errors.
+    Quiet,
+    /// Progress markers plus an end-of-run timing summary.
+    Normal,
+    /// Everything in `Normal`, plus inline per-stage timings and extra detail.
+    Verbose,
+}
+
+impl Verbosity {
+    fn from_matches(matches: &clap::ArgMatches) -> Self {
+        if matches.get_flag("quiet") {
+            Verbosity::Quiet
+        } else if matches.get_flag("verbose") {
+            Verbosity::Verbose
+        } else {
+            Verbosity::Normal
         }
     }
 }
@@ -154,19 +240,16 @@ fn flag_permissions(matches: &clap::ArgMatches) -> Permissions {
 
 // ── run ─────────────────────────────────────────────────────────────────────────
 
-fn cmd_run(file: &str, pipeline: Option<&str>, perms: Permissions, jobs: Option<usize>) -> i32 {
+fn cmd_run(
+    file: &str,
+    pipeline: Option<&str>,
+    perms: Permissions,
+    jobs: Option<usize>,
+    verbosity: Verbosity,
+) -> i32 {
     let Some((program, analysis, ctx)) = prepare(file, perms) else {
         return 1;
     };
-
-    match pipeline {
-        Some(name) => println!("{} pipeline {}", style("running").bold(), style(name).cyan()),
-        None => println!("{} {}", style("running").bold(), style("default pipeline").cyan()),
-    }
-
-    // Default to the host core count; `--jobs 1` forces sequential execution.
-    let jobs =
-        jobs.unwrap_or_else(|| std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1));
 
     // Install a Ctrl-C / SIGTERM handler that requests cooperative cancellation. The
     // runner then stops launching stages, lets in-flight ones finish, and saves a
@@ -178,13 +261,215 @@ fn cmd_run(file: &str, pipeline: Option<&str>, perms: Permissions, jobs: Option<
         let _ = ctrlc::set_handler(move || cancel.cancel());
     }
 
-    let reporter = TermReporter::new();
-    match run_pipeline_cancellable(&program, pipeline, &ctx, &analysis, &reporter, jobs, &cancel) {
+    run_prepared(&program, pipeline, &ctx, &analysis, jobs, verbosity, &cancel)
+}
+
+/// Run an already-prepared pipeline against `cancel`, rendering progress at `verbosity`.
+/// Shared by `cmd_run` and `cmd_watch`.
+fn run_prepared(
+    program: &Program,
+    pipeline: Option<&str>,
+    ctx: &EvalContext,
+    analysis: &AnalysisResult,
+    jobs: Option<usize>,
+    verbosity: Verbosity,
+    cancel: &CancelToken,
+) -> i32 {
+    if verbosity != Verbosity::Quiet {
+        match pipeline {
+            Some(name) => println!("{} pipeline {}", style("running").bold(), style(name).cyan()),
+            None => println!("{} {}", style("running").bold(), style("default pipeline").cyan()),
+        }
+    }
+
+    // Default to the host core count; `--jobs 1` forces sequential execution.
+    let jobs =
+        jobs.unwrap_or_else(|| std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1));
+
+    let reporter = TermReporter::new(verbosity);
+    match run_pipeline_cancellable(program, pipeline, ctx, analysis, &reporter, jobs, cancel) {
         Ok(()) => 0,
         // Print the conclusion for every failure mode — including ones that occur
         // before any stage runs (unknown pipeline name, dependency cycle, …), which
         // the per-stage reporter never sees.
         Err(e) => fail(e),
+    }
+}
+
+// ── dry-run ──────────────────────────────────────────────────────────────────────
+
+/// Show the plan for a pipeline — the dependency waves and, per stage, whether it would
+/// run or be skipped — without executing any steps. The cache is read but never written.
+fn cmd_dry_run(file: &str, pipeline: Option<&str>, perms: Permissions) -> i32 {
+    let Some((program, analysis, ctx)) = prepare(file, perms) else {
+        return 1;
+    };
+
+    let plan = match plan_pipeline(&program, pipeline, &ctx, &analysis) {
+        Ok(p) => p,
+        Err(e) => return fail(e),
+    };
+    print_plan(&plan);
+    0
+}
+
+/// Render a [`Plan`] as numbered waves of stages, each tagged `run` or `skip`. Stages in
+/// the same wave have no ordering dependency and would execute concurrently.
+fn print_plan(plan: &Plan) {
+    println!("{} pipeline {}", style("dry run:").bold(), style(&plan.pipeline).cyan());
+
+    if plan.waves.is_empty() {
+        println!("  {}", style("(no stages)").dim());
+        return;
+    }
+
+    let (mut runs, mut skips) = (0usize, 0usize);
+    for (i, wave) in plan.waves.iter().enumerate() {
+        // A wave header is only useful when there is concurrency to convey; with a single
+        // wave or single-stage waves the numbering still clarifies execution order.
+        println!("{}", style(format!("  wave {}", i + 1)).dim());
+        for stage in wave {
+            match stage.status {
+                PlanStatus::Run => {
+                    runs += 1;
+                    println!(
+                        "    {} {} {}",
+                        style("▶").cyan(),
+                        style(&stage.name).bold(),
+                        style("(run)").cyan()
+                    );
+                }
+                PlanStatus::Skip => {
+                    skips += 1;
+                    println!(
+                        "    {} {} {}",
+                        style("•").dim(),
+                        stage.name,
+                        style("(skip, up to date)").dim()
+                    );
+                }
+            }
+        }
+    }
+    println!("\n{} {} to run, {} to skip", style("plan:").bold(), runs, skips);
+}
+
+// ── watch ────────────────────────────────────────────────────────────────────────
+
+/// How often `watch` polls its tracked files for changes.
+const WATCH_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(400);
+
+/// Run the pipeline, then re-run it whenever any of its resolved input files — or the
+/// script itself — changes on disk. Polls file modification times (and the modification
+/// times of their parent directories, so newly added or removed files are noticed too)
+/// rather than using OS file-watch APIs, keeping the implementation dependency-free and
+/// portable. Runs until interrupted with Ctrl-C.
+fn cmd_watch(
+    file: &str,
+    pipeline: Option<&str>,
+    perms: Permissions,
+    jobs: Option<usize>,
+    verbosity: Verbosity,
+) -> i32 {
+    // A single cancellation token, shared with one Ctrl-C handler installed for the whole
+    // watch session: the first Ctrl-C cancels an in-flight run; once idle, it ends watch.
+    let cancel = CancelToken::new();
+    {
+        let cancel = cancel.clone();
+        let _ = ctrlc::set_handler(move || cancel.cancel());
+    }
+
+    loop {
+        // Re-evaluate the program each iteration so changes to globs, lets, or the
+        // pipeline itself take effect. A preparation error is reported but does not end
+        // watch — fix the script and it re-runs on the next change.
+        if cancel.is_cancelled() {
+            break;
+        }
+        match prepare(file, perms) {
+            Some((program, analysis, ctx)) => {
+                let _ = run_prepared(&program, pipeline, &ctx, &analysis, jobs, verbosity, &cancel);
+                // A Ctrl-C during the run cancels it and ends the watch session.
+                if cancel.is_cancelled() {
+                    break;
+                }
+
+                // Determine the files to watch: every stage's resolved inputs, plus the
+                // script file. Failure to compute the plan (e.g. an unresolved reference)
+                // falls back to watching just the script so edits still trigger a re-run.
+                let mut watched =
+                    pipeline_input_paths(&program, pipeline, &ctx, &analysis).unwrap_or_default();
+                watched.push(std::path::PathBuf::from(file));
+
+                if verbosity != Verbosity::Quiet {
+                    println!(
+                        "\n{} {} file(s); press Ctrl-C to stop",
+                        style("watching").bold().blue(),
+                        watched.len()
+                    );
+                }
+
+                if !wait_for_change(&watched, &cancel) {
+                    break; // Ctrl-C while idle: stop watching.
+                }
+                if verbosity != Verbosity::Quiet {
+                    println!("{}", style("change detected — re-running").blue());
+                }
+            }
+            None => {
+                // The script failed to load/parse. Watch just the script and retry when
+                // it changes, so the user can fix the error in place.
+                let watched = vec![std::path::PathBuf::from(file)];
+                if verbosity != Verbosity::Quiet {
+                    println!(
+                        "\n{} {}; press Ctrl-C to stop",
+                        style("watching").bold().blue(),
+                        file
+                    );
+                }
+                if !wait_for_change(&watched, &cancel) {
+                    break;
+                }
+            }
+        }
+    }
+
+    if verbosity != Verbosity::Quiet {
+        println!("{}", style("watch stopped").dim());
+    }
+    0
+}
+
+/// A snapshot of the size and modification time of each tracked path (and missing paths,
+/// recorded as `None`) used to detect changes between polls.
+fn watch_snapshot(paths: &[std::path::PathBuf]) -> Vec<Option<(u64, std::time::SystemTime)>> {
+    paths
+        .iter()
+        .flat_map(|p| {
+            // Track the path itself and its parent directory; a directory's mtime changes
+            // when entries are added or removed, catching files that appear or vanish.
+            let parent = p.parent().filter(|d| !d.as_os_str().is_empty()).map(|d| d.to_path_buf());
+            std::iter::once(p.clone()).chain(parent)
+        })
+        .map(|p| std::fs::metadata(&p).ok().and_then(|m| Some((m.len(), m.modified().ok()?))))
+        .collect()
+}
+
+/// Block until any tracked path changes (returning `true`) or cancellation is requested
+/// (returning `false`). Polls at [`WATCH_POLL_INTERVAL`].
+fn wait_for_change(paths: &[std::path::PathBuf], cancel: &CancelToken) -> bool {
+    let baseline = watch_snapshot(paths);
+    loop {
+        if cancel.is_cancelled() {
+            return false;
+        }
+        std::thread::sleep(WATCH_POLL_INTERVAL);
+        if cancel.is_cancelled() {
+            return false;
+        }
+        if watch_snapshot(paths) != baseline {
+            return true;
+        }
     }
 }
 
@@ -435,17 +720,85 @@ fn script_dir(file: &str) -> &Path {
     Path::new(file).parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or(Path::new("."))
 }
 
-/// Print a core error (its `Display` is already user-facing and prefixed) and
-/// return the failure exit code.
+/// Render a core error to stderr — with a source snippet and caret underline when the
+/// diagnostic carries a span — and return the failure exit code.
 fn fail(e: mainstage_core::Error) -> i32 {
-    eprintln!("{e}");
+    match &e {
+        // I/O errors have no source location to point at; print as-is.
+        Error::Io { .. } => eprintln!("{e}"),
+        Error::Parse(diags) | Error::Semantic(diags) | Error::Eval(diags) => {
+            for (i, d) in diags.iter().enumerate() {
+                if i > 0 {
+                    eprintln!();
+                }
+                render_diagnostic(d);
+            }
+        }
+    }
     1
+}
+
+/// Render one diagnostic: the message, a `--> file:line:col` locator, a source snippet
+/// with a caret underline, and any supplementary notes.
+fn render_diagnostic(d: &Diagnostic) {
+    eprintln!("{} {}", style("error:").red().bold(), d.message);
+    if let Some(span) = &d.span {
+        eprintln!("  {} {}", style("-->").blue().bold(), span);
+        render_snippet(span);
+    }
+    for note in &d.notes {
+        eprintln!("  {} note: {note}", style("=").blue().bold());
+    }
+}
+
+/// Print the source line(s) covered by `span` with a caret underline beneath the offending
+/// span on the first line, rustc-style. Best-effort: if the file can't be read, nothing is
+/// printed (the `-->` locator already names the position).
+fn render_snippet(span: &Span) {
+    let Ok(text) = std::fs::read_to_string(&span.file) else {
+        return;
+    };
+    let lines: Vec<&str> = text.lines().collect();
+    // Spans are 1-based and inclusive of the start line; clamp to what the file holds.
+    if span.line_start == 0 || span.line_start > lines.len() {
+        return;
+    }
+    let last = span.line_end.min(lines.len());
+    let gutter = last.to_string().len();
+    let bar = style("|").blue().bold();
+
+    eprintln!("  {:>gutter$} {}", "", bar, gutter = gutter);
+    for n in span.line_start..=last {
+        let line = lines[n - 1];
+        eprintln!("  {} {} {}", style(format!("{n:>gutter$}")).blue().bold(), bar, line);
+        if n == span.line_start {
+            // Underline from col_start. For a single-line span, span the columns exactly;
+            // for a multi-line span, underline to the end of this first line.
+            let start = span.col_start.saturating_sub(1);
+            let end = if span.line_start == span.line_end {
+                span.col_end.max(span.col_start + 1)
+            } else {
+                line.chars().count() + 1
+            };
+            let width = end.saturating_sub(span.col_start).max(1);
+            let pad = " ".repeat(start);
+            let caret = "^".repeat(width);
+            eprintln!(
+                "  {:>gutter$} {} {}{}",
+                "",
+                bar,
+                pad,
+                style(caret).red().bold(),
+                gutter = gutter
+            );
+        }
+    }
 }
 
 // ── Terminal reporter ────────────────────────────────────────────────────────────
 
-fn format_duration(d: chrono::TimeDelta) -> String {
-    let ms = d.num_milliseconds();
+/// Format a millisecond duration compactly: `ms`, `s` (one decimal), or `m s`.
+fn format_millis(ms: u128) -> String {
     if ms < 1_000 {
         format!("{ms}ms")
     } else if ms < 60_000 {
@@ -456,27 +809,59 @@ fn format_duration(d: chrono::TimeDelta) -> String {
     }
 }
 
-/// Renders pipeline progress to the terminal with status glyphs.
+/// A single stage's recorded outcome and wall-clock duration, used to build the
+/// end-of-run timing summary.
+struct StageTiming {
+    name: String,
+    outcome: StageOutcome,
+    elapsed: Duration,
+}
+
+/// Renders pipeline progress to the terminal with status glyphs, honoring the configured
+/// [`Verbosity`] and accumulating per-stage timings for an end-of-run summary.
 struct TermReporter {
     start_time: DateTime<Local>,
+    verbosity: Verbosity,
+    /// Per-stage timings, recorded as stages settle. Behind a `Mutex` so the reporter is
+    /// `Sync` and shareable across the runner's worker threads.
+    timings: Mutex<Vec<StageTiming>>,
 }
 
 impl TermReporter {
-    fn new() -> Self {
-        Self { start_time: Local::now() }
+    fn new(verbosity: Verbosity) -> Self {
+        Self { start_time: Local::now(), verbosity, timings: Mutex::new(Vec::new()) }
+    }
+
+    fn quiet(&self) -> bool {
+        self.verbosity == Verbosity::Quiet
+    }
+
+    fn verbose(&self) -> bool {
+        self.verbosity == Verbosity::Verbose
     }
 }
 
 impl Reporter for TermReporter {
     fn stage_start(&self, out: &mut dyn Write, stage: &str) {
+        if self.quiet() {
+            return;
+        }
         let _ = writeln!(out, "{} {}", style("▶").cyan(), style(stage).bold());
     }
 
     fn stage_skipped(&self, out: &mut dyn Write, stage: &str) {
+        if self.quiet() {
+            return;
+        }
         let _ = writeln!(out, "{} {} {}", style("•").dim(), stage, style("(up to date)").dim());
     }
 
     fn stage_passed(&self, out: &mut dyn Write, stage: &str) {
+        // In verbose mode the pass marker is emitted by `stage_finished` with the elapsed
+        // time appended; here we only render it for the normal (non-verbose) case.
+        if self.quiet() || self.verbose() {
+            return;
+        }
         let _ = writeln!(out, "{} {}", style("✓").green(), stage);
     }
 
@@ -488,6 +873,10 @@ impl Reporter for TermReporter {
         allow_failure: bool,
     ) {
         if allow_failure {
+            // A tolerated failure is informational; suppress it in quiet mode.
+            if self.quiet() {
+                return;
+            }
             let _ = writeln!(
                 out,
                 "{} {} {}",
@@ -496,30 +885,94 @@ impl Reporter for TermReporter {
                 style("(failure allowed)").yellow()
             );
         } else {
-            // Write the error alongside the marker so a stage's output stays one atomic
-            // block under concurrent execution.
+            // A real failure is always shown, even in quiet mode. Write the error alongside
+            // the marker so a stage's output stays one atomic block under concurrency.
             let _ = writeln!(out, "{} {}", style("✗").red(), style(stage).red());
             let _ = writeln!(out, "  {error}");
         }
     }
 
     fn stage_cancelled(&self, out: &mut dyn Write, stage: &str) {
+        if self.quiet() {
+            return;
+        }
         let _ =
             writeln!(out, "{} {} {}", style("⊘").yellow(), stage, style("(cancelled)").yellow());
     }
 
+    fn stage_finished(
+        &self,
+        out: &mut dyn Write,
+        stage: &str,
+        outcome: StageOutcome,
+        elapsed: Duration,
+    ) {
+        // In verbose mode, render the pass marker here so the elapsed time can be shown
+        // inline (the plain `stage_passed` marker is suppressed above).
+        if self.verbose() && outcome == StageOutcome::Passed {
+            let _ = writeln!(
+                out,
+                "{} {} {}",
+                style("✓").green(),
+                stage,
+                style(format!("({})", format_millis(elapsed.as_millis()))).dim()
+            );
+        }
+        self.timings.lock().unwrap().push(StageTiming {
+            name: stage.to_string(),
+            outcome,
+            elapsed,
+        });
+    }
+
     fn pipeline_finished(&self, out: &mut dyn Write, pipeline: &str, failed_stage: Option<&str>) {
+        if self.quiet() {
+            return;
+        }
+        self.render_timing_summary(out);
+
         let elapsed = Local::now().signed_duration_since(self.start_time);
-        let elapsed_str = format_duration(elapsed);
+        let elapsed_str = format_millis(elapsed.num_milliseconds().max(0) as u128);
         // Only the success banner is rendered here; failures (including those with no
         // failing stage) are reported by `cmd_run` from the returned error, avoiding a
         // redundant summary line.
         if failed_stage.is_none() {
             let _ = writeln!(
                 out,
-                "\n{} {}",
+                "{} {}",
                 style("✓").green().bold(),
                 style(format!("pipeline '{pipeline}' succeeded in {elapsed_str}")).green()
+            );
+        }
+    }
+}
+
+impl TermReporter {
+    /// Print a per-stage timing table beneath the run, aligned on stage name. Nothing is
+    /// printed when no stage produced a timing (e.g. an empty pipeline).
+    fn render_timing_summary(&self, out: &mut dyn Write) {
+        let timings = self.timings.lock().unwrap();
+        if timings.is_empty() {
+            return;
+        }
+        let width = timings.iter().map(|t| t.name.len()).max().unwrap_or(0);
+        let _ = writeln!(out, "\n{}", style("timing summary").bold());
+        for t in timings.iter() {
+            let (glyph, suffix) = match t.outcome {
+                StageOutcome::Passed => (style("✓").green(), String::new()),
+                StageOutcome::Failed => (style("✗").red(), String::new()),
+                StageOutcome::Skipped => {
+                    (style("•").dim(), format!("  {}", style("(up to date)").dim()))
+                }
+            };
+            let _ = writeln!(
+                out,
+                "  {} {:<width$}  {}{}",
+                glyph,
+                t.name,
+                format_millis(t.elapsed.as_millis()),
+                suffix,
+                width = width,
             );
         }
     }

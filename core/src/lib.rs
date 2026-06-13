@@ -23,7 +23,8 @@ pub use format::format;
 pub use modules::{Capability, ExternalModule, Module, ModuleRegistry, Permissions};
 pub use parser::parse;
 pub use runner::{
-    CancelToken, NoopReporter, Reporter, run_pipeline, run_pipeline_cancellable,
+    CancelToken, NoopReporter, Plan, PlanStatus, PlannedStage, Reporter, StageOutcome,
+    pipeline_input_paths, plan_pipeline, run_pipeline, run_pipeline_cancellable,
     run_pipeline_reported, run_pipeline_reported_jobs,
 };
 pub use sema::{AnalysisResult, analyze, analyze_with};

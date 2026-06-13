@@ -8,8 +8,8 @@
 use std::path::{Path, PathBuf};
 
 use mainstage_core::{
-    CancelToken, NoopReporter, Source, analyze, eval_program, parse, run_pipeline,
-    run_pipeline_cancellable, run_pipeline_reported_jobs,
+    CancelToken, NoopReporter, PlanStatus, Source, analyze, eval_program, parse, plan_pipeline,
+    run_pipeline, run_pipeline_cancellable, run_pipeline_reported_jobs,
 };
 
 /// A unique temporary directory for a single test's marker files.
@@ -543,6 +543,88 @@ fn cancel_mid_run_lets_inflight_finish_and_stops_new_work() {
     assert!(exists(&dir, "a.out"), "the in-flight stage should finish");
     assert!(!exists(&dir, "b.out"), "a dependent must not start after cancellation");
     assert!(!exists(&dir, "c.out"), "a transitive dependent must not start after cancellation");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+// ── Phase 27: dry-run planning ───────────────────────────────────────────────────
+
+#[test]
+fn plan_reports_run_then_skip_and_groups_waves() {
+    // A two-stage chain gen → bundle, where gen reads a real input file. Before any run
+    // the plan marks both as "run"; after a run, gen still runs (its input is unchanged
+    // but so is its output, so it skips) and bundle skips too. The waves reflect the
+    // dependency: [gen], [bundle].
+    let dir = unique_dir("plan");
+    let d = dir.display();
+    std::fs::write(dir.join("src.txt"), "seed").unwrap();
+    let src = format!(
+        r#"
+        default pipeline build {{
+            stages: [gen, bundle]
+        }}
+        stage gen {{
+            inputs:  ["{d}/src.txt"]
+            outputs: ["{d}/gen.out"]
+            steps {{ write "{d}/gen.out" content: "x" }}
+        }}
+        stage bundle {{
+            inputs:  [gen.outputs]
+            outputs: ["{d}/bundle.out"]
+            steps {{ write "{d}/bundle.out" content: "y" }}
+        }}
+        "#
+    );
+
+    let program = parse(&Source::from_str("test.ms", &src)).expect("parse");
+    let analysis = analyze(&program).expect("analyze");
+    let ctx = eval_program(&program, &dir).expect("eval");
+
+    // Before running, with no cache, every stage would run.
+    let plan = plan_pipeline(&program, None, &ctx, &analysis).expect("plan");
+    assert_eq!(plan.pipeline, "build");
+    assert_eq!(plan.waves.len(), 2, "gen and bundle form two dependency waves");
+    assert_eq!(plan.waves[0][0].name, "gen");
+    assert_eq!(plan.waves[1][0].name, "bundle");
+    assert!(plan.stages().all(|s| s.status == PlanStatus::Run), "no cache → all run");
+    // gen's resolved inputs are surfaced for `watch`.
+    assert!(plan.waves[0][0].inputs.iter().any(|p| p.ends_with("src.txt")));
+
+    // Run the pipeline, then re-plan: unchanged inputs and present outputs make both skip.
+    run_pipeline(&program, None, &ctx, &analysis).expect("run");
+    let plan = plan_pipeline(&program, None, &ctx, &analysis).expect("re-plan");
+    assert!(
+        plan.stages().all(|s| s.status == PlanStatus::Skip),
+        "after a clean run every stage should plan to skip"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn pipeline_input_paths_collects_and_dedups() {
+    // Two stages reading the same input file; the watch path set lists it once.
+    let dir = unique_dir("inputs");
+    let d = dir.display();
+    std::fs::write(dir.join("shared.txt"), "data").unwrap();
+    let src = format!(
+        r#"
+        default pipeline build {{
+            stages: [a, b]
+        }}
+        stage a {{ inputs: ["{d}/shared.txt"] steps {{ write "{d}/a" content: "x" }} }}
+        stage b {{ inputs: ["{d}/shared.txt"] steps {{ write "{d}/b" content: "y" }} }}
+        "#
+    );
+
+    let program = parse(&Source::from_str("test.ms", &src)).expect("parse");
+    let analysis = analyze(&program).expect("analyze");
+    let ctx = eval_program(&program, &dir).expect("eval");
+
+    let paths =
+        mainstage_core::pipeline_input_paths(&program, None, &ctx, &analysis).expect("inputs");
+    let shared: Vec<_> = paths.iter().filter(|p| p.ends_with("shared.txt")).collect();
+    assert_eq!(shared.len(), 1, "the shared input is de-duplicated across stages");
 
     let _ = std::fs::remove_dir_all(&dir);
 }
