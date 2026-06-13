@@ -4,7 +4,10 @@
 
 [![License](https://img.shields.io/badge/License-Source_Available-blue.svg)](LICENSE.md) [![GitHub issues](https://img.shields.io/github/issues/ColtMcG1/mainstage)](https://github.com/ColtMcG1/mainstage/issues) [![GitHub forks](https://img.shields.io/github/forks/ColtMcG1/mainstage)](https://github.com/ColtMcG1/mainstage/forks) [![GitHub stars](https://img.shields.io/github/stars/ColtMcG1/mainstage)](https://github.com/ColtMcG1/mainstage/stargazers)
 
-> **Status:** Early development — not yet usable. See the [roadmap](docs/ROADMAP.md).
+> **Status:** Beta — usable today. The language, runtime, editor tooling, and
+> cross-platform distribution are all in place; remaining work is polish and
+> ecosystem growth. New here? Start with the [Getting Started](docs/GETTING_STARTED.md)
+> guide. See the [roadmap](docs/ROADMAP.md) for what's next.
 
 Mainstage is a declarative build and automation language. Scripts describe *what* to build and *how* stages relate to each other — the runtime determines execution order and skips stages whose inputs haven't changed.
 
@@ -220,6 +223,11 @@ The CLI binary is at `target/release/mainstage`.
 
 ## Documentation
 
+The full documentation is also published as a browsable site at
+**[coltmcg1.github.io/mainstage](https://coltmcg1.github.io/mainstage/)**.
+
+- [Getting Started](docs/GETTING_STARTED.md) — install Mainstage and build your first pipeline
+- [Examples Gallery](examples/) — runnable example projects beyond `main.ms`
 - [Grammar Specification](docs/GRAMMAR.md) — full language syntax and semantics reference
 - [Modules](docs/MODULES.md) — standard-library modules, capabilities, and the plugin protocol
 - [Authoring Plugins](docs/PLUGINS.md) — scaffolding, the stdio protocol, naming, versioning, and publishing
@@ -230,9 +238,12 @@ The CLI binary is at `target/release/mainstage`.
 
 ## Contributing
 
+Contributions are welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) for the workspace
+layout, how to build and test, and the CI gates your change needs to pass.
+
 1. Fork the repository and create a branch.
-2. Make your changes with clear commit messages.
-3. Submit a pull request.
+2. Make your changes with clear commit messages, tests, and docs.
+3. Run the [CI gates](CONTRIBUTING.md#ci-gates) locally, then submit a pull request.
 
 ## License
 

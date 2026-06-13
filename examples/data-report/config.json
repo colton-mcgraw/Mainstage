@@ -1,0 +1,7 @@
+{
+  "app": {
+    "name": "checkout",
+    "port": 8080
+  },
+  "features": ["build", "deploy"]
+}

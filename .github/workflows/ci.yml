@@ -65,6 +65,9 @@ jobs:
           cargo run --quiet --bin mainstage --locked --
           format --check
           main.ms
+          examples/hello/main.ms
+          examples/static-site/main.ms
+          examples/data-report/main.ms
           tests/stdlib.ms
           tests/validation_errors.ms
           tests/plugin/main.ms
