@@ -11,8 +11,8 @@ use clap::{Arg, ArgAction, Command};
 use console::style;
 use mainstage_core::ast::Program;
 use mainstage_core::{
-    AnalysisResult, EvalContext, ModuleRegistry, Permissions, Reporter, Source, analyze_with, ast,
-    cache, eval_program_with, parse, run_pipeline_reported_jobs,
+    AnalysisResult, CancelToken, EvalContext, ModuleRegistry, Permissions, Reporter, Source,
+    analyze_with, ast, cache, eval_program_with, parse, run_pipeline_cancellable,
 };
 
 /// Default script file used by `run` / `list` / `clean` and the no-subcommand run.
@@ -168,8 +168,18 @@ fn cmd_run(file: &str, pipeline: Option<&str>, perms: Permissions, jobs: Option<
     let jobs =
         jobs.unwrap_or_else(|| std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1));
 
+    // Install a Ctrl-C / SIGTERM handler that requests cooperative cancellation. The
+    // runner then stops launching stages, lets in-flight ones finish, and saves a
+    // consistent cache before returning. A best-effort install — if a handler is already
+    // registered, the run simply proceeds without interactive cancellation.
+    let cancel = CancelToken::new();
+    {
+        let cancel = cancel.clone();
+        let _ = ctrlc::set_handler(move || cancel.cancel());
+    }
+
     let reporter = TermReporter::new();
-    match run_pipeline_reported_jobs(&program, pipeline, &ctx, &analysis, &reporter, jobs) {
+    match run_pipeline_cancellable(&program, pipeline, &ctx, &analysis, &reporter, jobs, &cancel) {
         Ok(()) => 0,
         // Print the conclusion for every failure mode — including ones that occur
         // before any stage runs (unknown pipeline name, dependency cycle, …), which

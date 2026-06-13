@@ -629,6 +629,15 @@ mainstage --jobs 4 run ci     // run at most 4 stages concurrently
 mainstage --jobs 1 run ci     // sequential, live output
 ```
 
+### Interruption
+
+Pressing Ctrl-C (or sending `SIGTERM`) requests a graceful stop: the runner stops
+launching new stages and lets the stages already in flight finish, so their outputs stay
+whole. The change-detection cache is then written atomically — a temp file renamed into
+place — so an interrupted run never leaves a truncated or corrupt `cache.json`. The run
+exits reporting cancellation; completed stages are recorded, so a re-run resumes from
+where it left off.
+
 ### Rules
 
 - Exactly zero or one pipeline may be marked `default`. Two `default` declarations is a parse error.

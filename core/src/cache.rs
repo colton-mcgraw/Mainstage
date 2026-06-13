@@ -69,6 +69,11 @@ impl Cache {
 
     /// Persist the cache to `<project_dir>/.mainstage/cache.json`, creating the
     /// directory if needed.
+    ///
+    /// The write is atomic: the JSON is written to a uniquely-named temporary file in
+    /// the same directory and then renamed over the target, so an interrupted run
+    /// (Ctrl-C / crash mid-write) never leaves a truncated or corrupt `cache.json` —
+    /// either the old file or the fully-written new one is present.
     pub fn save(&self, project_dir: &Path) -> Result<()> {
         let dir = project_dir.join(CACHE_DIR);
         std::fs::create_dir_all(&dir)
@@ -76,8 +81,16 @@ impl Cache {
         let path = dir.join(CACHE_FILE);
         let text = serde_json::to_string_pretty(self)
             .map_err(|e| cache_err(format!("serialize cache: {}", e)))?;
-        std::fs::write(&path, text)
-            .map_err(|e| cache_err(format!("write cache '{}': {}", path.display(), e)))
+
+        // Unique temp name so concurrent saves in the same directory never clash.
+        let tmp = dir.join(format!("{}.{}.tmp", CACHE_FILE, uuid::Uuid::new_v4()));
+        std::fs::write(&tmp, text)
+            .map_err(|e| cache_err(format!("write cache '{}': {}", tmp.display(), e)))?;
+        std::fs::rename(&tmp, &path).map_err(|e| {
+            // Best-effort cleanup of the temp file if the atomic replace failed.
+            let _ = std::fs::remove_file(&tmp);
+            cache_err(format!("replace cache '{}': {}", path.display(), e))
+        })
     }
 
     /// Return `true` when `stage` can be skipped: its recorded digest equals
@@ -436,6 +449,34 @@ mod tests {
         // Missing output invalidates freshness.
         std::fs::remove_file(&out).unwrap();
         assert!(!loaded.is_fresh("build", "abc123", &dir));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn save_is_atomic_and_leaves_no_temp_files() {
+        // The save writes to a temp file then renames, so the directory ends with exactly
+        // the cache file and no `.tmp` residue — guaranteeing an interrupted run never
+        // leaves a half-written cache behind.
+        let dir = unique_dir("atomic");
+
+        let mut cache = Cache::default();
+        cache.update("a", "d1".to_string(), vec![]);
+        cache.save(&dir).unwrap();
+        // Overwrite to ensure rename-over-existing works.
+        cache.update("b", "d2".to_string(), vec![]);
+        cache.save(&dir).unwrap();
+
+        let cache_dir = dir.join(CACHE_DIR);
+        let entries: Vec<String> = std::fs::read_dir(&cache_dir)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(entries, vec![CACHE_FILE.to_string()], "only the cache file should remain");
+
+        let reloaded = Cache::load(&dir);
+        assert!(reloaded.is_fresh("a", "d1", &dir));
+        assert!(reloaded.is_fresh("b", "d2", &dir));
 
         let _ = std::fs::remove_dir_all(&dir);
     }

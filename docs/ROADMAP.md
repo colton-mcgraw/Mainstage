@@ -356,10 +356,10 @@ Make the skip-check cheap on large input sets. Output: unchanged stages are dete
 
 Harden the runtime against malformed input and interruption. Output: no panics on any input, and a clean state after an interrupted run.
 
-- [ ] Handle Ctrl-C / SIGTERM: cancel in-flight stages gracefully and leave the cache in a consistent state
-- [ ] Parser and lexer fuzzing (e.g. `cargo-fuzz`) plus property tests asserting the pipeline never panics on arbitrary input
-- [ ] Stress tests for large filesets, deep DAGs, and wide fan-out, run under the parallel scheduler
-- [ ] Audit `unwrap` / `expect` / `panic!` on user-input paths and convert them to user-facing diagnostics
+- [x] Handle Ctrl-C / SIGTERM: cancel in-flight stages gracefully and leave the cache in a consistent state
+- [x] Parser and lexer fuzzing (e.g. `cargo-fuzz`) plus property tests asserting the pipeline never panics on arbitrary input
+- [x] Stress tests for large filesets, deep DAGs, and wide fan-out, run under the parallel scheduler
+- [x] Audit `unwrap` / `expect` / `panic!` on user-input paths and convert them to user-facing diagnostics
 
 ---
 

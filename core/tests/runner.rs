@@ -8,7 +8,8 @@
 use std::path::{Path, PathBuf};
 
 use mainstage_core::{
-    Source, analyze, eval_program, parse, run_pipeline, run_pipeline_reported_jobs,
+    CancelToken, NoopReporter, Source, analyze, eval_program, parse, run_pipeline,
+    run_pipeline_cancellable, run_pipeline_reported_jobs,
 };
 
 /// A unique temporary directory for a single test's marker files.
@@ -436,6 +437,112 @@ fn parallel_allow_failure_keeps_pipeline_green() {
     assert!(exists(&dir, "b"), "dependent of an allow_failure stage must still run");
     assert!(exists(&dir, "success"), "on_success should run");
     assert!(!exists(&dir, "failure"), "on_failure must not run");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+// ── Phase 26: cancellation & cache consistency ───────────────────────────────────
+
+fn run_cancellable(src: &str, dir: &Path, cancel: &CancelToken) -> mainstage_core::Result<()> {
+    let program = parse(&Source::from_str("test.ms", src)).expect("parse should succeed");
+    let analysis = analyze(&program).expect("analysis should succeed");
+    let ctx = eval_program(&program, dir).expect("eval should succeed");
+    run_pipeline_cancellable(&program, None, &ctx, &analysis, &NoopReporter, 4, cancel)
+}
+
+#[test]
+fn cancel_before_run_launches_no_stages() {
+    let dir = unique_dir("cancel_pre");
+    let d = dir.display();
+    // A token cancelled before the run starts: no stage should execute, the run reports
+    // cancellation, and the pipeline's on_success hook must not fire.
+    let src = format!(
+        r#"
+        default pipeline build {{
+            stages: [a, b]
+            on_success {{ write "{d}/success" content: "ok" }}
+        }}
+        stage a {{ steps {{ write "{d}/a" content: "x" }} }}
+        stage b {{ steps {{ write "{d}/b" content: "x" }} }}
+        "#
+    );
+
+    let cancel = CancelToken::new();
+    cancel.cancel();
+    let result = run_cancellable(&src, &dir, &cancel);
+
+    assert!(result.is_err(), "a cancelled run must report an error");
+    assert!(!exists(&dir, "a"), "no stage should run after pre-cancellation");
+    assert!(!exists(&dir, "b"), "no stage should run after pre-cancellation");
+    assert!(!exists(&dir, "success"), "on_success must not run for a cancelled pipeline");
+    // The cache file exists and is whole (the atomic save leaves no partial write).
+    let cache_file = dir.join(".mainstage").join("cache.json");
+    assert!(cache_file.exists(), "cache must be saved even on cancellation");
+    let text = std::fs::read_to_string(&cache_file).unwrap();
+    assert!(text.contains("stages"), "cache.json should be a complete document");
+    // No temporary cache files should linger after the atomic rename.
+    let leftover = std::fs::read_dir(dir.join(".mainstage"))
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .any(|e| e.file_name().to_string_lossy().ends_with(".tmp"));
+    assert!(!leftover, "atomic save must not leave .tmp files behind");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn cancel_mid_run_lets_inflight_finish_and_stops_new_work() {
+    // A dependency chain a → b → c forces a deterministic order: only `a` is ready first.
+    // `a` writes its marker then sleeps; cancellation lands during that sleep. `a` runs to
+    // completion, but its dependents `b` and `c` — ready only after `a` — never start.
+    if cfg!(windows) {
+        return; // relies on a `sleep` binary
+    }
+    let dir = unique_dir("cancel_mid");
+    let d = dir.display();
+    let src = format!(
+        r#"
+        default pipeline build {{
+            stages: [a, b, c]
+        }}
+        stage a {{
+            outputs: ["{d}/a.out"]
+            steps {{
+                write "{d}/a.out" content: "x"
+                $ sleep 0.5
+            }}
+        }}
+        stage b {{
+            inputs:  [a.outputs]
+            outputs: ["{d}/b.out"]
+            steps {{ write "{d}/b.out" content: "x" }}
+        }}
+        stage c {{
+            inputs: [b.outputs]
+            steps {{ write "{d}/c.out" content: "x" }}
+        }}
+        "#
+    );
+
+    let program = parse(&Source::from_str("test.ms", &src)).expect("parse");
+    let analysis = analyze(&program).expect("analyze");
+    let ctx = eval_program(&program, &dir).expect("eval");
+
+    let cancel = CancelToken::new();
+    let canceller = cancel.clone();
+    let handle = std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(150));
+        canceller.cancel();
+    });
+
+    let result =
+        run_pipeline_cancellable(&program, None, &ctx, &analysis, &NoopReporter, 4, &cancel);
+    handle.join().unwrap();
+
+    assert!(result.is_err(), "a cancelled run reports an error");
+    assert!(exists(&dir, "a.out"), "the in-flight stage should finish");
+    assert!(!exists(&dir, "b.out"), "a dependent must not start after cancellation");
+    assert!(!exists(&dir, "c.out"), "a transitive dependent must not start after cancellation");
 
     let _ = std::fs::remove_dir_all(&dir);
 }

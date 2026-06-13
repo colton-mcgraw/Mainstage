@@ -1,0 +1,23 @@
+[package]
+name = "mainstage-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+# Kept out of the main workspace so a stable `cargo build`/`cargo test` ignores it —
+# cargo-fuzz requires a nightly toolchain and the libFuzzer runtime.
+[workspace]
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+mainstage_core = { path = "../core" }
+
+[[bin]]
+name = "parse"
+path = "fuzz_targets/parse.rs"
+test = false
+doc = false
+bench = false

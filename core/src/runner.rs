@@ -15,7 +15,9 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::io::Write;
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
+use std::time::Duration;
 
 use crate::{
     ast::*,
@@ -68,6 +70,38 @@ pub trait Reporter: Sync {
 /// A [`Reporter`] that does nothing — the default used by [`run_pipeline`].
 pub struct NoopReporter;
 impl Reporter for NoopReporter {}
+
+// ── Cancellation ─────────────────────────────────────────────────────────────────
+
+/// A cooperative cancellation flag shared with a running pipeline.
+///
+/// Setting it — typically from a Ctrl-C / SIGTERM handler via [`CancelToken::cancel`] —
+/// tells the runner to stop launching new stages. Stages already in flight run to
+/// completion so their outputs stay whole and cacheable; no further stages start; the
+/// change-detection cache is then saved (recording everything that finished) and the run
+/// returns a cancellation error. The cache is left in a consistent state.
+///
+/// Cloning shares the same underlying flag, so a handler thread and the runner observe
+/// the same cancellation.
+#[derive(Clone, Default)]
+pub struct CancelToken(Arc<AtomicBool>);
+
+impl CancelToken {
+    /// A fresh, un-cancelled token.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Request cancellation. Idempotent.
+    pub fn cancel(&self) {
+        self.0.store(true, Ordering::SeqCst);
+    }
+
+    /// Whether cancellation has been requested.
+    pub fn is_cancelled(&self) -> bool {
+        self.0.load(Ordering::SeqCst)
+    }
+}
 
 // ── Public API ─────────────────────────────────────────────────────────────────
 
@@ -125,6 +159,30 @@ pub fn run_pipeline_reported_jobs(
     reporter: &dyn Reporter,
     jobs: usize,
 ) -> Result<()> {
+    run_pipeline_cancellable(
+        program,
+        pipeline_name,
+        ctx,
+        analysis,
+        reporter,
+        jobs,
+        &CancelToken::new(),
+    )
+}
+
+/// Like [`run_pipeline_reported_jobs`], but observes `cancel`: when it is set mid-run,
+/// the runner stops launching new stages, lets in-flight stages finish, saves the cache,
+/// and returns a cancellation error with the cache left consistent.
+#[allow(clippy::too_many_arguments)]
+pub fn run_pipeline_cancellable(
+    program: &Program,
+    pipeline_name: Option<&str>,
+    ctx: &EvalContext,
+    analysis: &AnalysisResult,
+    reporter: &dyn Reporter,
+    jobs: usize,
+    cancel: &CancelToken,
+) -> Result<()> {
     let pipeline = find_pipeline(program, pipeline_name)?;
     let stage_names = pipeline_stage_names(pipeline, ctx)?;
     // Reject dependency cycles up front (and validate the stage set) before scheduling.
@@ -151,6 +209,7 @@ pub fn run_pipeline_reported_jobs(
         reporter,
         workers,
         buffered,
+        cancel,
     );
 
     // A fatal error (e.g. an unresolved `<stage>.outputs` reference while building a
@@ -160,8 +219,15 @@ pub fn run_pipeline_reported_jobs(
 
     // Persist change-detection state for every stage that succeeded this run, even when
     // the pipeline as a whole failed. Best-effort: a save failure does not fail an
-    // otherwise-successful run.
+    // otherwise-successful run. The save is atomic, so an interrupted run never corrupts
+    // the cache.
     let _ = cache.into_inner().unwrap().save(&project_dir);
+
+    // A cancelled run stops here: the cache (above) is consistent, but the pipeline
+    // lifecycle hooks are skipped and the run reports cancellation rather than success.
+    if cancel.is_cancelled() {
+        return Err(runner_err(format!("pipeline '{}' cancelled", pipeline.name)));
+    }
 
     match outcome.first_failure {
         Some(failed) => {
@@ -236,6 +302,10 @@ struct Shared {
     total: usize,
 }
 
+/// How long an idle worker waits on the condition variable before re-checking state.
+/// Bounds how quickly a cancellation is observed when no stage completion wakes a worker.
+const POLL_INTERVAL: Duration = Duration::from_millis(100);
+
 /// Run all stages across `workers` threads, returning the run outcome or a fatal error.
 #[allow(clippy::too_many_arguments)]
 fn schedule(
@@ -249,6 +319,7 @@ fn schedule(
     reporter: &dyn Reporter,
     workers: usize,
     buffered: bool,
+    cancel: &CancelToken,
 ) -> Result<Outcome> {
     if sorted.is_empty() {
         return Ok(Outcome { first_failure: None });
@@ -284,7 +355,17 @@ fn schedule(
     std::thread::scope(|scope| {
         for _ in 0..workers {
             scope.spawn(|| {
-                worker(&shared, program, base, cache, run_cache, project_dir, reporter, buffered);
+                worker(
+                    &shared,
+                    program,
+                    base,
+                    cache,
+                    run_cache,
+                    project_dir,
+                    reporter,
+                    buffered,
+                    cancel,
+                );
             });
         }
     });
@@ -308,6 +389,7 @@ fn worker(
     project_dir: &Path,
     reporter: &dyn Reporter,
     buffered: bool,
+    cancel: &CancelToken,
 ) {
     loop {
         // ── Claim a ready stage (or exit) ──────────────────────────────────────
@@ -317,6 +399,17 @@ fn worker(
                 if g.fatal.is_some() || g.settled == shared.total {
                     shared.cv.notify_all();
                     return;
+                }
+                if cancel.is_cancelled() {
+                    // Stop launching new stages. Exit once nothing is in flight; otherwise
+                    // wait for the running stages to finish so their outputs stay whole.
+                    if g.running == 0 {
+                        shared.cv.notify_all();
+                        return;
+                    }
+                    let (guard, _) = shared.cv.wait_timeout(g, POLL_INTERVAL).unwrap();
+                    g = guard;
+                    continue;
                 }
                 if let Some(name) = g.ready.pop_front() {
                     g.running += 1;
@@ -330,7 +423,10 @@ fn worker(
                     shared.cv.notify_all();
                     return;
                 }
-                g = shared.cv.wait(g).unwrap();
+                // Time-bounded wait so a cancellation set while every worker is idle is
+                // observed promptly, even without a completion to wake them.
+                let (guard, _) = shared.cv.wait_timeout(g, POLL_INTERVAL).unwrap();
+                g = guard;
             }
         };
 
