@@ -415,10 +415,10 @@ Produce reproducible, downloadable binaries on every tagged release. Output: a G
 
 Make Mainstage installable through the channels users already use. Output: one-line installs on every major platform. *(Consumes the Phase 29 release artifacts.)*
 
-- [ ] `curl | sh` install script that downloads the right release binary for the host platform
-- [ ] Publish the crates to crates.io so `cargo install mainstage` works
-- [ ] Homebrew tap (macOS / Linux) and Scoop / winget manifests (Windows)
-- [ ] Docker image with the CLI as its entry point
+- [x] `curl | sh` install script that downloads the right release binary for the host platform
+- [x] Publish the crates to crates.io so `cargo install mainstage` works
+- [x] Homebrew tap (macOS / Linux) and Scoop / winget manifests (Windows)
+- [x] Docker image with the CLI as its entry point
 
 ---
 

@@ -72,7 +72,7 @@ jobs:
           New-Item -ItemType Directory -Force -Path "dist/$stage" | Out-Null
           Copy-Item "$bin/mainstage.exe","$bin/mainstage-lsp.exe" "dist/$stage/"
           Copy-Item README.md,LICENSE.md,CHANGELOG.md "dist/$stage/"
-          Compress-Archive -Path "dist/$stage/*" -DestinationPath "dist/$stage.zip"
+          Compress-Archive -Path "dist/$stage" -DestinationPath "dist/$stage.zip"
           Remove-Item -Recurse -Force "dist/$stage"
           $hash = (Get-FileHash "dist/$stage.zip" -Algorithm SHA256).Hash.ToLower()
           "$hash  $stage.zip" | Out-File -Encoding ascii -NoNewline "dist/$stage.zip.sha256"

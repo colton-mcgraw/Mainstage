@@ -35,5 +35,8 @@ While Mainstage is pre-`1.0.0`, breaking changes may land in minor releases; onc
 - **Release engineering** — a tag-triggered workflow that builds the `mainstage`
   and `mainstage-lsp` binaries for Linux (gnu + musl), macOS (x86_64 + arm64), and
   Windows, and attaches the archives with SHA-256 checksums to the GitHub Release.
+- **Distribution** — a `curl | sh` install script (with checksum verification),
+  crates.io publishing (`cargo install mainstage`), a Homebrew formula, Scoop and
+  winget manifests, and a Docker image with the CLI as its entry point.
 
 [Unreleased]: https://github.com/ColtMcG1/mainstage/commits/main
