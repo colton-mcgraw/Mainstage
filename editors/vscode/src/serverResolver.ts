@@ -1,4 +1,4 @@
-import { delimiter, join } from "node:path";
+import { posix, win32 } from "node:path";
 
 /** A resolved language-server invocation: the executable and its arguments. */
 export interface ResolvedServer {
@@ -73,12 +73,21 @@ export function executableNames(name: string, platform: NodeJS.Platform): string
   return platform === "win32" ? [`${name}.exe`, `${name}.cmd`, name] : [name];
 }
 
+/**
+ * The `node:path` variant matching the host's platform, so PATH splitting and
+ * joining follow the host's conventions (`;`/`\` on Windows, `:`/`/` elsewhere)
+ * rather than whatever OS the editor extension happens to run on.
+ */
+function pathModule(host: ResolverHost): typeof posix {
+  return host.platform === "win32" ? win32 : posix;
+}
+
 /** The first executable named `name` found across the entries of `PATH`. */
 export function findOnPath(name: string, host: ResolverHost): string | undefined {
   if (!host.pathVar) {
     return undefined;
   }
-  for (const dir of host.pathVar.split(delimiter)) {
+  for (const dir of host.pathVar.split(pathModule(host).delimiter)) {
     if (!dir) {
       continue;
     }
@@ -92,6 +101,7 @@ export function findOnPath(name: string, host: ResolverHost): string | undefined
 
 /** The first executable named `name` found in a common install location. */
 export function findInInstallDirs(name: string, host: ResolverHost): string | undefined {
+  const { join } = pathModule(host);
   const dirs =
     host.platform === "win32"
       ? [join(host.home, ".cargo", "bin")]
@@ -113,6 +123,7 @@ export function findInInstallDirs(name: string, host: ResolverHost): string | un
 }
 
 function firstExecutable(dir: string, name: string, host: ResolverHost): string | undefined {
+  const { join } = pathModule(host);
   for (const candidate of executableNames(name, host.platform)) {
     const full = join(dir, candidate);
     if (host.isExecutable(full)) {
