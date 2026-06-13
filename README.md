@@ -185,6 +185,17 @@ winget install ColtMcG1.Mainstage
 docker run --rm -v "$PWD:/work" ghcr.io/coltmcg1/mainstage run release
 ```
 
+## Editor Support
+
+Install the **Mainstage** extension for VS Code from the
+[Visual Studio Marketplace](https://marketplace.visualstudio.com/items?itemName=ColtMcG1.mainstage)
+or [Open VSX](https://open-vsx.org/extension/ColtMcG1/mainstage) for diagnostics,
+completion, hover, signature help, navigation, and formatting. It auto-discovers the
+`mainstage lsp` server, so no configuration is needed once the CLI is installed.
+
+Other editors connect to the same language server over stdio — see
+[Editor Tooling](docs/TOOLING.md) for Neovim, Helix, and generic LSP setup.
+
 ## Building from Source
 
 Requires Rust stable (edition 2024).

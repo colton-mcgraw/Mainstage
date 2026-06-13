@@ -1,0 +1,59 @@
+name: Publish VS Code Extension
+
+# Packages the VS Code extension and publishes it to the Visual Studio
+# Marketplace and Open VSX on each version tag. Requires two repository secrets:
+#   VSCE_PAT  - Visual Studio Marketplace personal access token
+#   OVSX_PAT  - Open VSX access token
+# A manual run packages and uploads the .vsix artifact without publishing
+# (useful for verifying a build before tagging a release).
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+defaults:
+  run:
+    working-directory: editors/vscode
+
+jobs:
+  publish:
+    name: package and publish
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: editors/vscode/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Compile
+        run: npm run compile
+
+      - name: Package extension
+        run: npx vsce package --out mainstage.vsix
+
+      - name: Upload .vsix artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: mainstage-vsix
+          path: editors/vscode/mainstage.vsix
+          if-no-files-found: error
+
+      # Publishing only happens for tag pushes, and only when the tokens exist.
+      - name: Publish to Visual Studio Marketplace
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+        run: npx vsce publish --packagePath mainstage.vsix
+
+      - name: Publish to Open VSX
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          OVSX_PAT: ${{ secrets.OVSX_PAT }}
+        run: npx ovsx publish mainstage.vsix

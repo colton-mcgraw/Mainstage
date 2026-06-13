@@ -1,0 +1,147 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "Mainstage",
+  "scopeName": "source.mainstage",
+  "patterns": [
+    { "include": "#comments" },
+    { "include": "#exec" },
+    { "include": "#strings" },
+    { "include": "#keywords" },
+    { "include": "#steps" },
+    { "include": "#constants" },
+    { "include": "#numbers" },
+    { "include": "#operators" },
+    { "include": "#module-call" }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        {
+          "name": "comment.line.double-slash.mainstage",
+          "match": "//.*$"
+        }
+      ]
+    },
+    "keywords": {
+      "patterns": [
+        {
+          "name": "keyword.control.mainstage",
+          "match": "\\b(if|else|for|in)\\b"
+        },
+        {
+          "name": "keyword.declaration.mainstage",
+          "match": "\\b(import|as|let|default|pipeline|stage|project)\\b"
+        },
+        {
+          "name": "keyword.other.block.mainstage",
+          "match": "\\b(steps|on_failure|on_success)\\b"
+        }
+      ]
+    },
+    "steps": {
+      "patterns": [
+        {
+          "name": "support.function.step.mainstage",
+          "match": "\\b(copy|move|mkdir|delete|write)\\b"
+        },
+        {
+          "name": "keyword.operator.step.mainstage",
+          "match": "\\b(to|content)\\b"
+        }
+      ]
+    },
+    "constants": {
+      "patterns": [
+        {
+          "name": "constant.language.boolean.mainstage",
+          "match": "\\b(true|false)\\b"
+        },
+        {
+          "name": "variable.language.mainstage",
+          "match": "\\b(platform|inputs|outputs|project|failed_stage)\\b"
+        }
+      ]
+    },
+    "numbers": {
+      "patterns": [
+        {
+          "name": "constant.numeric.mainstage",
+          "match": "\\b[0-9]+\\b"
+        }
+      ]
+    },
+    "operators": {
+      "patterns": [
+        {
+          "name": "keyword.operator.logical.mainstage",
+          "match": "\\b(and|or)\\b|!|==|!="
+        },
+        {
+          "name": "keyword.operator.assignment.mainstage",
+          "match": "="
+        }
+      ]
+    },
+    "exec": {
+      "patterns": [
+        {
+          "begin": "^\\s*(\\$)",
+          "beginCaptures": {
+            "1": { "name": "keyword.operator.exec.mainstage" }
+          },
+          "end": "$",
+          "name": "meta.exec.mainstage",
+          "patterns": [
+            { "include": "#strings" },
+            { "include": "#comments" }
+          ]
+        }
+      ]
+    },
+    "module-call": {
+      "patterns": [
+        {
+          "match": "\\b([A-Za-z_][A-Za-z0-9_]*)\\s*(\\.)\\s*([A-Za-z_][A-Za-z0-9_]*)\\s*(?=\\()",
+          "captures": {
+            "1": { "name": "variable.other.module.mainstage" },
+            "2": { "name": "punctuation.accessor.mainstage" },
+            "3": { "name": "entity.name.function.method.mainstage" }
+          }
+        },
+        {
+          "name": "entity.name.function.call.mainstage",
+          "match": "\\b(glob)\\b(?=\\()"
+        }
+      ]
+    },
+    "strings": {
+      "name": "string.quoted.double.mainstage",
+      "begin": "\"",
+      "end": "\"",
+      "patterns": [
+        {
+          "name": "constant.character.escape.mainstage",
+          "match": "\\\\."
+        },
+        {
+          "name": "meta.embedded.interpolation.mainstage",
+          "begin": "\\$\\{",
+          "beginCaptures": {
+            "0": { "name": "punctuation.definition.template-expression.begin.mainstage" }
+          },
+          "end": "\\}",
+          "endCaptures": {
+            "0": { "name": "punctuation.definition.template-expression.end.mainstage" }
+          },
+          "patterns": [
+            { "include": "#constants" },
+            { "include": "#numbers" },
+            { "include": "#operators" },
+            { "include": "#module-call" },
+            { "include": "#strings" }
+          ]
+        }
+      ]
+    }
+  }
+}

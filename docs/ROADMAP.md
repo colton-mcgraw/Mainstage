@@ -426,9 +426,9 @@ Make Mainstage installable through the channels users already use. Output: one-l
 
 Ship the editor experience built in Goal 3. Output: a one-click install for VS Code and clear setup for other editors.
 
-- [ ] Package the Phase 22 VS Code client and publish it to the Visual Studio Marketplace and OpenVSX
-- [ ] Bundle or auto-discover the `mainstage lsp` binary so the extension works without manual configuration
-- [ ] Document generic LSP setup for other editors (Neovim, Helix, etc.)
+- [x] Package the Phase 22 VS Code client and publish it to the Visual Studio Marketplace and OpenVSX
+- [x] Bundle or auto-discover the `mainstage lsp` binary so the extension works without manual configuration
+- [x] Document generic LSP setup for other editors (Neovim, Helix, etc.)
 
 ---
 

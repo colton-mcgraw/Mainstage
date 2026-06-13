@@ -38,5 +38,9 @@ While Mainstage is pre-`1.0.0`, breaking changes may land in minor releases; onc
 - **Distribution** — a `curl | sh` install script (with checksum verification),
   crates.io publishing (`cargo install mainstage`), a Homebrew formula, Scoop and
   winget manifests, and a Docker image with the CLI as its entry point.
+- **Editor extension** — a VS Code client (`editors/vscode/`) with syntax
+  highlighting and zero-config language-server discovery, a tag-triggered workflow
+  publishing it to the Visual Studio Marketplace and Open VSX, and documented LSP
+  setup for Neovim and Helix.
 
 [Unreleased]: https://github.com/ColtMcG1/mainstage/commits/main
