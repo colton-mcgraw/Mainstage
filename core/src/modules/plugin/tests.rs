@@ -313,3 +313,79 @@ fn no_plugins_dir_yields_empty_discovery() {
     let dir = unique_dir("empty");
     assert!(discover(&dir, &HashSet::new()).unwrap().is_empty());
 }
+
+// ── Linting ──────────────────────────────────────────────────────────────────────
+
+/// Write an executable POSIX-shell plugin that answers `describe` with `describe_json`
+/// (and nothing else) to `dir/<name>`, returning its path.
+#[cfg(unix)]
+fn write_describe_plugin(dir: &std::path::Path, name: &str, describe_json: &str) -> PathBuf {
+    use std::os::unix::fs::PermissionsExt;
+    let script = format!(
+        "#!/bin/sh\nwhile IFS= read -r line; do\n  case \"$line\" in\n    *'\"op\":\"describe\"'*)\n      printf '%s\\n' '{describe_json}'\n      ;;\n  esac\ndone\n"
+    );
+    let path = dir.join(name);
+    std::fs::write(&path, script).unwrap();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    path
+}
+
+#[cfg(unix)]
+#[test]
+fn lint_accepts_a_well_formed_plugin() {
+    use super::lint::lint_plugin;
+    let dir = unique_dir("lint_ok");
+    let exe = write_plugin(&dir, "demo");
+    let report = lint_plugin(&exe, &dir);
+    assert!(!report.has_errors(), "{:?}", report.findings);
+    assert!(report.is_clean(), "{:?}", report.findings);
+    assert_eq!(report.method_count, 3);
+}
+
+#[cfg(unix)]
+#[test]
+fn lint_flags_bad_type_duplicate_and_non_ident_methods() {
+    use super::lint::{LintLevel, lint_plugin};
+    let dir = unique_dir("lint_bad");
+    let json = r#"{"name":"demo","methods":[{"name":"go","params":[{"name":"x","type":"frob"}]},{"name":"go"},{"name":"1bad"}]}"#;
+    let exe = write_describe_plugin(&dir, "demo", json);
+    let report = lint_plugin(&exe, &dir);
+    assert!(report.has_errors());
+    let errors: Vec<&str> = report
+        .findings
+        .iter()
+        .filter(|f| f.level == LintLevel::Error)
+        .map(|f| f.message.as_str())
+        .collect();
+    assert!(errors.iter().any(|m| m.contains("frob")), "{errors:?}");
+    assert!(errors.iter().any(|m| m.contains("more than once")), "{errors:?}");
+    assert!(errors.iter().any(|m| m.contains("1bad")), "{errors:?}");
+}
+
+#[cfg(unix)]
+#[test]
+fn lint_warns_on_reserved_module_name() {
+    use super::lint::{LintLevel, lint_plugin};
+    let dir = unique_dir("lint_reserved");
+    let exe = write_describe_plugin(&dir, "git", r#"{"name":"git","methods":[{"name":"ok"}]}"#);
+    let report = lint_plugin(&exe, &dir);
+    // A reserved name is a warning, not an error — the plugin itself is well-formed.
+    assert!(!report.has_errors());
+    assert!(
+        report
+            .findings
+            .iter()
+            .any(|f| f.level == LintLevel::Warning && f.message.contains("built-in")),
+        "{:?}",
+        report.findings
+    );
+}
+
+#[test]
+fn lint_reports_a_missing_executable() {
+    use super::lint::lint_plugin;
+    let dir = unique_dir("lint_missing");
+    let report = lint_plugin(&dir.join("nope"), &dir);
+    assert!(report.has_errors());
+    assert!(report.findings[0].message.contains("not found"));
+}

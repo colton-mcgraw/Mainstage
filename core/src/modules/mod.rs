@@ -29,6 +29,7 @@ pub use builtin::{
 };
 pub use permissions::{Capability, Permissions};
 pub use plugin::ExternalModule;
+pub use plugin::lint::{LintFinding, LintLevel, LintReport, lint_plugin};
 
 // ── Resolved argument ─────────────────────────────────────────────────────────
 
@@ -287,6 +288,13 @@ impl ModuleRegistry {
     /// Whether a module with this raw name is registered.
     pub fn contains(&self, name: &str) -> bool {
         self.modules.contains_key(name)
+    }
+
+    /// Whether `name` is a built-in standard-library module — one a plugin may never
+    /// shadow. Used by plugin tooling (`mainstage plugin check`) to warn about a name
+    /// collision before discovery silently skips the plugin.
+    pub fn is_reserved_name(name: &str) -> bool {
+        Self::standard_modules().iter().any(|m| m.name() == name)
     }
 
     /// The names of every registered module (built-in and plugin), sorted. Used by

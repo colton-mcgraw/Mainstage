@@ -99,6 +99,8 @@ mainstage list          # lists all pipelines and their stages
 | `mainstage list` | List all pipelines and their stages. |
 | `mainstage modules` | List available modules and their method signatures. |
 | `mainstage format [FILES...]` | Format scripts to canonical style (`--check` for CI, `--stdout` to preview). |
+| `mainstage plugin new <name>` | Scaffold a working stdio plugin skeleton (`--lang python\|shell`). |
+| `mainstage plugin check <path>` | Lint a plugin against the protocol before publishing. |
 | `mainstage lsp` | Run the language server over stdio (for editor integration). |
 | `mainstage parse <file>` | Print the parsed AST (debug tool). |
 | `mainstage clean` | Clear the change-detection cache. |
@@ -220,6 +222,8 @@ The CLI binary is at `target/release/mainstage`.
 
 - [Grammar Specification](docs/GRAMMAR.md) — full language syntax and semantics reference
 - [Modules](docs/MODULES.md) — standard-library modules, capabilities, and the plugin protocol
+- [Authoring Plugins](docs/PLUGINS.md) — scaffolding, the stdio protocol, naming, versioning, and publishing
+- [Plugin Index](docs/PLUGIN_INDEX.md) — community plugins and runnable reference examples
 - [Editor Tooling](docs/TOOLING.md) — language server features, editor setup, and the formatter
 - [Benchmarks](docs/BENCHMARKS.md) — performance harness, fixtures, and baseline timings
 - [Roadmap](docs/ROADMAP.md) — planned features and milestones

@@ -22,6 +22,11 @@ While Mainstage is pre-`1.0.0`, breaking changes may land in minor releases; onc
 - **CLI** — `run`, `watch`, `list`, `modules`, `format`, `lsp`, `parse`, and
   `clean`, with `--dry-run`, `--jobs`, TTY-aware colored output, and a per-stage
   timing summary.
+- **Plugin ecosystem** — `mainstage plugin new` scaffolds a working stdio plugin
+  (Python or POSIX-shell) and `mainstage plugin check` lints a plugin against the
+  protocol before publishing, alongside an authoring/publishing guide
+  (`docs/PLUGINS.md`), a community index (`docs/PLUGIN_INDEX.md`), and runnable
+  reference plugins under `examples/plugins/`.
 - **Editor tooling** — a `tower-lsp` language server (`mainstage lsp` /
   `mainstage-lsp`) providing diagnostics, completion, hover, signature help,
   navigation, document highlight, and document symbols, plus a comment-preserving

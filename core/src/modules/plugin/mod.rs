@@ -14,6 +14,7 @@
 //!    like `acme/lint`), then
 //! 2. a `plugins.toml` manifest mapping module names to executable paths.
 
+pub mod lint;
 pub mod protocol;
 
 use std::collections::{BTreeMap, HashSet};
