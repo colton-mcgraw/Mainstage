@@ -28,13 +28,18 @@ Benchmarks run against synthetic projects produced by a generator parameterized 
 
 Stages are arranged into `depth` layers of width `ceil(stages / depth)`; each stage
 depends on the stage directly above it in the previous layer, forming `width`
-parallel dependency chains. The three covered sizes are:
+parallel dependency chains. Specs also carry a per-file **content size** (KiB); the
+tiny default keeps front-end and cold benchmarks I/O-free, while the large-content
+specs make per-file reading dominate so the Phase 25 fast path is measurable. The
+covered sizes are:
 
-| Label             | Stages | Depth | Files/stage |
-| ----------------- | -----: | ----: | ----------: |
-| `s10_d3_f5`       |     10 |     3 |           5 |
-| `s50_d5_f10`      |     50 |     5 |          10 |
-| `s100_d8_f20`     |    100 |     8 |          20 |
+| Label              | Stages | Depth | Files/stage | KiB/file |
+| ------------------ | -----: | ----: | ----------: | -------: |
+| `s10_d3_f5`        |     10 |     3 |           5 |    tiny  |
+| `s50_d5_f10`       |     50 |     5 |          10 |    tiny  |
+| `s100_d8_f20`      |    100 |     8 |          20 |    tiny  |
+| `s30_d5_f8_k64`    |     30 |     5 |           8 |      64  |
+| `s40_d5_f8_k128`   |     40 |     5 |           8 |     128  |
 
 ## Benchmark groups
 
@@ -45,6 +50,7 @@ parallel dependency chains. The three covered sizes are:
 | `eval`              | `eval_program_with` (incl. glob resolution)                     | —           |
 | `run_pipeline`      | cold end-to-end run, every stage executes (cache cleared)       | Phase 24    |
 | `run_pipeline_warm` | warm run, every stage hits the skip-check (cache populated)     | Phase 25    |
+| `run_pipeline_warm_large` | warm run over large input files — exposes the fast path   | Phase 25    |
 
 ## Baseline
 
@@ -71,3 +77,23 @@ These numbers are hardware-specific — re-record locally before comparing.
 Note: `parse` time grows super-linearly with script size, and `run_pipeline_warm`
 (the change-detection skip path) dominates large warm runs — both are signals for
 the optimization work in Phases 24–25.
+
+## Phase 25 result: mtime/size fast path
+
+Phase 25 short-circuits the per-file SHA-256 on the warm skip-check: when a file's
+size and modification time match the cached fingerprint, its content hash is reused
+instead of re-reading the file, and the remaining hashing is parallelized. The
+benefit scales with file size — on the tiny-file `run_pipeline_warm` specs the
+difference stays within noise, so the win is measured by `run_pipeline_warm_large`.
+
+Measured before (legacy read+hash) and after (fast path) on the **same machine** with
+the quick settings, atop the Phase 24 parallel runner. Re-record locally to compare.
+
+| Benchmark                            | Before  | After   | Speedup |
+| ------------------------------------ | ------- | ------- | ------- |
+| `run_pipeline_warm_large/s30_d5_f8_k64`  (~15 MiB) | 5.83 ms | 2.91 ms | ~2.0× |
+| `run_pipeline_warm_large/s40_d5_f8_k128` (~40 MiB) | 12.7 ms | 4.29 ms | ~3.0× |
+
+The gap widens with input size, confirming the cost moved off the file-read path.
+On unchanged inputs the warm run now scales with the number of files (one `stat`
+each) rather than their total bytes.

@@ -6,6 +6,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 
 use crate::{
     ast::*,
@@ -79,6 +80,34 @@ impl Value {
     }
 }
 
+// ── Output capture ──────────────────────────────────────────────────────────────
+
+/// A per-stage buffer that captures the stdout/stderr of side-effecting steps
+/// (notably the `$` exec step).
+///
+/// When an [`EvalContext`] carries an `OutputSink`, the executor writes a step's
+/// output here instead of letting it stream to the process's inherited terminal.
+/// The Phase 24 parallel runner installs one sink per stage and flushes its contents
+/// atomically, so the output of concurrently-running stages never interleaves on the
+/// terminal. When no sink is present (the sequential `--jobs 1` path), steps stream
+/// their output live as before.
+#[derive(Debug, Default)]
+pub struct OutputSink {
+    buf: Mutex<Vec<u8>>,
+}
+
+impl OutputSink {
+    /// Append raw bytes (typically a child process's captured stdout/stderr).
+    pub fn write(&self, bytes: &[u8]) {
+        self.buf.lock().unwrap().extend_from_slice(bytes);
+    }
+
+    /// Drain and return everything captured so far.
+    pub fn take(&self) -> Vec<u8> {
+        std::mem::take(&mut self.buf.lock().unwrap())
+    }
+}
+
 // ── Evaluation context ────────────────────────────────────────────────────────
 
 /// Runtime context threaded through expression evaluation.
@@ -115,6 +144,11 @@ pub struct EvalContext {
     /// The module registry used to resolve and dispatch `import`ed module calls.
     /// `Arc`-backed, so cloning this context per stage / loop iteration is cheap.
     pub registry: ModuleRegistry,
+    /// Optional per-stage output buffer. When `Some`, side-effecting steps capture
+    /// their output here instead of streaming to the terminal, so the Phase 24
+    /// parallel runner can flush each stage's output atomically. `None` (the default
+    /// and the sequential path) streams output live.
+    pub output: Option<Arc<OutputSink>>,
 }
 
 impl EvalContext {
@@ -146,6 +180,16 @@ impl EvalContext {
         child
     }
 
+    /// Return a context that captures step output into `sink` instead of streaming it
+    /// to the terminal. Used by the parallel runner to buffer each stage's output.
+    pub fn with_output(&self, sink: Arc<OutputSink>) -> Self {
+        let mut child = self.clone_base();
+        child.stage_inputs = self.stage_inputs.clone();
+        child.stage_outputs = self.stage_outputs.clone();
+        child.output = Some(sink);
+        child
+    }
+
     /// Return a context where `failed_stage` resolves to `stage_name` (for pipeline on_failure).
     pub fn with_failed_stage(&self, stage_name: String) -> Self {
         let mut child = self.clone_base();
@@ -168,6 +212,7 @@ impl EvalContext {
             stage_names: self.stage_names.clone(),
             stage_output_refs: self.stage_output_refs.clone(),
             registry: self.registry.clone(),
+            output: self.output.clone(),
         }
     }
 }
@@ -215,6 +260,7 @@ pub fn eval_program_with(
         stage_names,
         stage_output_refs: HashMap::new(),
         registry,
+        output: None,
     };
     let mut errors: Vec<Diagnostic> = Vec::new();
 
@@ -505,6 +551,7 @@ mod tests {
             stage_names: HashSet::new(),
             stage_output_refs: HashMap::new(),
             registry: ModuleRegistry::standard(),
+            output: None,
         }
     }
 

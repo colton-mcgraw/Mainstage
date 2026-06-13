@@ -333,11 +333,11 @@ Establish a measurement baseline before optimizing. Output: reproducible benchma
 
 Run independent branches of the dependency DAG concurrently while preserving the exact ordering and failure semantics of Phase 6. Output: pipelines complete faster on multi-core hosts with identical results.
 
-- [ ] Schedule stages by readiness (all dependencies complete) instead of a single linear toposort, with bounded worker concurrency
-- [ ] `--jobs N` CLI flag (default: host core count; `--jobs 1` forces the current sequential behavior)
-- [ ] Make `Reporter` output deterministic — buffer each stage's output and flush it atomically so concurrent stages never interleave on the terminal
-- [ ] Guard shared `cache` and `resolved_outputs` state behind synchronization; ensure a dependent always observes its dependency's published outputs
-- [ ] Preserve failure propagation, `allow_failure`, and `on_failure` / `on_success` semantics exactly; cover with concurrent-execution tests
+- [x] Schedule stages by readiness (all dependencies complete) instead of a single linear toposort, with bounded worker concurrency
+- [x] `--jobs N` CLI flag (default: host core count; `--jobs 1` forces the current sequential behavior)
+- [x] Make `Reporter` output deterministic — buffer each stage's output and flush it atomically so concurrent stages never interleave on the terminal
+- [x] Guard shared `cache` and `resolved_outputs` state behind synchronization; ensure a dependent always observes its dependency's published outputs
+- [x] Preserve failure propagation, `allow_failure`, and `on_failure` / `on_success` semantics exactly; cover with concurrent-execution tests
 
 ---
 
@@ -345,10 +345,10 @@ Run independent branches of the dependency DAG concurrently while preserving the
 
 Make the skip-check cheap on large input sets. Output: unchanged stages are detected without re-hashing every file.
 
-- [ ] `mtime` + size fast path that short-circuits the SHA-256 digest when a file is provably unchanged, falling back to hashing on ambiguity
-- [ ] Parallelize per-file hashing for the inputs that still require it
-- [ ] Avoid redundant re-globbing and re-hashing of filesets already resolved during a run
-- [ ] Keep the `.mainstage/cache.json` format backward-compatible; benchmark against the Phase 23 baselines
+- [x] `mtime` + size fast path that short-circuits the SHA-256 digest when a file is provably unchanged, falling back to hashing on ambiguity
+- [x] Parallelize per-file hashing for the inputs that still require it
+- [x] Avoid redundant re-globbing and re-hashing of filesets already resolved during a run
+- [x] Keep the `.mainstage/cache.json` format backward-compatible; benchmark against the Phase 23 baselines
 
 ---
 
@@ -356,10 +356,10 @@ Make the skip-check cheap on large input sets. Output: unchanged stages are dete
 
 Harden the runtime against malformed input and interruption. Output: no panics on any input, and a clean state after an interrupted run.
 
-- [ ] Handle Ctrl-C / SIGTERM: cancel in-flight stages gracefully and leave the cache in a consistent state
-- [ ] Parser and lexer fuzzing (e.g. `cargo-fuzz`) plus property tests asserting the pipeline never panics on arbitrary input
-- [ ] Stress tests for large filesets, deep DAGs, and wide fan-out, run under the parallel scheduler
-- [ ] Audit `unwrap` / `expect` / `panic!` on user-input paths and convert them to user-facing diagnostics
+- [x] Handle Ctrl-C / SIGTERM: cancel in-flight stages gracefully and leave the cache in a consistent state
+- [x] Parser and lexer fuzzing (e.g. `cargo-fuzz`) plus property tests asserting the pipeline never panics on arbitrary input
+- [x] Stress tests for large filesets, deep DAGs, and wide fan-out, run under the parallel scheduler
+- [x] Audit `unwrap` / `expect` / `panic!` on user-input paths and convert them to user-facing diagnostics
 
 ---
 

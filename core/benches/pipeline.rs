@@ -5,8 +5,9 @@
 //!
 //! - **Phase 24 (parallel stage execution)** is measured by `run_pipeline`, which
 //!   runs every stage of a synthetic DAG cold (cache cleared each iteration).
-//! - **Phase 25 (faster change detection)** is measured by `run_pipeline_warm`,
-//!   which exercises the skip-check + input hashing path with a populated cache.
+//! - **Phase 25 (faster change detection)** is measured by `run_pipeline_warm` and
+//!   `run_pipeline_warm_large`, which exercise the skip-check with a populated cache;
+//!   the large-file variant exposes the mtime/size fast path that avoids re-hashing.
 //!
 //! Fixtures are produced by a generator parameterized by stage count, DAG depth,
 //! and files-per-stage (see [`ProjectSpec`]), so the same shapes can be reused as
@@ -36,11 +37,25 @@ struct ProjectSpec {
     stages: usize,
     depth: usize,
     files_per_stage: usize,
+    /// Size of each input file in KiB. `0` writes a tiny one-line file (the default,
+    /// used by the front-end and cold benchmarks). Larger sizes make per-file reading
+    /// dominate, exposing the Phase 25 mtime/size fast path that skips re-hashing.
+    file_kib: usize,
 }
 
 impl ProjectSpec {
     const fn new(stages: usize, depth: usize, files_per_stage: usize) -> Self {
-        Self { stages, depth, files_per_stage }
+        Self { stages, depth, files_per_stage, file_kib: 0 }
+    }
+
+    /// Like [`new`], but with `file_kib` KiB of content per input file.
+    const fn with_file_size(
+        stages: usize,
+        depth: usize,
+        files_per_stage: usize,
+        file_kib: usize,
+    ) -> Self {
+        Self { stages, depth, files_per_stage, file_kib }
     }
 
     /// Number of parallel dependency chains (the DAG's width).
@@ -48,9 +63,11 @@ impl ProjectSpec {
         self.stages.div_ceil(self.depth.max(1))
     }
 
-    /// A short label for benchmark ids, e.g. `s50_d5_f10`.
+    /// A short label for benchmark ids, e.g. `s50_d5_f10` (with a `_kN` suffix when the
+    /// files carry `N` KiB of content, so large-file specs get distinct ids).
     fn label(&self) -> String {
-        format!("s{}_d{}_f{}", self.stages, self.depth, self.files_per_stage)
+        let base = format!("s{}_d{}_f{}", self.stages, self.depth, self.files_per_stage);
+        if self.file_kib > 0 { format!("{base}_k{}", self.file_kib) } else { base }
     }
 
     /// Render the `.ms` source for this spec, rooting all paths under `base` so the
@@ -102,7 +119,14 @@ impl ProjectSpec {
             std::fs::create_dir_all(&dir).expect("create input dir");
             for j in 0..self.files_per_stage {
                 let path = dir.join(format!("f{j}.txt"));
-                std::fs::write(&path, format!("stage {i} file {j}\n")).expect("write input file");
+                let content = if self.file_kib == 0 {
+                    format!("stage {i} file {j}\n").into_bytes()
+                } else {
+                    // Deterministic but per-file-distinct content of the requested size.
+                    let seed = format!("stage {i} file {j}\n");
+                    seed.as_bytes().iter().copied().cycle().take(self.file_kib * 1024).collect()
+                };
+                std::fs::write(&path, content).expect("write input file");
             }
         }
     }
@@ -113,6 +137,12 @@ impl ProjectSpec {
 const SMALL: ProjectSpec = ProjectSpec::new(10, 3, 5);
 const MEDIUM: ProjectSpec = ProjectSpec::new(50, 5, 10);
 const LARGE: ProjectSpec = ProjectSpec::new(100, 8, 20);
+
+/// Large-content specs for the warm path: enough bytes per file that re-reading them
+/// dominates, so the Phase 25 fast path (stat instead of read+hash) is measurable.
+/// `HEAVY_S` ≈ 240 input files × 64 KiB ≈ 15 MiB; `HEAVY_L` ≈ 320 × 128 KiB ≈ 40 MiB.
+const HEAVY_S: ProjectSpec = ProjectSpec::with_file_size(30, 5, 8, 64);
+const HEAVY_L: ProjectSpec = ProjectSpec::with_file_size(40, 5, 8, 128);
 
 // ── Temp-directory helpers ──────────────────────────────────────────────────────
 
@@ -275,12 +305,40 @@ fn bench_run_pipeline_warm(c: &mut Criterion) {
     group.finish();
 }
 
+/// Warm execution over large input files. With the cache primed and files unchanged,
+/// the Phase 25 fast path skips re-reading every file (stat + size/mtime compare only),
+/// where the legacy path re-hashed the full contents each run. The gap here is the
+/// direct measure of Phase 25's win; on tiny-file specs it stays within noise.
+fn bench_run_pipeline_warm_large(c: &mut Criterion) {
+    let mut group = c.benchmark_group("run_pipeline_warm_large");
+    group.sample_size(10);
+    for spec in [HEAVY_S, HEAVY_L] {
+        let fixture = Fixture::build(spec, "warm_large");
+        reset_run(&fixture.dir);
+        run_pipeline(&fixture.program, None, &fixture.eval(), &fixture.analysis)
+            .expect("warm-up run");
+        group.bench_with_input(
+            BenchmarkId::from_parameter(spec.label()),
+            &fixture,
+            |b, fixture| {
+                b.iter_batched(
+                    || fixture.eval(),
+                    |ctx| run_pipeline(&fixture.program, None, &ctx, &fixture.analysis),
+                    BatchSize::PerIteration,
+                );
+            },
+        );
+    }
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_parse,
     bench_analyze,
     bench_eval,
     bench_run_pipeline,
-    bench_run_pipeline_warm
+    bench_run_pipeline_warm,
+    bench_run_pipeline_warm_large
 );
 criterion_main!(benches);

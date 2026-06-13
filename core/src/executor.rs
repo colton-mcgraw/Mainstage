@@ -43,11 +43,25 @@ fn exec_step(s: &ExecStep, ctx: &EvalContext) -> Result<()> {
     if argv.is_empty() {
         return Err(step_err("empty exec command", &s.span));
     }
-    let status = std::process::Command::new(&argv[0])
-        .args(&argv[1..])
-        .current_dir(&ctx.script_dir)
-        .status()
-        .map_err(|e| step_err(format!("failed to run '{}': {}", argv[0], e), &s.span))?;
+    let mut cmd = std::process::Command::new(&argv[0]);
+    cmd.args(&argv[1..]).current_dir(&ctx.script_dir);
+
+    // With an output sink (the parallel runner), capture stdout/stderr and append it
+    // to the stage's buffer so concurrent stages never interleave on the terminal.
+    // Without one (the sequential path), inherit the terminal and stream output live.
+    let status = match &ctx.output {
+        Some(sink) => {
+            let out = cmd
+                .output()
+                .map_err(|e| step_err(format!("failed to run '{}': {}", argv[0], e), &s.span))?;
+            sink.write(&out.stdout);
+            sink.write(&out.stderr);
+            out.status
+        }
+        None => cmd
+            .status()
+            .map_err(|e| step_err(format!("failed to run '{}': {}", argv[0], e), &s.span))?,
+    };
     if !status.success() {
         return Err(step_err(format!("'{}' exited with {}", argv[0], status), &s.span));
     }
@@ -326,6 +340,7 @@ mod tests {
             stage_names: std::collections::HashSet::new(),
             stage_output_refs: HashMap::new(),
             registry: ModuleRegistry::standard(),
+            output: None,
         }
     }
 
@@ -440,6 +455,7 @@ mod tests {
             stage_names: std::collections::HashSet::new(),
             stage_output_refs: HashMap::new(),
             registry: ModuleRegistry::standard(),
+            output: None,
         };
         let span = span();
         let path_expr = Expr::Ident(IdentExpr { name: "p".to_string(), span: span.clone() });
@@ -479,6 +495,7 @@ mod tests {
             stage_names: std::collections::HashSet::new(),
             stage_output_refs: HashMap::new(),
             registry: ModuleRegistry::standard(),
+            output: None,
         };
         let span = span();
         let path_expr = Expr::Ident(IdentExpr { name: "p".to_string(), span: span.clone() });
