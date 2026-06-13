@@ -6,6 +6,8 @@
     { "include": "#comments" },
     { "include": "#exec" },
     { "include": "#strings" },
+    { "include": "#declarations" },
+    { "include": "#member-access" },
     { "include": "#keywords" },
     { "include": "#steps" },
     { "include": "#constants" },
@@ -19,6 +21,50 @@
         {
           "name": "comment.line.double-slash.mainstage",
           "match": "//.*$"
+        }
+      ]
+    },
+    "declarations": {
+      "patterns": [
+        {
+          "match": "\\b(let)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": { "name": "keyword.declaration.mainstage" },
+            "2": { "name": "variable.other.mainstage" }
+          }
+        },
+        {
+          "match": "\\b(for)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": { "name": "keyword.control.mainstage" },
+            "2": { "name": "variable.other.mainstage" }
+          }
+        },
+        {
+          "match": "\\b(stage|pipeline)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": { "name": "keyword.declaration.mainstage" },
+            "2": { "name": "entity.name.type.mainstage" }
+          }
+        },
+        {
+          "match": "\\b(as)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": { "name": "keyword.declaration.mainstage" },
+            "2": { "name": "variable.other.module.mainstage" }
+          }
+        }
+      ]
+    },
+    "member-access": {
+      "patterns": [
+        {
+          "match": "\\b([A-Za-z_][A-Za-z0-9_]*)\\s*(\\.)\\s*([A-Za-z_][A-Za-z0-9_]*)\\b(?!\\s*\\()",
+          "captures": {
+            "1": { "name": "variable.other.object.mainstage" },
+            "2": { "name": "punctuation.accessor.mainstage" },
+            "3": { "name": "variable.other.property.mainstage" }
+          }
         }
       ]
     },
@@ -134,6 +180,7 @@
             "0": { "name": "punctuation.definition.template-expression.end.mainstage" }
           },
           "patterns": [
+            { "include": "#member-access" },
             { "include": "#constants" },
             { "include": "#numbers" },
             { "include": "#operators" },

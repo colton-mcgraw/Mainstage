@@ -188,6 +188,34 @@ async fn completion_offers_module_methods_after_dot() {
 }
 
 #[tokio::test]
+async fn completion_survives_an_unparseable_keystroke() {
+    let mut h = Harness::new();
+    h.initialize().await;
+
+    // A valid document establishes a parse the server can cache.
+    let valid = "project {\n    name: \"demo\"\n}\nlet v = \"\";";
+    h.open(URI, valid).await;
+
+    // Typing `project.` makes the document momentarily unparseable. Member
+    // completion still offers the project field from the last good parse.
+    let editing = "project {\n    name: \"demo\"\n}\nlet v = project.";
+    h.change(URI, 2, editing).await;
+
+    let result = h
+        .request(
+            "textDocument/completion",
+            json!({
+                "textDocument": { "uri": URI },
+                "position": { "line": 3, "character": 16 },
+            }),
+        )
+        .await;
+
+    let labels = completion_labels(&result);
+    assert!(labels.iter().any(|l| l == "name"), "project.name should be offered, got {labels:?}");
+}
+
+#[tokio::test]
 async fn hover_shows_method_signature() {
     let mut h = Harness::new();
     h.initialize().await;

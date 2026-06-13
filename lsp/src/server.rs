@@ -13,6 +13,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use mainstage_core::ModuleRegistry;
+use mainstage_core::ast::Program;
 use tokio::sync::{Mutex, RwLock};
 use tokio::task::JoinHandle;
 use tower_lsp::jsonrpc::Result as RpcResult;
@@ -42,6 +43,11 @@ pub struct Backend {
     /// long-lived plugin processes happen once per directory rather than per
     /// request.
     registries: Mutex<HashMap<PathBuf, ModuleRegistry>>,
+    /// The last successful parse of each open document. Feature requests fall
+    /// back to it when the current text does not parse — which is the common
+    /// case mid-keystroke (e.g. just after typing the `.` of `project.`), so
+    /// completion and hover keep working instead of going blank.
+    programs: Mutex<HashMap<Url, Program>>,
 }
 
 impl Backend {
@@ -52,6 +58,21 @@ impl Backend {
             documents: Arc::new(RwLock::new(HashMap::new())),
             debounce: Mutex::new(HashMap::new()),
             registries: Mutex::new(HashMap::new()),
+            programs: Mutex::new(HashMap::new()),
+        }
+    }
+
+    /// The syntax tree for `uri` given its current `text`. A successful parse is
+    /// cached and returned; a failing parse falls back to the last cached tree,
+    /// so language features survive the transient unparseable states the editor
+    /// streams while the user is typing.
+    async fn program_for(&self, uri: &Url, text: &str) -> Option<Program> {
+        match analysis::parse_text(text, &path_of(uri)) {
+            Some(program) => {
+                self.programs.lock().await.insert(uri.clone(), program.clone());
+                Some(program)
+            }
+            None => self.programs.lock().await.get(uri).cloned(),
         }
     }
 
@@ -74,6 +95,11 @@ impl Backend {
     /// Record `text` (at `version`) for `uri` and schedule a debounced analysis
     /// that publishes diagnostics, cancelling any previous pending analysis.
     async fn update(&self, uri: Url, text: String, version: i32) {
+        // Refresh the last-good parse cache eagerly: every parseable edit updates
+        // it, so a later unparseable keystroke can fall back to the prior tree.
+        if let Some(program) = analysis::parse_text(&text, &path_of(&uri)) {
+            self.programs.lock().await.insert(uri.clone(), program);
+        }
         self.documents.write().await.insert(uri.clone(), Document { text, version });
 
         let registry = self.registry_for(&script_dir_of(&uri)).await;
@@ -156,6 +182,7 @@ impl LanguageServer for Backend {
     async fn did_close(&self, params: DidCloseTextDocumentParams) {
         let uri = params.text_document.uri;
         self.documents.write().await.remove(&uri);
+        self.programs.lock().await.remove(&uri);
         if let Some(handle) = self.debounce.lock().await.remove(&uri) {
             handle.abort();
         }
@@ -167,7 +194,7 @@ impl LanguageServer for Backend {
         let pos = params.text_document_position;
         let Some(text) = self.text_of(&pos.text_document.uri).await else { return Ok(None) };
         let registry = self.registry_for(&script_dir_of(&pos.text_document.uri)).await;
-        let program = analysis::parse_text(&text, &path_of(&pos.text_document.uri));
+        let program = self.program_for(&pos.text_document.uri, &text).await;
         let items = completion::completions(&text, pos.position, &registry, program.as_ref());
         Ok((!items.is_empty()).then_some(CompletionResponse::Array(items)))
     }
@@ -176,7 +203,7 @@ impl LanguageServer for Backend {
         let pos = params.text_document_position_params;
         let Some(text) = self.text_of(&pos.text_document.uri).await else { return Ok(None) };
         let registry = self.registry_for(&script_dir_of(&pos.text_document.uri)).await;
-        let program = analysis::parse_text(&text, &path_of(&pos.text_document.uri));
+        let program = self.program_for(&pos.text_document.uri, &text).await;
         Ok(hover::hover(&text, pos.position, &registry, program.as_ref()))
     }
 
@@ -187,7 +214,7 @@ impl LanguageServer for Backend {
         let pos = params.text_document_position_params;
         let Some(text) = self.text_of(&pos.text_document.uri).await else { return Ok(None) };
         let registry = self.registry_for(&script_dir_of(&pos.text_document.uri)).await;
-        let program = analysis::parse_text(&text, &path_of(&pos.text_document.uri));
+        let program = self.program_for(&pos.text_document.uri, &text).await;
         Ok(signature::signature_help(&text, pos.position, &registry, program.as_ref()))
     }
 
@@ -198,7 +225,7 @@ impl LanguageServer for Backend {
         let pos = params.text_document_position_params;
         let uri = pos.text_document.uri;
         let Some(text) = self.text_of(&uri).await else { return Ok(None) };
-        let program = analysis::parse_text(&text, &path_of(&uri));
+        let program = self.program_for(&uri, &text).await;
         Ok(navigation::definition(&text, pos.position, program.as_ref())
             .map(|range| GotoDefinitionResponse::Scalar(Location::new(uri, range))))
     }
@@ -207,7 +234,7 @@ impl LanguageServer for Backend {
         let pos = params.text_document_position;
         let uri = pos.text_document.uri;
         let Some(text) = self.text_of(&uri).await else { return Ok(None) };
-        let program = analysis::parse_text(&text, &path_of(&uri));
+        let program = self.program_for(&uri, &text).await;
         let include = params.context.include_declaration;
         let locations: Vec<Location> =
             navigation::references(&text, pos.position, program.as_ref(), include)
@@ -223,7 +250,7 @@ impl LanguageServer for Backend {
     ) -> RpcResult<Option<DocumentSymbolResponse>> {
         let uri = params.text_document.uri;
         let Some(text) = self.text_of(&uri).await else { return Ok(None) };
-        let program = analysis::parse_text(&text, &path_of(&uri));
+        let program = self.program_for(&uri, &text).await;
         let symbols = navigation::document_symbols(&text, program.as_ref());
         Ok((!symbols.is_empty()).then(|| {
             DocumentSymbolResponse::Nested(symbols.iter().map(to_document_symbol).collect())

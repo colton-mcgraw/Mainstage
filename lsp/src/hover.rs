@@ -1,8 +1,8 @@
 //! Hover: show a module alias's binding, a method's signature and return type,
 //! and the resolved form of `let` bindings, stage names, and `project.<field>`.
 
-use mainstage_core::ModuleRegistry;
 use mainstage_core::ast::Program;
+use mainstage_core::{ModuleRegistry, Source, Span, TriviaMap, attach_trivia, lex};
 use tower_lsp::lsp_types::{Hover, HoverContents, MarkupContent, MarkupKind, Position, Range};
 
 use crate::cursor::{ident_at, offset_at, position_at, receiver_before, slice_span};
@@ -20,13 +20,17 @@ pub fn hover(
     let word = &text[start..end];
     let aliases = import_aliases(text, program);
     let index = program.map(DocumentIndex::from_program);
+    // Comments attached to declarations, so hover can surface a binding's doc.
+    let trivia = program.map(|p| attach_trivia(p, &lex(&Source::from_str("hover.ms", text))));
 
     // A `<receiver>.` immediately before the word marks a member access.
     let receiver = receiver_before(text, start);
 
     let value = match receiver {
-        Some(recv) => member_hover(&recv, word, registry, &aliases, index.as_ref(), text)?,
-        None => symbol_hover(word, registry, &aliases, index.as_ref(), text)?,
+        Some(recv) => {
+            member_hover(&recv, word, registry, &aliases, index.as_ref(), trivia.as_ref(), text)?
+        }
+        None => symbol_hover(word, registry, &aliases, index.as_ref(), trivia.as_ref(), text)?,
     };
 
     Some(Hover {
@@ -42,6 +46,7 @@ fn member_hover(
     registry: &ModuleRegistry,
     aliases: &std::collections::HashMap<String, String>,
     index: Option<&DocumentIndex>,
+    trivia: Option<&TriviaMap>,
     text: &str,
 ) -> Option<String> {
     if let Some(module) = aliases.get(receiver) {
@@ -52,10 +57,11 @@ fn member_hover(
     let index = index?;
     if receiver == "project" {
         let field = index.project_fields.iter().find(|f| f.name == word)?;
-        return Some(code_block(&format!(
-            "project.{word} = {}",
-            slice_span(text, &field.value_span)
-        )));
+        return Some(with_docs(
+            trivia,
+            &field.span,
+            code_block(&format!("project.{word} = {}", slice_span(text, &field.value_span))),
+        ));
     }
     if let Some(stage) = index.stages.iter().find(|s| s.name == receiver)
         && word == "outputs"
@@ -73,6 +79,7 @@ fn symbol_hover(
     registry: &ModuleRegistry,
     aliases: &std::collections::HashMap<String, String>,
     index: Option<&DocumentIndex>,
+    trivia: Option<&TriviaMap>,
     text: &str,
 ) -> Option<String> {
     if let Some(module) = aliases.get(word) {
@@ -85,10 +92,11 @@ fn symbol_hover(
 
     if let Some(index) = index {
         if let Some(binding) = index.lets.iter().find(|l| l.name == word) {
-            return Some(code_block(&format!(
-                "let {word} = {}",
-                slice_span(text, &binding.value_span)
-            )));
+            return Some(with_docs(
+                trivia,
+                &binding.span,
+                code_block(&format!("let {word} = {}", slice_span(text, &binding.value_span))),
+            ));
         }
         if let Some(stage) = index.stages.iter().find(|s| s.name == word) {
             let outputs = stage
@@ -96,7 +104,11 @@ fn symbol_hover(
                 .as_ref()
                 .map(|sp| format!(" → outputs {}", slice_span(text, sp)))
                 .unwrap_or_default();
-            return Some(code_block(&format!("stage {word}{outputs}")));
+            return Some(with_docs(
+                trivia,
+                &stage.span,
+                code_block(&format!("stage {word}{outputs}")),
+            ));
         }
         if word == "project" && !index.project_fields.is_empty() {
             return Some(format!("the `project` block — {} fields", index.project_fields.len()));
@@ -111,6 +123,23 @@ fn symbol_hover(
 
 fn code_block(body: &str) -> String {
     format!("```mainstage\n{body}\n```")
+}
+
+/// Prepend the standalone (doc) comments attached above the node at `span` to
+/// `body`, rendered as plain Markdown lines. Returns `body` unchanged when the
+/// node carries no leading comments.
+fn with_docs(trivia: Option<&TriviaMap>, span: &Span, body: String) -> String {
+    let Some(node) = trivia.and_then(|t| t.get(span)) else { return body };
+    if node.leading.is_empty() {
+        return body;
+    }
+    let doc = node
+        .leading
+        .iter()
+        .map(|c| c.text.trim_start_matches('/').trim())
+        .collect::<Vec<_>>()
+        .join("  \n");
+    format!("{doc}\n\n{body}")
 }
 
 #[cfg(test)]
@@ -165,6 +194,19 @@ mod tests {
         let pos = position_at(text, text.rfind("name").unwrap());
         let hover = hover(text, pos, &registry, Some(&program)).expect("hover");
         assert!(markup(&hover).contains("let name = \"demo\""));
+    }
+
+    #[test]
+    fn hover_includes_leading_doc_comment() {
+        let registry = ModuleRegistry::standard();
+        let text = "// the build output directory\nlet out = \"dist\";\nlet other = out;";
+        let program = parse(text);
+        // The `out` reference in the second binding.
+        let pos = position_at(text, text.rfind("out").unwrap());
+        let hover = hover(text, pos, &registry, Some(&program)).expect("hover");
+        let md = markup(&hover);
+        assert!(md.contains("the build output directory"));
+        assert!(md.contains("let out = \"dist\""));
     }
 
     #[test]

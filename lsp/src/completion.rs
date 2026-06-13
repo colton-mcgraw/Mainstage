@@ -4,12 +4,16 @@
 //! for available modules and their methods.
 
 use mainstage_core::ModuleRegistry;
-use mainstage_core::ast::Program;
+use mainstage_core::ast::{Item, Program, Step};
 use mainstage_core::modules::MethodSig;
 use tower_lsp::lsp_types::{CompletionItem, CompletionItemKind, InsertTextFormat, Position};
 
 use crate::cursor::{line_prefix, offset_at};
 use crate::index::{DocumentIndex, import_aliases};
+
+/// The metadata properties exposed by each item of a `for <var> in <fileset>`
+/// loop, per `docs/GRAMMAR.md`. Offered after `<loop-var>.`.
+const FILE_PROPERTIES: [&str; 5] = ["path", "name", "stem", "ext", "dir"];
 
 /// Compute completion items for the cursor at `pos`. `program` is the latest
 /// successful parse, if any; completion still works without it (e.g. mid-edit)
@@ -63,9 +67,50 @@ fn member_completions(
         if idx.is_stage(receiver) {
             return vec![field_item("outputs")];
         }
+        // A `for <var> in <fileset>` loop variable: offer the file item's metadata
+        // properties (`<var>.path`, `<var>.name`, …).
+        if for_loop_vars(program).iter().any(|v| v == receiver) {
+            return FILE_PROPERTIES.iter().map(|f| field_item(f)).collect();
+        }
     }
 
     Vec::new()
+}
+
+/// Collect the names of every `for <var> in …` loop variable declared anywhere
+/// in the program, descending through nested `if`/`for` step blocks.
+fn for_loop_vars(program: &Program) -> Vec<String> {
+    let mut vars = Vec::new();
+    for item in &program.items {
+        match item {
+            Item::Stage(s) => {
+                collect_for_vars(&s.steps, &mut vars);
+                collect_for_vars(&s.on_failure, &mut vars);
+            }
+            Item::Pipeline(p) => {
+                collect_for_vars(&p.on_failure, &mut vars);
+                collect_for_vars(&p.on_success, &mut vars);
+            }
+            _ => {}
+        }
+    }
+    vars
+}
+
+fn collect_for_vars(steps: &[Step], vars: &mut Vec<String>) {
+    for step in steps {
+        match step {
+            Step::For(f) => {
+                vars.push(f.var.clone());
+                collect_for_vars(&f.steps, vars);
+            }
+            Step::If(i) => {
+                collect_for_vars(&i.then_steps, vars);
+                collect_for_vars(&i.else_steps, vars);
+            }
+            _ => {}
+        }
+    }
 }
 
 /// Identifiers valid in an expression position: `let` bindings, stage names,
@@ -251,6 +296,22 @@ mod tests {
         assert!(labels.contains(&"foo"));
         assert!(labels.contains(&"build"));
         assert!(labels.contains(&"platform"));
+    }
+
+    #[test]
+    fn loop_variable_offers_file_properties() {
+        let registry = ModuleRegistry::standard();
+        let text = "stage s {\n    steps {\n        for file in glob(\"*.rs\") {\n            $ echo ${file.\n        }\n    }\n}";
+        let program = parse(
+            "stage s {\n    steps {\n        for file in glob(\"*.rs\") {\n            $ echo done\n        }\n    }\n}",
+        );
+        // Cursor right after `file.` in the exec line.
+        let pos = crate::cursor::position_at(text, text.find("file.").unwrap() + "file.".len());
+        let items = completions(text, pos, &registry, Some(&program));
+        let labels: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
+        assert!(labels.contains(&"path"));
+        assert!(labels.contains(&"stem"));
+        assert_eq!(items.len(), FILE_PROPERTIES.len());
     }
 
     #[test]
