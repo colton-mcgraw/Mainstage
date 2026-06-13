@@ -260,6 +260,12 @@ module loads), reused for every call, and shut down at the end of the run.
 Plugins are validated and called identically to built-ins — once discovered, their
 reported signatures feed semantic analysis just like a built-in module's.
 
+> **Authoring a plugin?** This section is the protocol reference. For a step-by-step
+> guide — scaffolding with `mainstage plugin new`, validating with `mainstage plugin
+> check`, and naming, versioning, and publishing conventions — see
+> [`PLUGINS.md`](PLUGINS.md). For existing plugins and runnable examples, see
+> [`PLUGIN_INDEX.md`](PLUGIN_INDEX.md).
+
 ### Protocol
 
 Two operations exist.

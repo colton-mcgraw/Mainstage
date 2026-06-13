@@ -1,4 +1,5 @@
 mod commands;
+mod scaffold;
 
 use clap::Command;
 

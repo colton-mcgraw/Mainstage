@@ -20,7 +20,10 @@ pub use eval::{
 };
 pub use executor::{execute_step, execute_steps};
 pub use format::format;
-pub use modules::{Capability, ExternalModule, Module, ModuleRegistry, Permissions};
+pub use modules::{
+    Capability, ExternalModule, LintFinding, LintLevel, LintReport, Module, ModuleRegistry,
+    Permissions, lint_plugin,
+};
 pub use parser::parse;
 pub use runner::{
     CancelToken, NoopReporter, Plan, PlanStatus, PlannedStage, Reporter, StageOutcome,

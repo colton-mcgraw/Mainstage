@@ -436,10 +436,10 @@ Ship the editor experience built in Goal 3. Output: a one-click install for VS C
 
 Make the Phase 13 plugin protocol approachable for authors. Output: scaffolding, a publishing guide, and a discoverable index.
 
-- [ ] `mainstage plugin new` scaffolding that emits a working stdio plugin (`describe` / `call`) skeleton
-- [ ] An authoring and publishing guide for the JSON-over-stdio protocol, including versioning and namespacing conventions
-- [ ] A discoverable index of community plugins and reference example plugins
-- [ ] Validation/lint command that checks a plugin against the protocol before publishing
+- [x] `mainstage plugin new` scaffolding that emits a working stdio plugin (`describe` / `call`) skeleton
+- [x] An authoring and publishing guide for the JSON-over-stdio protocol, including versioning and namespacing conventions
+- [x] A discoverable index of community plugins and reference example plugins
+- [x] Validation/lint command that checks a plugin against the protocol before publishing
 
 ---
 

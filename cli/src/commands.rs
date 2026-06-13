@@ -13,10 +13,13 @@ use clap::{Arg, ArgAction, Command};
 use console::style;
 use mainstage_core::ast::Program;
 use mainstage_core::{
-    AnalysisResult, CancelToken, Diagnostic, Error, EvalContext, ModuleRegistry, Permissions, Plan,
-    PlanStatus, Reporter, Source, Span, StageOutcome, analyze_with, ast, cache, eval_program_with,
-    parse, pipeline_input_paths, plan_pipeline, run_pipeline_cancellable,
+    AnalysisResult, CancelToken, Diagnostic, Error, EvalContext, LintLevel, ModuleRegistry,
+    Permissions, Plan, PlanStatus, Reporter, Source, Span, StageOutcome, analyze_with, ast, cache,
+    eval_program_with, lint_plugin, parse, pipeline_input_paths, plan_pipeline,
+    run_pipeline_cancellable,
 };
+
+use crate::scaffold::{self, Lang};
 
 /// Default script file used by `run` / `list` / `clean` and the no-subcommand run.
 const DEFAULT_SCRIPT: &str = "main.ms";
@@ -124,6 +127,45 @@ pub fn setup(cli: Command) -> Command {
                 .about("Run the language server over stdio (for editor integration)"),
         )
         .subcommand(
+            Command::new("plugin")
+                .about("Author and validate external plugins")
+                .subcommand_required(true)
+                .arg_required_else_help(true)
+                .subcommand(
+                    Command::new("new")
+                        .about("Scaffold a working stdio plugin skeleton")
+                        .arg(
+                            Arg::new("name")
+                                .required(true)
+                                .help("Plugin module name (may be namespaced, e.g. acme/lint)"),
+                        )
+                        .arg(
+                            Arg::new("lang")
+                                .long("lang")
+                                .value_name("LANG")
+                                .default_value("python")
+                                .help("Plugin language: python (py) or shell (sh)"),
+                        )
+                        .arg(
+                            Arg::new("dir")
+                                .long("dir")
+                                .value_name("DIR")
+                                .help("Output directory (defaults to the plugin's name)"),
+                        )
+                        .arg(
+                            Arg::new("force")
+                                .long("force")
+                                .action(ArgAction::SetTrue)
+                                .help("Overwrite an existing output directory"),
+                        ),
+                )
+                .subcommand(
+                    Command::new("check")
+                        .about("Lint a plugin against the protocol before publishing")
+                        .arg(Arg::new("path").required(true).help("Path to the plugin executable")),
+                ),
+        )
+        .subcommand(
             Command::new("format")
                 .about("Format .ms scripts to canonical style")
                 .arg(
@@ -184,6 +226,17 @@ pub fn dispatch(matches: &clap::ArgMatches) -> i32 {
         Some(("eval", sub)) => cmd_eval(file_of(sub), flags),
         Some(("modules", sub)) => cmd_modules(file_of(sub), flags),
         Some(("lsp", _)) => cmd_lsp(),
+        Some(("plugin", sub)) => match sub.subcommand() {
+            Some(("new", args)) => cmd_plugin_new(args),
+            Some(("check", args)) => cmd_plugin_check(args),
+            _ => {
+                eprintln!(
+                    "{} expected `plugin new` or `plugin check`",
+                    style("error:").red().bold()
+                );
+                2
+            }
+        },
         Some(("format", sub)) => {
             let files: Vec<String> = sub
                 .get_many::<String>("files")
@@ -594,6 +647,76 @@ fn cmd_modules(file: &str, _perms: Permissions) -> i32 {
 fn cmd_lsp() -> i32 {
     mainstage_lsp::run_stdio();
     0
+}
+
+// ── plugin ─────────────────────────────────────────────────────────────────────
+
+/// Scaffold a working plugin skeleton. The generated plugin already answers
+/// `describe` and a sample `call`, so it passes `plugin check` immediately.
+fn cmd_plugin_new(args: &clap::ArgMatches) -> i32 {
+    let name = args.get_one::<String>("name").map(String::as_str).unwrap_or_default();
+    let dir = args.get_one::<String>("dir").map(String::as_str);
+    let force = args.get_flag("force");
+
+    let lang_str = args.get_one::<String>("lang").map(String::as_str).unwrap_or("python");
+    let Some(lang) = Lang::parse(lang_str) else {
+        eprintln!(
+            "{} unknown --lang '{lang_str}' (expected 'python' or 'shell')",
+            style("error:").red().bold()
+        );
+        return 2;
+    };
+
+    match scaffold::new_plugin(name, dir, lang, force) {
+        Ok(script) => {
+            scaffold::print_next_steps(name, &script);
+            0
+        }
+        Err(e) => {
+            eprintln!("{} {e}", style("error:").red().bold());
+            1
+        }
+    }
+}
+
+/// Lint a plugin against the wire protocol. Spawns it, sends `describe`, and reports
+/// errors (the plugin is broken) and warnings (it works but breaks a convention).
+/// Exits non-zero when any error is found, so it doubles as a CI/pre-publish gate.
+fn cmd_plugin_check(args: &clap::ArgMatches) -> i32 {
+    let path = args.get_one::<String>("path").map(String::as_str).unwrap_or_default();
+    let exe = Path::new(path);
+    // Run the plugin from its own directory, matching how discovery spawns it.
+    let script_dir = exe.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or(Path::new("."));
+
+    let report = lint_plugin(exe, script_dir);
+
+    println!("{} {}", style("checking").bold(), path);
+    if let Some(name) = &report.module_name {
+        println!("  module {} · {} method(s)", style(name).cyan(), report.method_count);
+    }
+
+    for finding in &report.findings {
+        match finding.level {
+            LintLevel::Error => {
+                println!("  {} {}", style("error").red().bold(), finding.message)
+            }
+            LintLevel::Warning => {
+                println!("  {} {}", style("warning").yellow().bold(), finding.message)
+            }
+        }
+    }
+
+    if report.has_errors() {
+        eprintln!("{} plugin has protocol errors", style("failed:").red().bold());
+        1
+    } else if report.is_clean() {
+        println!("{} plugin conforms to the protocol", style("ok:").green().bold());
+        0
+    } else {
+        // Warnings only — usable, but worth addressing before publishing.
+        println!("{} plugin is usable (warnings above)", style("ok:").green().bold());
+        0
+    }
 }
 
 // ── format ─────────────────────────────────────────────────────────────────────

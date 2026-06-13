@@ -137,7 +137,7 @@ impl WireArg {
 // ── Method signatures on the wire ───────────────────────────────────────────────
 
 /// A positional parameter as described by a plugin.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WireParam {
     pub name: String,
     #[serde(rename = "type", default = "default_ty")]
@@ -147,7 +147,7 @@ pub struct WireParam {
 }
 
 /// A keyword parameter as described by a plugin.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WireNamedParam {
     pub name: String,
     #[serde(rename = "type", default = "default_ty")]
@@ -157,7 +157,7 @@ pub struct WireNamedParam {
 }
 
 /// A method signature as described by a plugin's `describe` response.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WireMethodSig {
     pub name: String,
     #[serde(default)]

@@ -361,7 +361,7 @@ mod tests {
         assert!(!in_plain_string("let x = \"${proj"));
         assert!(!in_plain_string("\"${out}/${project."));
         assert!(!in_plain_string("let x = \"${env.get(\"KEY\"")); // nested string
-        assert!(!in_plain_string("let x = \"done\""));            // closed string
+        assert!(!in_plain_string("let x = \"done\"")); // closed string
     }
 
     #[test]
