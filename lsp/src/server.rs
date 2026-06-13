@@ -152,6 +152,7 @@ impl LanguageServer for Backend {
                 }),
                 definition_provider: Some(OneOf::Left(true)),
                 references_provider: Some(OneOf::Left(true)),
+                document_highlight_provider: Some(OneOf::Left(true)),
                 document_symbol_provider: Some(OneOf::Left(true)),
                 document_formatting_provider: Some(OneOf::Left(true)),
                 ..ServerCapabilities::default()
@@ -242,6 +243,18 @@ impl LanguageServer for Backend {
                 .map(|range| Location::new(uri.clone(), range))
                 .collect();
         Ok((!locations.is_empty()).then_some(locations))
+    }
+
+    async fn document_highlight(
+        &self,
+        params: DocumentHighlightParams,
+    ) -> RpcResult<Option<Vec<DocumentHighlight>>> {
+        let pos = params.text_document_position_params;
+        let uri = pos.text_document.uri;
+        let Some(text) = self.text_of(&uri).await else { return Ok(None) };
+        let program = self.program_for(&uri, &text).await;
+        let highlights = navigation::highlights(&text, pos.position, program.as_ref());
+        Ok((!highlights.is_empty()).then_some(highlights))
     }
 
     async fn document_symbol(

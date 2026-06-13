@@ -136,6 +136,10 @@ async fn initialize_advertises_every_capability() {
     assert!(caps.signature_help_provider.is_some(), "signature help");
     assert!(matches!(caps.definition_provider, Some(OneOf::Left(true))), "go-to-definition");
     assert!(matches!(caps.references_provider, Some(OneOf::Left(true))), "find references");
+    assert!(
+        matches!(caps.document_highlight_provider, Some(OneOf::Left(true))),
+        "document highlight"
+    );
     assert!(matches!(caps.document_symbol_provider, Some(OneOf::Left(true))), "symbols");
     assert!(
         matches!(caps.document_formatting_provider, Some(OneOf::Left(true))),
@@ -373,6 +377,35 @@ async fn find_references_returns_every_use_of_a_variable() {
     let locations: Vec<Location> = serde_json::from_value(result).expect("references payload");
     assert_eq!(locations.len(), 3, "declaration plus two uses, got {locations:?}");
     assert!(locations.iter().all(|loc| loc.uri.as_str() == URI));
+}
+
+#[tokio::test]
+async fn document_highlight_marks_every_occurrence_of_a_variable() {
+    // The fix for "highlighting variables": with the cursor on a variable, the
+    // server returns every occurrence so the editor highlights them — the
+    // declaration as a write, each use as a read.
+    let mut h = Harness::new();
+    h.initialize().await;
+    h.open(URI, "let name = \"demo\";\nlet a = name;\nlet b = name;").await;
+
+    // Cursor on the declared `name` (line 0, character 4).
+    let result = h
+        .request(
+            "textDocument/documentHighlight",
+            json!({
+                "textDocument": { "uri": URI },
+                "position": { "line": 0, "character": 4 },
+            }),
+        )
+        .await;
+
+    let highlights: Vec<DocumentHighlight> =
+        serde_json::from_value(result).expect("document highlight payload");
+    assert_eq!(highlights.len(), 3, "declaration plus two uses, got {highlights:?}");
+    let writes = highlights.iter().filter(|h| h.kind == Some(DocumentHighlightKind::WRITE)).count();
+    let reads = highlights.iter().filter(|h| h.kind == Some(DocumentHighlightKind::READ)).count();
+    assert_eq!(writes, 1, "the declaration is the lone write");
+    assert_eq!(reads, 2, "both uses are reads");
 }
 
 #[tokio::test]
