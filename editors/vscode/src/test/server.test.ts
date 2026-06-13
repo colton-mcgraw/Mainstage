@@ -60,6 +60,10 @@ describe(
     before(async () => {
       // Spawn the real server the way `ServerOptions` does (stdio transport).
       child = spawn(BIN as string, [], { stdio: ["pipe", "pipe", "pipe"] });
+      // Once the server exits during teardown (after `exit`), an in-flight protocol
+      // write to its now-closed stdin would surface as an unhandled async EPIPE after
+      // the test has ended. Swallow it — teardown waits for the process to exit below.
+      child.stdin.on("error", () => {});
       connection = createProtocolConnection(
         new StreamMessageReader(child.stdout),
         new StreamMessageWriter(child.stdin),
@@ -83,7 +87,23 @@ describe(
         // The server may already be gone; the kill below is the backstop.
       }
       connection?.dispose();
-      child?.kill();
+      // Wait for the process to actually exit so no stdio activity (e.g. an EPIPE on
+      // the closing pipe) outlives this hook and trips node:test's after-test guard.
+      await new Promise<void>((resolve) => {
+        if (!child || child.exitCode !== null || child.signalCode !== null) {
+          resolve();
+          return;
+        }
+        const done = setTimeout(() => {
+          child.kill("SIGKILL");
+          resolve();
+        }, 2000);
+        child.once("close", () => {
+          clearTimeout(done);
+          resolve();
+        });
+        child.kill();
+      });
     });
 
     /**
