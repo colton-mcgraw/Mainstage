@@ -113,12 +113,10 @@ fn byte_offset(text: &str, line: usize, col: usize) -> usize {
         }
         byte += 1;
     }
-    let mut cur_col = 1;
-    for ch in text[byte..].chars() {
+    for (cur_col, ch) in (1..).zip(text[byte..].chars()) {
         if cur_col >= col || ch == '\n' {
             break;
         }
-        cur_col += 1;
         byte += ch.len_utf8();
     }
     byte
