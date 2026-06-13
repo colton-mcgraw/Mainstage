@@ -31,8 +31,8 @@ pub fn completions(
         return registry.module_names().into_iter().map(module_item).collect();
     }
 
-    // Inside any other string literal: nothing to complete.
-    if count_quotes(prefix) % 2 == 1 {
+    // Inside a plain string literal (not inside a `${…}` interpolation): nothing to complete.
+    if in_plain_string(prefix) {
         return Vec::new();
     }
 
@@ -160,6 +160,40 @@ fn count_quotes(s: &str) -> usize {
         }
     }
     count
+}
+
+/// Whether the cursor sits inside a plain (non-interpolated) string literal.
+///
+/// Returns `false` when inside a `${…}` interpolation, because an interpolation
+/// is an expression context where completions are valid. Only `"` characters at
+/// interpolation depth 0 toggle the "in string" state, so the outer string
+/// boundaries are tracked correctly even when the interpolation contains nested
+/// string arguments (e.g. `"${env.get("KEY")}"`).
+fn in_plain_string(prefix: &str) -> bool {
+    let mut in_string = false;
+    let mut interp_depth: u32 = 0;
+    let mut chars = prefix.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '\\' if in_string && interp_depth == 0 => {
+                chars.next(); // skip the escaped character
+            }
+            '"' if interp_depth == 0 => {
+                in_string = !in_string;
+            }
+            '$' if in_string => {
+                if chars.peek() == Some(&'{') {
+                    chars.next(); // consume '{'
+                    interp_depth += 1;
+                }
+            }
+            '}' if in_string && interp_depth > 0 => {
+                interp_depth -= 1;
+            }
+            _ => {}
+        }
+    }
+    in_string && interp_depth == 0
 }
 
 /// If `prefix` ends in `<receiver>.<partial>` (partial possibly empty), return
@@ -319,5 +353,28 @@ mod tests {
         let registry = ModuleRegistry::standard();
         let text = "let x = \"hello";
         assert!(completions(text, end(text), &registry, None).is_empty());
+    }
+
+    #[test]
+    fn detects_plain_string_vs_interpolation() {
+        assert!(in_plain_string("let x = \"hello"));
+        assert!(!in_plain_string("let x = \"${proj"));
+        assert!(!in_plain_string("\"${out}/${project."));
+        assert!(!in_plain_string("let x = \"${env.get(\"KEY\"")); // nested string
+        assert!(!in_plain_string("let x = \"done\""));            // closed string
+    }
+
+    #[test]
+    fn member_access_inside_interpolation_offers_completions() {
+        let registry = ModuleRegistry::standard();
+        // Mid-edit: cursor is after `g.` inside a string interpolation. The doc
+        // doesn't parse in this state, so we pass the last-good program explicitly.
+        let text = "import \"git\" as g;\nstage s {\n    steps {\n        $ echo \"${g.";
+        let program =
+            parse("import \"git\" as g;\nstage s {\n    steps {\n        $ echo done\n    }\n}");
+        let items = completions(text, end(text), &registry, Some(&program));
+        let labels: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
+        assert!(!items.is_empty(), "expected completions inside string interpolation");
+        assert!(labels.contains(&"sha"), "expected git methods like 'sha' in {labels:?}");
     }
 }
