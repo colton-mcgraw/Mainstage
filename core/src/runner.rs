@@ -898,10 +898,10 @@ fn find_pipeline<'a>(program: &'a Program, name: Option<&str>) -> Result<&'a Pip
 
 fn find_stage<'a>(program: &'a Program, name: &str) -> Option<&'a StageBlock> {
     program.items.iter().find_map(|item| {
-        if let Item::Stage(s) = item {
-            if s.name == name {
-                return Some(s);
-            }
+        if let Item::Stage(s) = item
+            && s.name == name
+        {
+            return Some(s);
         }
         None
     })

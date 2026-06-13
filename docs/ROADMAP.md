@@ -393,10 +393,10 @@ This goal is mostly new infrastructure rather than language work — there is no
 
 Keep `main` green across platforms. Output: every push and PR is built, tested, linted, and format-checked on all three target OSes.
 
-- [ ] GitHub Actions workflow running `cargo build`, `cargo test`, `cargo clippy -D warnings`, and `cargo fmt --check` for the `core`, `cli`, and `lsp` crates
-- [ ] Run `mainstage format --check` over the example scripts as a CI gate (per Phase 21)
-- [ ] Matrix across Linux, macOS, and Windows on stable Rust (edition 2024)
-- [ ] Cache the cargo registry and build artifacts for fast CI
+- [x] GitHub Actions workflow running `cargo build`, `cargo test`, `cargo clippy -D warnings`, and `cargo fmt --check` for the `core`, `cli`, and `lsp` crates
+- [x] Run `mainstage format --check` over the example scripts as a CI gate (per Phase 21)
+- [x] Matrix across Linux, macOS, and Windows on stable Rust (edition 2024)
+- [x] Cache the cargo registry and build artifacts for fast CI
 
 ---
 

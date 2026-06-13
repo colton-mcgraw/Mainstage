@@ -161,7 +161,7 @@ mod tests {
         assert_eq!(ident_at(text, 0), Some((0, 3))); // start of "git"
         assert_eq!(ident_at(text, 3), Some((0, 3))); // trailing edge of "git"
         assert_eq!(ident_at(text, 4), Some((4, 7))); // start of "sha"
-        assert_eq!(ident_at(text, 3 + 0), Some((0, 3)));
+        assert_eq!(ident_at(text, 3), Some((0, 3)));
         assert_eq!(ident_at(".", 0), None);
     }
 

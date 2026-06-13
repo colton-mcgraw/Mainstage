@@ -264,10 +264,10 @@ fn fs_create_dir_all(path: &Path, span: &Span) -> Result<()> {
 
 /// Ensure the parent directory of `path` exists.
 fn ensure_parent(path: &Path, span: &Span) -> Result<()> {
-    if let Some(parent) = path.parent() {
-        if !parent.as_os_str().is_empty() {
-            fs_create_dir_all(parent, span)?;
-        }
+    if let Some(parent) = path.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        fs_create_dir_all(parent, span)?;
     }
     Ok(())
 }
