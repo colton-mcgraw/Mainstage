@@ -17,6 +17,8 @@ exactly — the same parser, analyzer, and module registry power both.
 - **Signature help** — the active parameter while typing inside a call's `(…)`.
 - **Go-to-definition** and **find references** for `let` bindings, import
   aliases, and `<stage>.outputs`.
+- **Document highlight** — put the cursor on a `let` binding or stage to
+  highlight its declaration and every use across the document.
 - **Document symbols** — an outline of pipelines, stages, and top-level `let`
   bindings.
 - **Formatting** — "Format Document" runs the same engine as
@@ -61,6 +63,33 @@ instructions.
 
 - **Mainstage: Restart Language Server**
 - **Mainstage: Show Language Server Output**
+
+## Developing & testing
+
+```sh
+npm ci          # install dependencies
+npm run compile # type-check and emit to out/
+npm test        # run the test suite
+```
+
+The suite has two parts:
+
+- **Resolver unit tests** (`src/test/resolver.test.ts`) — cover server
+  discovery and the `mainstage` vs `mainstage-lsp` launch logic with an
+  injected host, so no real binary or `vscode` runtime is needed.
+- **Server integration tests** (`src/test/server.test.ts`) — spawn the real
+  language server and drive it over stdio with the same
+  `vscode-languageserver-protocol` stack the client uses, asserting that
+  `initialize`, completion, hover, and document highlight return what the
+  editor expects. They build on the workspace's debug binary at
+  `target/debug/mainstage-lsp`; set `MAINSTAGE_LSP_BIN` to point elsewhere.
+  When no server binary is found, this part is skipped (the unit tests still
+  run), so build it first to exercise the full suite:
+
+  ```sh
+  cargo build -p mainstage_lsp --bin mainstage-lsp
+  npm test
+  ```
 
 ## License
 
