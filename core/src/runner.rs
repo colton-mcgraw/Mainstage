@@ -132,6 +132,8 @@ pub fn run_pipeline_reported_jobs(
 
     let project_dir = ctx.script_dir.clone();
     let cache = Mutex::new(Cache::load(&project_dir));
+    // Shared across stages so a file in several stages' inputs is hashed at most once.
+    let run_cache = cache::RunFileCache::new();
 
     // Buffer and atomically flush per-stage output only when stages can actually run
     // concurrently; a single worker streams output live, preserving the sequential UX.
@@ -144,6 +146,7 @@ pub fn run_pipeline_reported_jobs(
         analysis,
         &sorted,
         &cache,
+        &run_cache,
         &project_dir,
         reporter,
         workers,
@@ -241,6 +244,7 @@ fn schedule(
     analysis: &AnalysisResult,
     sorted: &[String],
     cache: &Mutex<Cache>,
+    run_cache: &cache::RunFileCache,
     project_dir: &Path,
     reporter: &dyn Reporter,
     workers: usize,
@@ -280,7 +284,7 @@ fn schedule(
     std::thread::scope(|scope| {
         for _ in 0..workers {
             scope.spawn(|| {
-                worker(&shared, program, base, cache, project_dir, reporter, buffered);
+                worker(&shared, program, base, cache, run_cache, project_dir, reporter, buffered);
             });
         }
     });
@@ -294,11 +298,13 @@ fn schedule(
 
 /// A single worker: claim ready stages, run them, then publish results and unblock or
 /// cancel dependents — looping until the run is fully settled or aborted.
+#[allow(clippy::too_many_arguments)]
 fn worker(
     shared: &Shared,
     program: &Program,
     base: &EvalContext,
     cache: &Mutex<Cache>,
+    run_cache: &cache::RunFileCache,
     project_dir: &Path,
     reporter: &dyn Reporter,
     buffered: bool,
@@ -342,8 +348,17 @@ fn worker(
             }
         };
 
-        let run =
-            run_one_stage(stage, &name, base, deps_outputs, cache, project_dir, reporter, buffered);
+        let run = run_one_stage(
+            stage,
+            &name,
+            base,
+            deps_outputs,
+            cache,
+            run_cache,
+            project_dir,
+            reporter,
+            buffered,
+        );
 
         // ── Publish the result and wake dependents ─────────────────────────────
         let mut g = shared.inner.lock().unwrap();
@@ -462,6 +477,7 @@ fn run_one_stage(
     base: &EvalContext,
     deps_outputs: HashMap<String, Value>,
     cache: &Mutex<Cache>,
+    run_cache: &cache::RunFileCache,
     project_dir: &Path,
     reporter: &dyn Reporter,
     buffered: bool,
@@ -474,13 +490,18 @@ fn run_one_stage(
     };
     let stage_outputs_value = stage_ctx.stage_outputs.clone();
 
-    // Change detection: compute the input digest and declared outputs, then skip the
-    // stage when it is unchanged and its outputs are all present.
-    let digest = stage_ctx.stage_inputs.as_ref().map(cache::input_digest);
+    // Change detection: fingerprint the inputs (reusing unchanged files' hashes via the
+    // mtime/size fast path and the within-run cache), then skip the stage when its digest
+    // is unchanged and its outputs are all present. The prior run's per-file metadata is
+    // snapshotted under the lock so hashing itself happens lock-free.
+    let fingerprint = stage_ctx.stage_inputs.as_ref().map(|inputs| {
+        let prior = cache.lock().unwrap().input_meta(name);
+        cache::fingerprint_inputs(inputs, &prior, run_cache)
+    });
     let output_paths = stage_outputs_value.as_ref().map(cache::output_paths).unwrap_or_default();
 
-    if let Some(dig) = &digest {
-        let fresh = cache.lock().unwrap().is_fresh(name, dig, project_dir);
+    if let Some(fp) = &fingerprint {
+        let fresh = cache.lock().unwrap().is_fresh(name, fp.digest(), project_dir);
         if fresh {
             emit(reporter, |r, out| r.stage_skipped(out, name));
             return StageRun::Done { outputs: stage_outputs_value, success: true };
@@ -510,9 +531,10 @@ fn run_one_stage(
 
     let run = match &result {
         Ok(()) => {
-            // Record the stage as up-to-date for the next run.
-            if let Some(dig) = digest {
-                cache.lock().unwrap().update(name, dig, output_paths);
+            // Record the stage as up-to-date for the next run, persisting per-file
+            // metadata so the next run can take the fast path.
+            if let Some(fp) = fingerprint {
+                cache.lock().unwrap().update_fingerprint(name, fp, output_paths);
             }
             write_event(reporter, buffered, &mut buf, |r, out| r.stage_passed(out, name));
             StageRun::Done { outputs: stage_outputs_value, success: true }

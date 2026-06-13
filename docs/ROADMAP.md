@@ -345,10 +345,10 @@ Run independent branches of the dependency DAG concurrently while preserving the
 
 Make the skip-check cheap on large input sets. Output: unchanged stages are detected without re-hashing every file.
 
-- [ ] `mtime` + size fast path that short-circuits the SHA-256 digest when a file is provably unchanged, falling back to hashing on ambiguity
-- [ ] Parallelize per-file hashing for the inputs that still require it
-- [ ] Avoid redundant re-globbing and re-hashing of filesets already resolved during a run
-- [ ] Keep the `.mainstage/cache.json` format backward-compatible; benchmark against the Phase 23 baselines
+- [x] `mtime` + size fast path that short-circuits the SHA-256 digest when a file is provably unchanged, falling back to hashing on ambiguity
+- [x] Parallelize per-file hashing for the inputs that still require it
+- [x] Avoid redundant re-globbing and re-hashing of filesets already resolved during a run
+- [x] Keep the `.mainstage/cache.json` format backward-compatible; benchmark against the Phase 23 baselines
 
 ---
 
