@@ -181,4 +181,4 @@ The CLI binary is at `target/release/mainstage`.
 
 ## License
 
-[MIT](LICENSE.md)
+[Mainstage Source-Available License](LICENSE.md)

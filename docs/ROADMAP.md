@@ -404,10 +404,10 @@ Keep `main` green across platforms. Output: every push and PR is built, tested, 
 
 Produce reproducible, downloadable binaries on every tagged release. Output: a GitHub Release with signed checksums and binaries for every supported target.
 
-- [ ] Adopt semantic versioning and maintain a `CHANGELOG`
-- [ ] Reconcile the license: pick MIT (or the intended license) consistently across `LICENSE.md`, the README badge, and the workspace `license-file`
-- [ ] Tag-triggered release workflow building Linux (gnu + musl), macOS (x86_64 + arm64), and Windows binaries
-- [ ] Attach binaries and SHA-256 checksums to the GitHub Release
+- [x] Adopt semantic versioning and maintain a `CHANGELOG`
+- [x] Reconcile the license: pick MIT (or the intended license) consistently across `LICENSE.md`, the README badge, and the workspace `license-file` — settled on the existing Source-Available License; fixed the README footer to match
+- [x] Tag-triggered release workflow building Linux (gnu + musl), macOS (x86_64 + arm64), and Windows binaries
+- [x] Attach binaries and SHA-256 checksums to the GitHub Release
 
 ---
 
