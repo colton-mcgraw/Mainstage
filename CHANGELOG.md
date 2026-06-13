@@ -24,8 +24,8 @@ While Mainstage is pre-`1.0.0`, breaking changes may land in minor releases; onc
   timing summary.
 - **Editor tooling** — a `tower-lsp` language server (`mainstage lsp` /
   `mainstage-lsp`) providing diagnostics, completion, hover, signature help,
-  navigation, and document symbols, plus a comment-preserving `mainstage format`
-  formatter shared by the CLI and the editor.
+  navigation, document highlight, and document symbols, plus a comment-preserving
+  `mainstage format` formatter shared by the CLI and the editor.
 - **Performance & stability** — parallel stage execution, an `mtime`/size change-
   detection fast path, a criterion benchmark harness, parser fuzzing, and graceful
   Ctrl-C / SIGTERM handling.

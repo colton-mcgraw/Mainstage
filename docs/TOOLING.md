@@ -44,6 +44,7 @@ It speaks LSP over stdio.
 | **Signature help** | The active parameter while typing inside a module call's `(…)`. |
 | **Go-to-definition** | Jump to the declaration of a `let`, an import alias, or a `<stage>.outputs` reference. |
 | **Find references** | All uses of a stage or `let` binding. |
+| **Document highlight** | With the cursor on a `let` binding or stage, highlight its declaration (as a write) and every use (as reads) in the document. |
 | **Document symbols** | An outline of pipelines, stages, and top-level `let` bindings. |
 | **Formatting** | Whole-document formatting via the shared [formatter](#formatter). |
 

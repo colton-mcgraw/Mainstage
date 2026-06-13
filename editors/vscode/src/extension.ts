@@ -1,5 +1,4 @@
 import { accessSync, constants } from "node:fs";
-import { delimiter, join } from "node:path";
 import { homedir } from "node:os";
 
 import {
@@ -15,6 +14,8 @@ import {
   ServerOptions,
   TransportKind,
 } from "vscode-languageclient/node";
+
+import { resolveServer as resolve, ResolvedServer, ResolverHost } from "./serverResolver";
 
 let client: LanguageClient | undefined;
 const outputChannel = window.createOutputChannel("Mainstage Language Server");
@@ -103,104 +104,23 @@ async function restart(context: ExtensionContext): Promise<void> {
   await start(context);
 }
 
-interface ResolvedServer {
-  command: string;
-  args: string[];
-}
-
 /**
- * Resolve the language server command without requiring any manual setup.
- *
- * Precedence:
- *   1. The `mainstage.server.path` setting, if non-empty.
- *   2. A `mainstage` or `mainstage-lsp` binary found on `PATH`.
- *   3. A `mainstage` or `mainstage-lsp` binary in a common install location.
- *
- * A `mainstage` binary is launched as `mainstage lsp`; a dedicated
- * `mainstage-lsp` binary is launched directly. The configured
- * `mainstage.server.arguments` are appended in every case.
+ * Resolve the language server command from the current configuration and host,
+ * delegating to the testable {@link resolve} helper. Returns `undefined` when no
+ * server can be located.
  */
 function resolveServer(): ResolvedServer | undefined {
   const config = workspace.getConfiguration("mainstage");
   const extraArgs = config.get<string[]>("server.arguments", []);
+  const configured = config.get<string>("server.path", "");
 
-  const configured = config.get<string>("server.path", "").trim();
-  if (configured) {
-    return { command: configured, args: [...subcommandFor(configured), ...extraArgs] };
-  }
-
-  // Prefer the dedicated server binary, then the CLI's `lsp` subcommand.
-  const lsp = findOnPath("mainstage-lsp") ?? findInInstallDirs("mainstage-lsp");
-  if (lsp) {
-    return { command: lsp, args: [...extraArgs] };
-  }
-
-  const cli = findOnPath("mainstage") ?? findInInstallDirs("mainstage");
-  if (cli) {
-    return { command: cli, args: ["lsp", ...extraArgs] };
-  }
-
-  return undefined;
-}
-
-/** Decide the leading subcommand for a user-supplied executable path. */
-function subcommandFor(command: string): string[] {
-  const base = command.replace(/\\/g, "/").split("/").pop() ?? command;
-  // A `mainstage-lsp` binary speaks LSP directly; the `mainstage` CLI needs `lsp`.
-  return /^mainstage(\.exe)?$/i.test(base) ? ["lsp"] : [];
-}
-
-function executableNames(name: string): string[] {
-  return process.platform === "win32" ? [`${name}.exe`, `${name}.cmd`, name] : [name];
-}
-
-function findOnPath(name: string): string | undefined {
-  const path = process.env.PATH;
-  if (!path) {
-    return undefined;
-  }
-  for (const dir of path.split(delimiter)) {
-    if (!dir) {
-      continue;
-    }
-    const found = firstExecutable(dir, name);
-    if (found) {
-      return found;
-    }
-  }
-  return undefined;
-}
-
-function findInInstallDirs(name: string): string | undefined {
-  const home = homedir();
-  const dirs =
-    process.platform === "win32"
-      ? [join(home, ".cargo", "bin")]
-      : [
-          join(home, ".local", "bin"),
-          join(home, ".cargo", "bin"),
-          "/usr/local/bin",
-          "/opt/homebrew/bin",
-          "/usr/bin",
-        ];
-
-  for (const dir of dirs) {
-    const found = firstExecutable(dir, name);
-    if (found) {
-      return found;
-    }
-  }
-  return undefined;
-}
-
-function firstExecutable(dir: string, name: string): string | undefined {
-  for (const candidate of executableNames(name)) {
-    const full = join(dir, candidate);
-    if (isExecutable(full)) {
-      return full;
-    }
-  }
-  return undefined;
+  const host: ResolverHost = {
+    platform: process.platform,
+    pathVar: process.env.PATH,
+    home: homedir(),
+    isExecutable,
+  };
+  return resolve(configured, extraArgs, host);
 }
 
 function isExecutable(file: string): boolean {

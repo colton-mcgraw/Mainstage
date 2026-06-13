@@ -136,6 +136,10 @@ async fn initialize_advertises_every_capability() {
     assert!(caps.signature_help_provider.is_some(), "signature help");
     assert!(matches!(caps.definition_provider, Some(OneOf::Left(true))), "go-to-definition");
     assert!(matches!(caps.references_provider, Some(OneOf::Left(true))), "find references");
+    assert!(
+        matches!(caps.document_highlight_provider, Some(OneOf::Left(true))),
+        "document highlight"
+    );
     assert!(matches!(caps.document_symbol_provider, Some(OneOf::Left(true))), "symbols");
     assert!(
         matches!(caps.document_formatting_provider, Some(OneOf::Left(true))),
@@ -261,6 +265,169 @@ async fn signature_help_inside_call_parens() {
         "signature should describe env.get, got: {}",
         help.signatures[0].label
     );
+}
+
+#[tokio::test]
+async fn completion_offers_let_bindings_in_expression_position() {
+    // Reproduces "suggestions aren't working": completion in a plain expression
+    // position (not after a `.`) must offer the document's `let` variables.
+    let mut h = Harness::new();
+    h.initialize().await;
+    h.open(URI, "let sources = \"x\";\nlet out = sources;").await;
+
+    // Cursor inside the `sources` reference on line 1 (an expression position).
+    let result = h
+        .request(
+            "textDocument/completion",
+            json!({
+                "textDocument": { "uri": URI },
+                "position": { "line": 1, "character": 11 },
+            }),
+        )
+        .await;
+
+    let labels = completion_labels(&result);
+    assert!(
+        labels.iter().any(|l| l == "sources"),
+        "the `sources` let binding should be suggested, got {labels:?}"
+    );
+    assert!(
+        labels.iter().any(|l| l == "platform"),
+        "the `platform` built-in should be suggested, got {labels:?}"
+    );
+}
+
+#[tokio::test]
+async fn hover_shows_leading_doc_comment() {
+    // Reproduces "comments don't show in hover": a comment directly above a `let`
+    // is surfaced as documentation when hovering a reference to that binding.
+    let mut h = Harness::new();
+    h.initialize().await;
+    h.open(URI, "// the build output directory\nlet out = \"dist\";\nlet mirror = out;").await;
+
+    // Hover the `out` reference on line 2 (`let mirror = out;`).
+    let result = h
+        .request(
+            "textDocument/hover",
+            json!({
+                "textDocument": { "uri": URI },
+                "position": { "line": 2, "character": 14 },
+            }),
+        )
+        .await;
+
+    let hover: Hover = serde_json::from_value(result).expect("hover payload");
+    let text = hover_text(&hover.contents);
+    assert!(
+        text.contains("the build output directory"),
+        "hover should surface the leading comment, got: {text}"
+    );
+    assert!(text.contains("let out = \"dist\""), "hover should show the binding, got: {text}");
+}
+
+#[tokio::test]
+async fn goto_definition_jumps_to_a_let_declaration() {
+    // Backs "highlighting variables": the server resolves a variable reference to
+    // its declaration site.
+    let mut h = Harness::new();
+    h.initialize().await;
+    h.open(URI, "let out = \"dist\";\nlet mirror = out;").await;
+
+    // Go to definition from the `out` reference on line 1.
+    let result = h
+        .request(
+            "textDocument/definition",
+            json!({
+                "textDocument": { "uri": URI },
+                "position": { "line": 1, "character": 14 },
+            }),
+        )
+        .await;
+
+    let response: GotoDefinitionResponse =
+        serde_json::from_value(result).expect("definition payload");
+    let location = match response {
+        GotoDefinitionResponse::Scalar(loc) => loc,
+        other => panic!("expected a single definition location, got {other:?}"),
+    };
+    assert_eq!(location.uri.as_str(), URI);
+    // The declared `out` sits at line 0, character 4 (`let out = …`).
+    assert_eq!(location.range.start, Position::new(0, 4));
+}
+
+#[tokio::test]
+async fn find_references_returns_every_use_of_a_variable() {
+    // Backs "highlighting variables": find-references collects the declaration and
+    // both uses of a `let` binding so the editor can highlight them.
+    let mut h = Harness::new();
+    h.initialize().await;
+    h.open(URI, "let name = \"demo\";\nlet a = name;\nlet b = name;").await;
+
+    let result = h
+        .request(
+            "textDocument/references",
+            json!({
+                "textDocument": { "uri": URI },
+                "position": { "line": 0, "character": 4 },
+                "context": { "includeDeclaration": true },
+            }),
+        )
+        .await;
+
+    let locations: Vec<Location> = serde_json::from_value(result).expect("references payload");
+    assert_eq!(locations.len(), 3, "declaration plus two uses, got {locations:?}");
+    assert!(locations.iter().all(|loc| loc.uri.as_str() == URI));
+}
+
+#[tokio::test]
+async fn document_highlight_marks_every_occurrence_of_a_variable() {
+    // The fix for "highlighting variables": with the cursor on a variable, the
+    // server returns every occurrence so the editor highlights them — the
+    // declaration as a write, each use as a read.
+    let mut h = Harness::new();
+    h.initialize().await;
+    h.open(URI, "let name = \"demo\";\nlet a = name;\nlet b = name;").await;
+
+    // Cursor on the declared `name` (line 0, character 4).
+    let result = h
+        .request(
+            "textDocument/documentHighlight",
+            json!({
+                "textDocument": { "uri": URI },
+                "position": { "line": 0, "character": 4 },
+            }),
+        )
+        .await;
+
+    let highlights: Vec<DocumentHighlight> =
+        serde_json::from_value(result).expect("document highlight payload");
+    assert_eq!(highlights.len(), 3, "declaration plus two uses, got {highlights:?}");
+    let writes = highlights.iter().filter(|h| h.kind == Some(DocumentHighlightKind::WRITE)).count();
+    let reads = highlights.iter().filter(|h| h.kind == Some(DocumentHighlightKind::READ)).count();
+    assert_eq!(writes, 1, "the declaration is the lone write");
+    assert_eq!(reads, 2, "both uses are reads");
+}
+
+#[tokio::test]
+async fn document_symbols_classify_a_let_as_a_variable() {
+    // Backs "highlighting variables": the outline reports `let` bindings as
+    // variables, which is what editors use to colorize and list them.
+    let mut h = Harness::new();
+    h.initialize().await;
+    h.open(URI, "let out = \"dist\";\nstage build {\n    steps {\n        $ echo hi\n    }\n}")
+        .await;
+
+    let result =
+        h.request("textDocument/documentSymbol", json!({ "textDocument": { "uri": URI } })).await;
+
+    let response: DocumentSymbolResponse =
+        serde_json::from_value(result).expect("document symbols payload");
+    let symbols = match response {
+        DocumentSymbolResponse::Nested(symbols) => symbols,
+        DocumentSymbolResponse::Flat(_) => panic!("expected nested document symbols"),
+    };
+    let out = symbols.iter().find(|s| s.name == "out").expect("the `out` symbol");
+    assert_eq!(out.kind, SymbolKind::VARIABLE, "a `let` binding is a variable");
 }
 
 #[tokio::test]

@@ -8,7 +8,7 @@
 
 use mainstage_core::Span;
 use mainstage_core::ast::{Condition, Expr, Item, Program, Step, StringPart};
-use tower_lsp::lsp_types::{Position, Range};
+use tower_lsp::lsp_types::{DocumentHighlight, DocumentHighlightKind, Position, Range};
 
 use crate::cursor::{ident_at, offset_at, position_at, receiver_before, span_offsets};
 use crate::index::DocumentIndex;
@@ -61,6 +61,40 @@ pub fn references(
 
     dedup_ranges(&mut ranges);
     ranges
+}
+
+/// Every occurrence of the symbol at `pos`, each tagged with a highlight kind for
+/// `textDocument/documentHighlight`: the declaration is a `WRITE`, every use a
+/// `READ`. This is what lets an editor highlight a variable and all its uses when
+/// the cursor lands on it. Empty when the cursor is not on a `let` binding or
+/// stage (the symbols whose occurrences are tracked).
+pub fn highlights(text: &str, pos: Position, program: Option<&Program>) -> Vec<DocumentHighlight> {
+    let Some(program) = program else { return Vec::new() };
+    let index = DocumentIndex::from_program(program);
+    let Some(target) = target_at(text, pos, &index) else { return Vec::new() };
+
+    // Highlights, like references, are only meaningful for document-defined symbols.
+    if matches!(target, Target::Alias(_)) {
+        return Vec::new();
+    }
+
+    let mut highlights: Vec<DocumentHighlight> = collect_occurrences(program)
+        .into_iter()
+        .filter(|occ| occ.matches(&target))
+        .map(|occ| DocumentHighlight {
+            range: span_to_range(text, &occ.span),
+            kind: Some(DocumentHighlightKind::READ),
+        })
+        .collect();
+
+    // The declaration site itself is a write.
+    if let Some(decl) = decl_range(text, &index, &target) {
+        highlights
+            .push(DocumentHighlight { range: decl, kind: Some(DocumentHighlightKind::WRITE) });
+    }
+
+    dedup_highlights(&mut highlights);
+    highlights
 }
 
 /// The document outline: top-level `let` bindings, stages, and pipelines in
@@ -343,6 +377,21 @@ fn dedup_ranges(ranges: &mut Vec<Range>) {
     });
 }
 
+/// Remove highlights that cover a range already seen, preserving first-seen order
+/// (so a use's `READ` wins over a coincident declaration `WRITE`, which only
+/// happens for the degenerate self-referential case).
+fn dedup_highlights(highlights: &mut Vec<DocumentHighlight>) {
+    let mut seen = Vec::new();
+    highlights.retain(|h| {
+        if seen.contains(&h.range) {
+            false
+        } else {
+            seen.push(h.range);
+            true
+        }
+    });
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -439,6 +488,37 @@ mod tests {
         let text = "import \"git\" as g;\nlet v = g.sha();";
         let program = parse(text);
         assert!(references(text, at(text, "as g"), Some(&program), true).is_empty());
+    }
+
+    #[test]
+    fn highlights_mark_declaration_as_write_and_uses_as_read() {
+        let text = "let name = \"demo\";\nlet a = name;\nlet b = name;";
+        let program = parse(text);
+        // Cursor on a use of `name`.
+        let hl = highlights(text, at_last(text, "name"), Some(&program));
+        assert_eq!(hl.len(), 3, "declaration plus two uses");
+        let writes = hl.iter().filter(|h| h.kind == Some(DocumentHighlightKind::WRITE)).count();
+        let reads = hl.iter().filter(|h| h.kind == Some(DocumentHighlightKind::READ)).count();
+        assert_eq!(writes, 1, "the declaration is the only write");
+        assert_eq!(reads, 2, "both uses are reads");
+        // The write lands on the declared `name`.
+        let decl = at(text, "name");
+        assert!(
+            hl.iter()
+                .any(|h| h.kind == Some(DocumentHighlightKind::WRITE) && h.range.start == decl)
+        );
+    }
+
+    #[test]
+    fn highlights_on_alias_or_literal_are_empty() {
+        let text = "import \"git\" as g;\nlet v = g.sha();";
+        let program = parse(text);
+        // An import alias is navigable but has no tracked occurrences to highlight.
+        assert!(highlights(text, at(text, "as g"), Some(&program)).is_empty());
+        // A non-symbol position yields nothing.
+        assert!(
+            highlights("let x = 1;", Position::new(0, 8), Some(&parse("let x = 1;"))).is_empty()
+        );
     }
 
     #[test]
