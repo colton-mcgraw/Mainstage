@@ -60,6 +60,11 @@ describe(
     before(async () => {
       // Spawn the real server the way `ServerOptions` does (stdio transport).
       child = spawn(BIN as string, [], { stdio: ["pipe", "pipe", "pipe"] });
+      // Teardown sends an Exit notification and then kills the process; that
+      // write can race the server's exit and surface as EPIPE on the stdin
+      // pipe. Swallow it so it never becomes an unhandledRejection after the
+      // test has ended.
+      child.stdin.on("error", () => {});
       connection = createProtocolConnection(
         new StreamMessageReader(child.stdout),
         new StreamMessageWriter(child.stdin),
