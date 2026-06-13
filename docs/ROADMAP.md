@@ -367,10 +367,10 @@ Harden the runtime against malformed input and interruption. Output: no panics o
 
 Make day-to-day use pleasant. Output: clear, configurable terminal output and convenience commands.
 
-- [ ] TTY-aware colored output with `--verbose`, `--quiet`, and `--no-color` controls (respecting `NO_COLOR`)
-- [ ] `--dry-run` — show the planned execution order and which stages would run or skip, without executing
-- [ ] `mainstage watch` — re-run the pipeline when inputs change
-- [ ] Refined error formatting (source snippets with carets) and an end-of-run timing summary per stage
+- [x] TTY-aware colored output with `--verbose`, `--quiet`, and `--no-color` controls (respecting `NO_COLOR`)
+- [x] `--dry-run` — show the planned execution order and which stages would run or skip, without executing
+- [x] `mainstage watch` — re-run the pipeline when inputs change
+- [x] Refined error formatting (source snippets with carets) and an end-of-run timing summary per stage
 
 ---
 

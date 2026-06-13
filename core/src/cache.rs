@@ -354,6 +354,15 @@ pub fn output_paths(value: &Value) -> Vec<String> {
     paths.into_iter().map(|p| p.to_string_lossy().into_owned()).collect()
 }
 
+/// Collect the resolved file paths referenced by an evaluated `inputs` value, in the
+/// same way change detection gathers them. Used by `--dry-run` and `watch` to learn
+/// which files a stage reads.
+pub fn input_paths(value: &Value) -> Vec<PathBuf> {
+    let mut paths = Vec::new();
+    collect_paths(value, &mut paths);
+    paths
+}
+
 // ── Helpers ──────────────────────────────────────────────────────────────────────
 
 fn collect_paths(value: &Value, out: &mut Vec<PathBuf>) {
