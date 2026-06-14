@@ -1,6 +1,6 @@
 # Mainstage Source-Available License (Version 1.0)
 
-Copyright (c) 2026 Colton McGraw (github.com/ColtMcG1)
+Copyright (c) 2026 Colton McGraw (github.com/colton-mcgraw)
 
 ## Grant of Rights
 

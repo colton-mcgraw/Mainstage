@@ -52,7 +52,7 @@ stage package {
 - **[Roadmap](ROADMAP.md)** — where the project is headed.
 
 This site renders the references in the repository's
-[`docs/`](https://github.com/ColtMcG1/mainstage/tree/main/docs) directory. The source,
-the runnable [examples gallery](https://github.com/ColtMcG1/mainstage/tree/main/examples),
-and the [contributing guide](https://github.com/ColtMcG1/mainstage/blob/main/CONTRIBUTING.md)
-all live on [GitHub](https://github.com/ColtMcG1/mainstage).
+[`docs/`](https://github.com/colton-mcgraw/mainstage/tree/main/docs) directory. The source,
+the runnable [examples gallery](https://github.com/colton-mcgraw/mainstage/tree/main/examples),
+and the [contributing guide](https://github.com/colton-mcgraw/mainstage/blob/main/CONTRIBUTING.md)
+all live on [GitHub](https://github.com/colton-mcgraw/mainstage).

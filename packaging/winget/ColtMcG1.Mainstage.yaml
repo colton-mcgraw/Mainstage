@@ -1,6 +1,6 @@
 # winget version manifest. `PackageVersion` and the installer SHA-256 are
 # filled in at release time from the GitHub Release checksums.
-PackageIdentifier: ColtMcG1.Mainstage
+PackageIdentifier: colton-mcgraw.Mainstage
 PackageVersion: 0.1.0
 DefaultLocale: en-US
 ManifestType: version

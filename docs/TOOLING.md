@@ -67,9 +67,9 @@ server ships separately from the CLI.
 #### VS Code
 
 Install the **Mainstage** extension from the
-[Visual Studio Marketplace](https://marketplace.visualstudio.com/items?itemName=ColtMcG1.mainstage)
-or [Open VSX](https://open-vsx.org/extension/ColtMcG1/mainstage) (search for
-"Mainstage", or run `code --install-extension ColtMcG1.mainstage`). It registers the
+[Visual Studio Marketplace](https://marketplace.visualstudio.com/items?itemName=colton-mcgraw.mainstage)
+or [Open VSX](https://open-vsx.org/extension/colton-mcgraw/mainstage) (search for
+"Mainstage", or run `code --install-extension colton-mcgraw.mainstage`). It registers the
 `.ms` language and manages the language server for you.
 
 The extension needs no configuration when a `mainstage` or `mainstage-lsp` binary is

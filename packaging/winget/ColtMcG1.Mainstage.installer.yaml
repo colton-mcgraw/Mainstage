@@ -1,4 +1,4 @@
-PackageIdentifier: ColtMcG1.Mainstage
+PackageIdentifier: colton-mcgraw.Mainstage
 PackageVersion: 0.1.0
 InstallerType: zip
 NestedInstallerType: portable
@@ -9,7 +9,7 @@ NestedInstallerFiles:
     PortableCommandAlias: mainstage-lsp
 Installers:
   - Architecture: x64
-    InstallerUrl: https://github.com/ColtMcG1/mainstage/releases/download/v0.1.0/mainstage-v0.1.0-x86_64-pc-windows-msvc.zip
+    InstallerUrl: https://github.com/colton-mcgraw/mainstage/releases/download/v0.1.0/mainstage-v0.1.0-x86_64-pc-windows-msvc.zip
     InstallerSha256: REPLACE_WITH_SHA256_X86_64_WINDOWS_MSVC
 ManifestType: installer
 ManifestVersion: 1.6.0

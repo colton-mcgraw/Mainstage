@@ -3,7 +3,7 @@
   "displayName": "Mainstage",
   "description": "Language support for Mainstage (.ms) build scripts: diagnostics, completion, hover, signature help, navigation, and formatting via the Mainstage language server.",
   "version": "0.1.0",
-  "publisher": "ColtMcG1",
+  "publisher": "colton-mcgraw",
   "license": "SEE LICENSE IN LICENSE.md",
   "icon": "images/icon.png",
   "engines": {
@@ -21,14 +21,14 @@
     "language server",
     "lsp"
   ],
-  "homepage": "https://github.com/ColtMcG1/mainstage",
+  "homepage": "https://github.com/colton-mcgraw/mainstage",
   "repository": {
     "type": "git",
-    "url": "https://github.com/ColtMcG1/mainstage.git",
+    "url": "https://github.com/colton-mcgraw/mainstage.git",
     "directory": "editors/vscode"
   },
   "bugs": {
-    "url": "https://github.com/ColtMcG1/mainstage/issues"
+    "url": "https://github.com/colton-mcgraw/mainstage/issues"
   },
   "galleryBanner": {
     "color": "#4F46E5",

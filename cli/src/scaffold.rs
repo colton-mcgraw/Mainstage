@@ -197,9 +197,9 @@ fn render_readme(name: &str, script: &str) -> String {
     format!(
         r#"# {name}
 
-A [Mainstage](https://github.com/ColtMcG1/mainstage) plugin — an external module
+A [Mainstage](https://github.com/colton-mcgraw/mainstage) plugin — an external module
 callable from `.ms` scripts. It speaks the newline-delimited JSON protocol over
-stdio; see [`docs/PLUGINS.md`](https://github.com/ColtMcG1/mainstage/blob/main/docs/PLUGINS.md)
+stdio; see [`docs/PLUGINS.md`](https://github.com/colton-mcgraw/mainstage/blob/main/docs/PLUGINS.md)
 for the full specification.
 
 ## Methods

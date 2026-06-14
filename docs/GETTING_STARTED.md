@@ -18,7 +18,7 @@ Pick whichever fits your platform — full options are in the
 
 ```sh
 # Linux / macOS — downloads the right binary and verifies its checksum
-curl -fsSL https://raw.githubusercontent.com/ColtMcG1/mainstage/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/colton-mcgraw/mainstage/main/install.sh | sh
 
 # Cargo (any platform with Rust stable, edition 2024)
 cargo install mainstage

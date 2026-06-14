@@ -14,7 +14,7 @@ By contributing you agree your contributions are licensed under the
 - **Node.js 20+** — only if you touch the VS Code extension under `editors/vscode`.
 
 ```sh
-git clone https://github.com/ColtMcG1/mainstage.git
+git clone https://github.com/colton-mcgraw/mainstage.git
 cd mainstage
 cargo build --workspace
 ```

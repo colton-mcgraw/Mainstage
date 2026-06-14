@@ -1,11 +1,11 @@
 {
     "version": "0.1.0",
     "description": "Declarative build and automation language",
-    "homepage": "https://github.com/ColtMcG1/mainstage",
-    "license": "https://github.com/ColtMcG1/mainstage/blob/main/LICENSE.md",
+    "homepage": "https://github.com/colton-mcgraw/mainstage",
+    "license": "https://github.com/colton-mcgraw/mainstage/blob/main/LICENSE.md",
     "architecture": {
         "64bit": {
-            "url": "https://github.com/ColtMcG1/mainstage/releases/download/v0.1.0/mainstage-v0.1.0-x86_64-pc-windows-msvc.zip",
+            "url": "https://github.com/colton-mcgraw/mainstage/releases/download/v0.1.0/mainstage-v0.1.0-x86_64-pc-windows-msvc.zip",
             "hash": "REPLACE_WITH_SHA256_X86_64_WINDOWS_MSVC",
             "extract_dir": "mainstage-v0.1.0-x86_64-pc-windows-msvc"
         }
@@ -15,12 +15,12 @@
         "mainstage-lsp.exe"
     ],
     "checkver": {
-        "github": "https://github.com/ColtMcG1/mainstage"
+        "github": "https://github.com/colton-mcgraw/mainstage"
     },
     "autoupdate": {
         "architecture": {
             "64bit": {
-                "url": "https://github.com/ColtMcG1/mainstage/releases/download/v$version/mainstage-v$version-x86_64-pc-windows-msvc.zip",
+                "url": "https://github.com/colton-mcgraw/mainstage/releases/download/v$version/mainstage-v$version-x86_64-pc-windows-msvc.zip",
                 "extract_dir": "mainstage-v$version-x86_64-pc-windows-msvc"
             }
         },

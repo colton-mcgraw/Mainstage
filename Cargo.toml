@@ -8,9 +8,9 @@ members = [
 
 [workspace.package]
 edition = "2024"
-authors = ["Colton McGraw <https://github.com/ColtMcG1>"]
+authors = ["Colton McGraw <https://github.com/colton-mcgraw>"]
 license-file = "LICENSE.md"
-repository = "https://github.com/ColtMcG1/mainstage"
+repository = "https://github.com/colton-mcgraw/mainstage"
 
 [workspace.dependencies]
 mainstage_core = { path = "core", version = "0.1.0" }

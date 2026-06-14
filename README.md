@@ -2,7 +2,7 @@
 
 ![Mainstage](./media/mainstage_logo_text.svg)
 
-[![License](https://img.shields.io/badge/License-Source_Available-blue.svg)](LICENSE.md) [![GitHub issues](https://img.shields.io/github/issues/ColtMcG1/mainstage)](https://github.com/ColtMcG1/mainstage/issues) [![GitHub forks](https://img.shields.io/github/forks/ColtMcG1/mainstage)](https://github.com/ColtMcG1/mainstage/forks) [![GitHub stars](https://img.shields.io/github/stars/ColtMcG1/mainstage)](https://github.com/ColtMcG1/mainstage/stargazers)
+[![License](https://img.shields.io/badge/License-Source_Available-blue.svg)](LICENSE.md) [![GitHub issues](https://img.shields.io/github/issues/colton-mcgraw/mainstage)](https://github.com/colton-mcgraw/mainstage/issues) [![GitHub forks](https://img.shields.io/github/forks/colton-mcgraw/mainstage)](https://github.com/colton-mcgraw/mainstage/forks) [![GitHub stars](https://img.shields.io/github/stars/colton-mcgraw/mainstage)](https://github.com/colton-mcgraw/mainstage/stargazers)
 
 > **Status:** Beta — usable today. The language, runtime, editor tooling, and
 > cross-platform distribution are all in place; remaining work is polish and
@@ -159,7 +159,7 @@ macOS, and Windows.
 verifies its checksum:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/ColtMcG1/mainstage/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/colton-mcgraw/mainstage/main/install.sh | sh
 ```
 
 Set `MAINSTAGE_VERSION` to pin a release or `MAINSTAGE_BIN_DIR` to change the install
@@ -174,27 +174,27 @@ cargo install mainstage
 **Homebrew** (macOS / Linux):
 
 ```sh
-brew install ColtMcG1/tap/mainstage
+brew install colton-mcgraw/tap/mainstage
 ```
 
 **Windows** — Scoop or winget:
 
 ```sh
 scoop install mainstage
-winget install ColtMcG1.Mainstage
+winget install colton-mcgraw.Mainstage
 ```
 
 **Docker** — the image's entry point is the CLI; mount your project at `/work`:
 
 ```sh
-docker run --rm -v "$PWD:/work" ghcr.io/coltmcg1/mainstage run release
+docker run --rm -v "$PWD:/work" ghcr.io/colton-mcgraw/mainstage run release
 ```
 
 ## Editor Support
 
 Install the **Mainstage** extension for VS Code from the
-[Visual Studio Marketplace](https://marketplace.visualstudio.com/items?itemName=ColtMcG1.mainstage)
-or [Open VSX](https://open-vsx.org/extension/ColtMcG1/mainstage) for diagnostics,
+[Visual Studio Marketplace](https://marketplace.visualstudio.com/items?itemName=colton-mcgraw.mainstage)
+or [Open VSX](https://open-vsx.org/extension/colton-mcgraw/mainstage) for diagnostics,
 completion, hover, signature help, navigation, and formatting. It auto-discovers the
 `mainstage lsp` server, so no configuration is needed once the CLI is installed.
 
@@ -206,7 +206,7 @@ Other editors connect to the same language server over stdio — see
 Requires Rust stable (edition 2024).
 
 ```sh
-git clone https://github.com/ColtMcG1/mainstage.git
+git clone https://github.com/colton-mcgraw/mainstage.git
 cd mainstage
 cargo build --release
 ```
@@ -224,7 +224,7 @@ The CLI binary is at `target/release/mainstage`.
 ## Documentation
 
 The full documentation is also published as a browsable site at
-**[coltmcg1.github.io/mainstage](https://coltmcg1.github.io/mainstage/)**.
+**[colton-mcgraw.github.io/mainstage](https://colton-mcgraw.github.io/mainstage/)**.
 
 - [Getting Started](docs/GETTING_STARTED.md) — install Mainstage and build your first pipeline
 - [Examples Gallery](examples/) — runnable example projects beyond `main.ms`

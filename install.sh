@@ -1,7 +1,7 @@
 #!/bin/sh
 # Mainstage installer.
 #
-#   curl -fsSL https://raw.githubusercontent.com/ColtMcG1/mainstage/main/install.sh | sh
+#   curl -fsSL https://raw.githubusercontent.com/colton-mcgraw/mainstage/main/install.sh | sh
 #
 # Downloads the release binary matching the host platform, verifies its SHA-256
 # checksum, and installs `mainstage` and `mainstage-lsp` into a bin directory.
@@ -9,11 +9,11 @@
 # Environment overrides:
 #   MAINSTAGE_VERSION   release tag to install (default: latest, e.g. v0.1.0)
 #   MAINSTAGE_BIN_DIR   install directory     (default: $HOME/.local/bin)
-#   MAINSTAGE_REPO      owner/repo to fetch from (default: ColtMcG1/mainstage)
+#   MAINSTAGE_REPO      owner/repo to fetch from (default: colton-mcgraw/mainstage)
 
 set -eu
 
-REPO="${MAINSTAGE_REPO:-ColtMcG1/mainstage}"
+REPO="${MAINSTAGE_REPO:-colton-mcgraw/mainstage}"
 BIN_DIR="${MAINSTAGE_BIN_DIR:-$HOME/.local/bin}"
 
 err() {

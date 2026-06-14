@@ -1,12 +1,12 @@
-PackageIdentifier: ColtMcG1.Mainstage
+PackageIdentifier: colton-mcgraw.Mainstage
 PackageVersion: 0.1.0
 PackageLocale: en-US
 Publisher: Colton McGraw
-PublisherUrl: https://github.com/ColtMcG1
+PublisherUrl: https://github.com/colton-mcgraw
 PackageName: Mainstage
-PackageUrl: https://github.com/ColtMcG1/mainstage
+PackageUrl: https://github.com/colton-mcgraw/mainstage
 License: Mainstage Source-Available License
-LicenseUrl: https://github.com/ColtMcG1/mainstage/blob/main/LICENSE.md
+LicenseUrl: https://github.com/colton-mcgraw/mainstage/blob/main/LICENSE.md
 ShortDescription: Declarative build and automation language
 Tags:
   - build

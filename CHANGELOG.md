@@ -53,4 +53,4 @@ While Mainstage is pre-`1.0.0`, breaking changes may land in minor releases; onc
   GitHub Pages), and a [`CONTRIBUTING.md`](CONTRIBUTING.md) covering the workspace
   layout, tests, and CI gates.
 
-[Unreleased]: https://github.com/ColtMcG1/mainstage/commits/main
+[Unreleased]: https://github.com/colton-mcgraw/mainstage/commits/main

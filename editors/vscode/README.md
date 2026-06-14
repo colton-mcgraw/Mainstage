@@ -1,6 +1,6 @@
 # Mainstage for VS Code
 
-Language support for [Mainstage](https://github.com/ColtMcG1/mainstage) build
+Language support for [Mainstage](https://github.com/colton-mcgraw/mainstage) build
 scripts (`.ms`). This extension is a thin client for the **Mainstage language
 server** (`mainstage lsp`), so every editor feature matches the `mainstage` CLI
 exactly — the same parser, analyzer, and module registry power both.
@@ -40,10 +40,10 @@ A `mainstage` binary is launched as `mainstage lsp`; a dedicated `mainstage-lsp`
 binary is launched directly.
 
 Install the CLI with any method from the
-[project README](https://github.com/ColtMcG1/mainstage#installation), e.g.:
+[project README](https://github.com/colton-mcgraw/mainstage#installation), e.g.:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/ColtMcG1/mainstage/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/colton-mcgraw/mainstage/main/install.sh | sh
 # or
 cargo install mainstage
 ```

@@ -20,7 +20,7 @@ import { resolveServer as resolve, ResolvedServer, ResolverHost } from "./server
 let client: LanguageClient | undefined;
 const outputChannel = window.createOutputChannel("Mainstage Language Server");
 
-const INSTALL_DOCS = "https://github.com/ColtMcG1/mainstage#installation";
+const INSTALL_DOCS = "https://github.com/colton-mcgraw/mainstage#installation";
 
 export async function activate(context: ExtensionContext): Promise<void> {
   context.subscriptions.push(
