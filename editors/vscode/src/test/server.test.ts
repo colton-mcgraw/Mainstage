@@ -83,7 +83,10 @@ describe(
     after(async () => {
       try {
         await connection.sendRequest(ShutdownRequest.type, undefined);
-        connection.sendNotification(ExitNotification.type);
+        // Await the notification so an EPIPE on the write — the server may exit
+        // and close stdin the moment it sees Exit — is caught here rather than
+        // surfacing as an unhandledRejection after the test has ended.
+        await connection.sendNotification(ExitNotification.type);
       } catch {
         // The server may already be gone; the kill below is the backstop.
       }
