@@ -13,7 +13,7 @@ license-file = "LICENSE.md"
 repository = "https://github.com/colton-mcgraw/mainstage"
 
 [workspace.dependencies]
-mainstage_core = { path = "core", version = "0.1.0" }
+mainstage_core = { path = "core", version = "1.0.0" }
 tokio = { version = "1", features = ["full"] }
 tower-lsp = "0.20"
 serde_json = "1"
