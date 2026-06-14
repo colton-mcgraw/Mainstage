@@ -1,13 +1,13 @@
 {
-    "version": "0.1.0",
+    "version": "1.0.0",
     "description": "Declarative build and automation language",
     "homepage": "https://github.com/colton-mcgraw/mainstage",
     "license": "https://github.com/colton-mcgraw/mainstage/blob/main/LICENSE.md",
     "architecture": {
         "64bit": {
-            "url": "https://github.com/colton-mcgraw/mainstage/releases/download/v0.1.0/mainstage-v0.1.0-x86_64-pc-windows-msvc.zip",
-            "hash": "REPLACE_WITH_SHA256_X86_64_WINDOWS_MSVC",
-            "extract_dir": "mainstage-v0.1.0-x86_64-pc-windows-msvc"
+            "url": "https://github.com/colton-mcgraw/mainstage/releases/download/v1.0.0/mainstage-v1.0.0-x86_64-pc-windows-msvc.zip",
+            "hash": "cb567f388beac28f6ec6d663e88744221d2f1cf542978821fd49e8b43f19b78f",
+            "extract_dir": "mainstage-v1.0.0-x86_64-pc-windows-msvc"
         }
     },
     "bin": [
