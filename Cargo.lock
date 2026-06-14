@@ -938,7 +938,7 @@ dependencies = [
 
 [[package]]
 name = "mainstage"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "chrono",
  "clap",
@@ -950,7 +950,7 @@ dependencies = [
 
 [[package]]
 name = "mainstage_core"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "chrono",
  "criterion",
@@ -968,7 +968,7 @@ dependencies = [
 
 [[package]]
 name = "mainstage_lsp"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "futures",
  "mainstage_core",

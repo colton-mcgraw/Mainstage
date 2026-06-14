@@ -2,7 +2,7 @@
   "name": "mainstage",
   "displayName": "Mainstage",
   "description": "Language support for Mainstage (.ms) build scripts: diagnostics, completion, hover, signature help, navigation, and formatting via the Mainstage language server.",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "publisher": "colton-mcgraw",
   "license": "SEE LICENSE IN LICENSE.md",
   "icon": "images/icon.png",

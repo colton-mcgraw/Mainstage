@@ -1,6 +1,6 @@
 [package]
 name = "mainstage"
-version = "0.1.0"
+version = "1.0.0"
 edition.workspace = true
 authors.workspace = true
 license-file.workspace = true
@@ -13,7 +13,7 @@ path = "src/main.rs"
 
 [dependencies]
 mainstage_core.workspace = true
-mainstage_lsp = { path = "../lsp", version = "0.1.0" }
+mainstage_lsp = { path = "../lsp", version = "1.0.0" }
 clap = { version = "4.5.49", features = ["derive"] }
 console = "0.16.1"
 chrono = "0.4.24"
