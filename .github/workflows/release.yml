@@ -22,8 +22,11 @@ jobs:
             os: ubuntu-latest
           - target: x86_64-unknown-linux-musl
             os: ubuntu-latest
+          # GitHub no longer schedules the free macos-13 (Intel) image, so the
+          # x86_64 build cross-compiles on an Apple-Silicon runner — the SDK
+          # links both arches and this job only builds, never runs, the binary.
           - target: x86_64-apple-darwin
-            os: macos-13
+            os: macos-latest
           - target: aarch64-apple-darwin
             os: macos-latest
           - target: x86_64-pc-windows-msvc
@@ -98,7 +101,18 @@ jobs:
           path: dist
           merge-multiple: true
 
-      - name: Create GitHub Release
+      - name: Publish GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "${{ github.ref_name }}" dist/* --repo "${{ github.repository }}" --title "${{ github.ref_name }}" --generate-notes --verify-tag
+        run: |
+          set -euo pipefail
+          tag="${{ github.ref_name }}"
+          repo="${{ github.repository }}"
+          # Upsert: if a release for this tag already exists (e.g. one created
+          # by hand with custom notes), attach/replace the built archives on it
+          # and leave its body intact; otherwise create it with generated notes.
+          if gh release view "$tag" --repo "$repo" >/dev/null 2>&1; then
+            gh release upload "$tag" dist/* --repo "$repo" --clobber
+          else
+            gh release create "$tag" dist/* --repo "$repo" --title "$tag" --generate-notes --verify-tag
+          fi
