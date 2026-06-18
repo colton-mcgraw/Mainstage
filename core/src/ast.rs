@@ -340,6 +340,8 @@ pub enum Step {
     If(IfStep),
     /// `for <var> in <expr> { … }` — iterate over a fileset.
     For(ForStep),
+    /// `try { … }` — run the inner steps, swallowing a failure so the stage continues.
+    Try(TryStep),
 }
 
 impl Step {
@@ -354,6 +356,7 @@ impl Step {
             Step::Write(s) => &s.span,
             Step::If(s) => &s.span,
             Step::For(s) => &s.span,
+            Step::Try(s) => &s.span,
         }
     }
 }
@@ -419,6 +422,15 @@ pub struct ForStep {
     /// The loop variable name, available as `<var>.*` inside the body.
     pub var: String,
     pub iterable: Expr,
+    pub steps: Vec<Step>,
+    pub span: Span,
+}
+
+/// `try { … }` — executes its steps in order but does not propagate a failure: if a step
+/// fails, the remaining steps in the block are skipped and the stage continues as if the
+/// block succeeded. The native, checkable replacement for the `$ sh -c "… || true"` idiom.
+#[derive(Debug, Clone)]
+pub struct TryStep {
     pub steps: Vec<Step>,
     pub span: Span,
 }

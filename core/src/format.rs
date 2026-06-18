@@ -298,6 +298,7 @@ impl Printer<'_> {
             }
             Step::If(s) => self.if_step(s),
             Step::For(s) => self.for_step(s),
+            Step::Try(s) => self.try_step(s),
         }
     }
 
@@ -325,6 +326,17 @@ impl Printer<'_> {
     fn for_step(&mut self, s: &ForStep) {
         self.emit_leading(&s.span);
         self.push_line(&format!("for {} in {} {{", s.var, render_expr(&s.iterable)));
+        self.indent += 1;
+        for step in &s.steps {
+            self.step(step);
+        }
+        self.indent -= 1;
+        self.close_block(&s.span);
+    }
+
+    fn try_step(&mut self, s: &TryStep) {
+        self.emit_leading(&s.span);
+        self.push_line("try {");
         self.indent += 1;
         for step in &s.steps {
             self.step(step);
@@ -504,6 +516,13 @@ mod tests {
         let out = fmt(src);
         let expected = "stage build {\n    inputs: src\n    depends_on: [a, b]\n\n    steps {\n        $ make\n    }\n}\n";
         assert_eq!(out, expected);
+    }
+
+    #[test]
+    fn formats_try_step() {
+        let src = "stage s{steps{try{$ apt-get update\nmkdir \"x\"}}}";
+        let expected = "stage s {\n    steps {\n        try {\n            $ apt-get update\n            mkdir \"x\"\n        }\n    }\n}\n";
+        assert_eq!(fmt(src), expected);
     }
 
     #[test]

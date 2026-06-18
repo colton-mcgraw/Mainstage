@@ -441,6 +441,36 @@ fn depends_on_self_errors() {
 }
 
 #[test]
+fn try_block_resolves_inner_steps() {
+    // Name resolution must descend into `try` blocks: an undefined identifier used by an
+    // inner step is still reported.
+    let diags = analyze_err(
+        r#"
+        stage s {
+            steps {
+                try { mkdir nope }
+            }
+        }
+        "#,
+    );
+    assert!(has_msg(&diags, "undefined name 'nope'"));
+}
+
+#[test]
+fn try_block_with_valid_steps_ok() {
+    analyze_ok(
+        r#"
+        let d = "x";
+        stage s {
+            steps {
+                try { mkdir d }
+            }
+        }
+        "#,
+    );
+}
+
+#[test]
 fn always_run_and_run_once_conflict_errors() {
     let diags = analyze_err(
         r#"

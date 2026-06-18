@@ -43,7 +43,7 @@ pipeline_on_success = { "on_success" ~ "{" ~ step* ~ "}" }
 
 // ── Steps ─────────────────────────────────────────────────────────────────────
 
-step        = _{ exec_step | copy_step | move_step | mkdir_step | delete_step | write_step | if_step | for_step }
+step        = _{ exec_step | copy_step | move_step | mkdir_step | delete_step | write_step | if_step | for_step | try_step }
 // Compound-atomic so horizontal whitespace is consumed explicitly (prevents
 // WHITESPACE from swallowing the newline that terminates the exec line).
 exec_step   = ${ "$" ~ (" " | "\t")* ~ exec_line }
@@ -57,6 +57,7 @@ if_step     = { "if" ~ condition ~ then_block ~ ("else" ~ else_block)? }
 then_block  = { "{" ~ step* ~ "}" }
 else_block  = { "{" ~ step* ~ "}" }
 for_step    = { "for" ~ ident ~ "in" ~ expr ~ "{" ~ step* ~ "}" }
+try_step    = { "try" ~ "{" ~ step* ~ "}" }
 
 // ── Expressions ───────────────────────────────────────────────────────────────
 // Order resolves ambiguity: more-specific alternatives first.

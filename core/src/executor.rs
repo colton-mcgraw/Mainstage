@@ -32,6 +32,7 @@ pub fn execute_step(step: &Step, ctx: &EvalContext) -> Result<()> {
         Step::Write(s) => write_step(s, ctx),
         Step::If(s) => if_step(s, ctx),
         Step::For(s) => for_step(s, ctx),
+        Step::Try(s) => try_step(s, ctx),
     }
 }
 
@@ -75,9 +76,7 @@ fn copy_step(s: &CopyStep, ctx: &EvalContext) -> Result<()> {
         copy_dir_recursive(&src, &dest, &s.span)
     } else {
         ensure_parent(&dest, &s.span)?;
-        std::fs::copy(&src, &dest).map(|_| ()).map_err(|e| {
-            step_err(format!("copy '{}' → '{}': {}", src.display(), dest.display(), e), &s.span)
-        })
+        copy_file_force(&src, &dest, &s.span)
     }
 }
 
@@ -143,6 +142,14 @@ fn for_step(s: &ForStep, ctx: &EvalContext) -> Result<()> {
         let iter_ctx = ctx.with_for_var(s.var.clone(), entry);
         execute_steps(&s.steps, &iter_ctx)?;
     }
+    Ok(())
+}
+
+fn try_step(s: &TryStep, ctx: &EvalContext) -> Result<()> {
+    // Best-effort: run the inner steps and swallow a failure so the stage continues.
+    // A failing step still short-circuits the remaining steps inside the block (as a
+    // normal sequence would), but the error is not propagated past `try`.
+    let _ = execute_steps(&s.steps, ctx);
     Ok(())
 }
 
@@ -272,7 +279,22 @@ fn ensure_parent(path: &Path, span: &Span) -> Result<()> {
     Ok(())
 }
 
-/// Recursively copy directory `src` into `dest`, creating `dest` if absent.
+/// Copy a single file, force-overwriting the destination — like `cp -f`. If the
+/// destination exists as a file it is removed first, so a read-only target (e.g. a
+/// firmware variable store copied from a read-only source, whose permission bits the
+/// previous copy carried over) can still be replaced instead of failing to open.
+fn copy_file_force(src: &Path, dest: &Path, span: &Span) -> Result<()> {
+    if dest.is_file() {
+        let _ = std::fs::remove_file(dest);
+    }
+    std::fs::copy(src, dest).map(|_| ()).map_err(|e| {
+        step_err(format!("copy '{}' → '{}': {}", src.display(), dest.display(), e), span)
+    })
+}
+
+/// Recursively copy directory `src` into `dest`, creating `dest` if absent. Existing
+/// files in `dest` are force-overwritten; files present only in `dest` are left in place
+/// (use an explicit `delete` before `copy` for a clean replacement).
 fn copy_dir_recursive(src: &Path, dest: &Path, span: &Span) -> Result<()> {
     fs_create_dir_all(dest, span)?;
     for entry in std::fs::read_dir(src)
@@ -287,12 +309,7 @@ fn copy_dir_recursive(src: &Path, dest: &Path, span: &Span) -> Result<()> {
         if ft.is_dir() {
             copy_dir_recursive(&entry.path(), &dst, span)?;
         } else {
-            std::fs::copy(entry.path(), &dst).map_err(|e| {
-                step_err(
-                    format!("copy '{}' → '{}': {}", entry.path().display(), dst.display(), e),
-                    span,
-                )
-            })?;
+            copy_file_force(&entry.path(), &dst, span)?;
         }
     }
     Ok(())
@@ -476,6 +493,70 @@ mod tests {
         // delete on missing path is a no-op
         execute_step(&Step::Delete(DeleteStep { path: path_expr, span }), &ctx)
             .expect("delete of missing path should be a no-op");
+    }
+
+    #[test]
+    fn try_swallows_failure_and_stops_block() {
+        // A failing step inside `try` does not propagate, but it does short-circuit the
+        // remaining steps within the same block.
+        let dir = std::env::temp_dir().join(format!("ms_try_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let marker = dir.join("after");
+        let _ = std::fs::remove_file(&marker);
+
+        let ctx = ctx_with(&[("m", marker.to_str().unwrap())]);
+        let sp = span();
+        let inner = vec![
+            // A program that does not exist → the step fails.
+            Step::Exec(ExecStep { command: "ms_no_such_binary_zzz".to_string(), span: sp.clone() }),
+            // Should NOT run, because the failing step short-circuits the block.
+            Step::Write(WriteStep {
+                path: Expr::Ident(IdentExpr { name: "m".to_string(), span: sp.clone() }),
+                content: StringExpr {
+                    parts: vec![StringPart::Literal("x".to_string())],
+                    span: sp.clone(),
+                },
+                span: sp.clone(),
+            }),
+        ];
+
+        // The try step itself succeeds (failure swallowed)...
+        execute_step(&Step::Try(TryStep { steps: inner, span: sp }), &ctx)
+            .expect("try must not propagate the inner failure");
+        // ...but the post-failure write inside the block did not run.
+        assert!(!marker.exists(), "steps after a failure inside try are skipped");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn copy_force_overwrites_readonly_destination() {
+        let dir = std::env::temp_dir().join(format!("ms_copyf_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let src = dir.join("src.bin");
+        let dest = dir.join("dest.bin");
+        std::fs::write(&src, "new").unwrap();
+        std::fs::write(&dest, "old").unwrap();
+
+        // Make the destination read-only — a plain open-for-write would fail.
+        let mut perms = std::fs::metadata(&dest).unwrap().permissions();
+        perms.set_readonly(true);
+        std::fs::set_permissions(&dest, perms).unwrap();
+
+        let ctx = ctx_with(&[("s", src.to_str().unwrap()), ("d", dest.to_str().unwrap())]);
+        let sp = span();
+        execute_step(
+            &Step::Copy(CopyStep {
+                src: Expr::Ident(IdentExpr { name: "s".to_string(), span: sp.clone() }),
+                dest: Expr::Ident(IdentExpr { name: "d".to_string(), span: sp.clone() }),
+                span: sp,
+            }),
+            &ctx,
+        )
+        .expect("copy must force-overwrite a read-only destination");
+        assert_eq!(std::fs::read_to_string(&dest).unwrap(), "new");
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

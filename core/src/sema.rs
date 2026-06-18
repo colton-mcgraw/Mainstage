@@ -294,6 +294,11 @@ impl Analyzer {
                     self.resolve_step(step, scope, &inner);
                 }
             }
+            Step::Try(s) => {
+                for step in &s.steps {
+                    self.resolve_step(step, scope, for_vars);
+                }
+            }
         }
     }
 

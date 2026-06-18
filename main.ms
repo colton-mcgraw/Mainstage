@@ -53,6 +53,10 @@ stage test {
 
     steps {
         $ cargo test
+        // Coverage is best-effort — don't fail the build if the tool isn't installed.
+        try {
+            $ cargo tarpaulin --out Html
+        }
     }
 }
 

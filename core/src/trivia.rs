@@ -433,6 +433,7 @@ fn collect_step_anchors(steps: &[Step], anchors: &mut Vec<Span>) {
                 collect_step_anchors(&s.else_steps, anchors);
             }
             Step::For(s) => collect_step_anchors(&s.steps, anchors),
+            Step::Try(s) => collect_step_anchors(&s.steps, anchors),
             _ => {}
         }
     }

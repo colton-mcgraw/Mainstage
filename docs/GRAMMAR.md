@@ -445,7 +445,7 @@ The runtime resolves the program name against the system `PATH`. Path separators
 
 ### `copy` — Copy Files
 
-Copies a file, file set, or directory to a destination path. Creates the destination directory if it does not exist.
+Copies a file, file set, or directory to a destination path. Creates the destination directory if it does not exist, and **force-overwrites** an existing destination file — even a read-only one (the destination is removed first, like `cp -f`) — so re-copying a file whose previous copy inherited read-only permissions does not fail. Copying a directory merges into the destination, overwriting files of the same name; files present only in the destination are left untouched. For a clean replacement, `delete` the destination first, then `copy`.
 
 ```text
 copy <src> to <dest>
@@ -454,6 +454,7 @@ copy <src> to <dest>
 ```mainstage
 copy assets to "${out}/assets/"
 copy "LICENSE" to "${out}/LICENSE"
+copy ovmf_vars to "build/run/OVMF_VARS.fd"   // overwrites the prior run's copy
 ```
 
 ### `move` — Move Files
@@ -567,6 +568,34 @@ stage compile {
 | `file.stem` | Filename without extension                   | `"main"`                   |
 | `file.ext`  | Extension without leading dot                | `"rs"`                     |
 | `file.dir`  | Parent directory path                        | `"src"`                    |
+
+### `try` — Tolerate a Failing Step
+
+Runs a block of steps but does **not** propagate a failure: if a step inside the block fails, the remaining steps in the block are skipped and the stage continues as though the block had succeeded. This is the native, checkable replacement for the `$ sh -c "… || true"` idiom — a best-effort step whose failure is acceptable.
+
+```text
+try {
+    <step>
+    ...
+}
+```
+
+```mainstage
+stage initialize {
+    steps {
+        // A refresh that may fail on an unrelated third-party source must not block
+        // the install that follows.
+        try {
+            $ apt-get update
+        }
+        $ apt-get install -y nasm gcc
+    }
+}
+```
+
+A step's captured output is still shown; only its non-zero exit is swallowed. `try` does not trigger the stage's `on_failure` block, because the stage itself does not fail.
+
+> **Prefer native steps over `$ sh -c`.** Reach for `copy` / `move` / `mkdir` / `delete` / `write` and `try` instead of shelling out: they run without a shell (no quoting or `PATH` surprises), are validated at analysis time, and work identically across platforms. For example, `sh -c "rm -rf d && mkdir -p d/sub && cp a d/sub/b"` is better written as `delete "d"` then `mkdir "d/sub"` then `copy a to "d/sub/b"`, and `sh -c "cmd || true"` as `try { $ cmd }`.
 
 ---
 
@@ -768,7 +797,8 @@ step            = exec_step
                 | delete_step
                 | write_step
                 | if_step
-                | for_step ;
+                | for_step
+                | try_step ;
 
 exec_step       = "$" token+ NEWLINE ;
 copy_step       = "copy" expr "to" expr ;
@@ -778,6 +808,7 @@ delete_step     = "delete" expr ;
 write_step      = "write" expr "content" ":" string ;
 if_step         = "if" condition "{" step* "}" ( "else" "{" step* "}" )? ;
 for_step        = "for" ident "in" expr "{" step* "}" ;
+try_step        = "try" "{" step* "}" ;
 
 (* Expressions *)
 expr            = string

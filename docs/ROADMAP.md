@@ -497,10 +497,10 @@ Make "never cache this" and "cache success without a file artifact" declared beh
 
 Bring the `sh -c` escape hatches back into native, checkable steps. Output: `main.ms` expresses its setup and staging file ops without dropping to a shell.
 
-- [ ] Step-level failure tolerance (a step modifier or `try { }` block) so a single step may continue on non-zero exit — replaces `sh -c "... || true"` (e.g. `apt-get update`)
-- [ ] Force/overwrite semantics for `copy` (overwrite existing files/dirs) — replaces `sh -c "cp -f ..."`
-- [ ] Confirm `delete` + `mkdir` + `copy` compose to replace the `sh -c "rm -rf ... && mkdir ... && cp ..."` ESP-staging steps; add any missing primitive uncovered
-- [ ] Document when to prefer native steps over `$ sh -c` and migrate the `main.ms` examples
+- [x] Step-level failure tolerance via a `try { }` block so steps may continue on non-zero exit — replaces `sh -c "... || true"` (e.g. `apt-get update`). A failure inside the block is swallowed (the stage does not fail and `on_failure` does not fire); captured output is still shown
+- [x] Force/overwrite semantics for `copy` (removes an existing destination first, so a read-only target is replaced) — replaces `sh -c "cp -f ..."`
+- [x] Confirmed `delete` + `mkdir` + `copy` compose to replace the `sh -c "rm -rf ... && mkdir ... && cp ..."` ESP-staging steps; `mkdir` already creates parents, `delete` is recursive, and `copy` now force-overwrites — no missing primitive
+- [x] Documented when to prefer native steps over `$ sh -c` (GRAMMAR.md) and added a `try` block to the example `main.ms`
 
 ---
 

@@ -227,6 +227,7 @@ impl Builder {
             Rule::write_step => Step::Write(self.build_write_step(pair)),
             Rule::if_step => Step::If(self.build_if_step(pair)),
             Rule::for_step => Step::For(self.build_for_step(pair)),
+            Rule::try_step => Step::Try(self.build_try_step(pair)),
             r => unreachable!("unexpected step rule: {:?}", r),
         }
     }
@@ -298,6 +299,12 @@ impl Builder {
         let iterable = self.build_expr(inner.next().unwrap());
         let steps = inner.map(|p| self.build_step(p)).collect();
         ForStep { var, iterable, steps, span }
+    }
+
+    fn build_try_step(&mut self, pair: Pair<Rule>) -> TryStep {
+        let span = self.span(&pair);
+        let steps = pair.into_inner().map(|p| self.build_step(p)).collect();
+        TryStep { steps, span }
     }
 
     // ── Expressions ───────────────────────────────────────────────────────────
