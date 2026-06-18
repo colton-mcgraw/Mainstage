@@ -441,6 +441,30 @@ fn depends_on_self_errors() {
 }
 
 #[test]
+fn always_run_and_run_once_conflict_errors() {
+    let diags = analyze_err(
+        r#"
+        stage setup {
+            always_run: true
+            run_once: true
+            steps { mkdir "x" }
+        }
+        "#,
+    );
+    assert!(has_msg(&diags, "both always_run and run_once"));
+}
+
+#[test]
+fn always_run_alone_ok() {
+    analyze_ok(r#"stage act { always_run: true steps { mkdir "x" } }"#);
+}
+
+#[test]
+fn run_once_alone_ok() {
+    analyze_ok(r#"stage setup { run_once: true steps { mkdir "x" } }"#);
+}
+
+#[test]
 fn depends_on_cycle_errors() {
     let diags = analyze_err(
         r#"

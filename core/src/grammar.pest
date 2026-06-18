@@ -21,11 +21,13 @@ project_field = { ident ~ ":" ~ expr ~ ","? }
 // ── Stage ─────────────────────────────────────────────────────────────────────
 
 stage_block         = { "stage" ~ ident ~ "{" ~ stage_field* ~ "}" }
-stage_field         = _{ stage_inputs | stage_outputs | stage_depends_on | stage_allow_failure | steps_block | stage_on_failure }
+stage_field         = _{ stage_inputs | stage_outputs | stage_depends_on | stage_allow_failure | stage_always_run | stage_run_once | steps_block | stage_on_failure }
 stage_inputs        = { "inputs" ~ ":" ~ expr ~ ","? }
 stage_outputs       = { "outputs" ~ ":" ~ expr ~ ","? }
 stage_depends_on    = { "depends_on" ~ ":" ~ "[" ~ (ident ~ ("," ~ ident)* ~ ","?)? ~ "]" ~ ","? }
 stage_allow_failure = { "allow_failure" ~ ":" ~ bool_lit ~ ","? }
+stage_always_run    = { "always_run" ~ ":" ~ bool_lit ~ ","? }
+stage_run_once      = { "run_once" ~ ":" ~ bool_lit ~ ","? }
 steps_block         = { "steps" ~ "{" ~ step* ~ "}" }
 stage_on_failure    = { "on_failure" ~ "{" ~ step* ~ "}" }
 

@@ -276,6 +276,27 @@ fn default_jobs() -> usize {
     std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1)
 }
 
+/// The inputs value a stage's change detection should fingerprint, or `None` when the
+/// stage should run unconditionally. This is the single place the Phase 35 caching
+/// knobs are reconciled, so the runner and `--dry-run` agree:
+///
+/// - `always_run` → `None`: never skipped, never cached (the explicit action-stage form).
+/// - explicit `inputs` → those inputs: ordinary content-based change detection.
+/// - `run_once` with no inputs → a stable empty "stamp" set: the stage records success
+///   in the cache and is skipped on re-run until the cache is cleared.
+/// - otherwise (no inputs, not `run_once`) → `None`: the Phase 7 "always runs" default.
+fn change_detection_inputs(stage: &StageBlock, stage_inputs: &Option<Value>) -> Option<Value> {
+    if stage.always_run {
+        None
+    } else if let Some(inputs) = stage_inputs {
+        Some(inputs.clone())
+    } else if stage.run_once {
+        Some(Value::List(Vec::new()))
+    } else {
+        None
+    }
+}
+
 // ── Planning (dry-run / watch) ───────────────────────────────────────────────────
 
 /// Whether a stage would run or be skipped on the next invocation.
@@ -350,17 +371,17 @@ pub fn plan_pipeline(
         let outputs_value = stage_ctx.stage_outputs.clone();
         let output_strs = outputs_value.as_ref().map(cache::output_paths).unwrap_or_default();
 
-        let status = match &stage_ctx.stage_inputs {
+        let status = match change_detection_inputs(stage, &stage_ctx.stage_inputs) {
             Some(inputs_val) => {
                 let prior = cache.input_meta(name);
-                let fp = cache::fingerprint_inputs(inputs_val, &prior, &run_cache);
+                let fp = cache::fingerprint_inputs(&inputs_val, &prior, &run_cache);
                 if cache.is_fresh(name, fp.digest(), &project_dir) {
                     PlanStatus::Skip
                 } else {
                     PlanStatus::Run
                 }
             }
-            // A stage with no inputs always runs.
+            // `always_run`, or a plain no-inputs stage (Phase 7 default): always runs.
             None => PlanStatus::Run,
         };
 
@@ -771,7 +792,8 @@ fn run_one_stage(
     // is unchanged and its outputs are all present. The prior run's per-file metadata is
     // snapshotted under the lock so hashing itself happens lock-free.
     let start = std::time::Instant::now();
-    let fingerprint = stage_ctx.stage_inputs.as_ref().map(|inputs| {
+    let detect_inputs = change_detection_inputs(stage, &stage_ctx.stage_inputs);
+    let fingerprint = detect_inputs.as_ref().map(|inputs| {
         let prior = cache.lock().unwrap().input_meta(name);
         cache::fingerprint_inputs(inputs, &prior, run_cache)
     });

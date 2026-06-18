@@ -86,6 +86,13 @@ pub struct StageBlock {
     pub depends_on: Vec<StageDep>,
     /// When `true`, a non-zero exit from this stage does not cancel downstream stages.
     pub allow_failure: bool,
+    /// When `true`, the stage runs on every invocation, bypassing change detection —
+    /// the explicit form of an action stage (e.g. `run`) that must never be cached.
+    pub always_run: bool,
+    /// When `true`, the stage's success is recorded in the cache even with no file
+    /// `outputs`, so a side-effecting setup stage (e.g. `initialize`) runs once and is
+    /// skipped thereafter until its inputs change or the cache is cleared.
+    pub run_once: bool,
     pub steps: Vec<Step>,
     /// Steps executed when the main `steps` block fails, before failure propagates.
     pub on_failure: Vec<Step>,

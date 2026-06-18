@@ -196,6 +196,14 @@ impl Printer<'_> {
             self.push_line("allow_failure: true");
             wrote = true;
         }
+        if s.always_run {
+            self.push_line("always_run: true");
+            wrote = true;
+        }
+        if s.run_once {
+            self.push_line("run_once: true");
+            wrote = true;
+        }
         if !s.steps.is_empty() {
             if wrote {
                 self.blank();
@@ -496,6 +504,20 @@ mod tests {
         let out = fmt(src);
         let expected = "stage build {\n    inputs: src\n    depends_on: [a, b]\n\n    steps {\n        $ make\n    }\n}\n";
         assert_eq!(out, expected);
+    }
+
+    #[test]
+    fn formats_stage_caching_knobs() {
+        let src = "stage act{always_run:true steps{$ run\n}}";
+        assert_eq!(
+            fmt(src),
+            "stage act {\n    always_run: true\n\n    steps {\n        $ run\n    }\n}\n"
+        );
+        let src = "stage setup{run_once:true steps{$ install\n}}";
+        assert_eq!(
+            fmt(src),
+            "stage setup {\n    run_once: true\n\n    steps {\n        $ install\n    }\n}\n"
+        );
     }
 
     #[test]

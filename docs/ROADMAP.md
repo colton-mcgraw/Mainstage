@@ -486,10 +486,10 @@ Let stages declare ordering edges the file graph cannot infer. Output: `main.ms`
 
 Make "never cache this" and "cache success without a file artifact" declared behaviors instead of sentinel-file tricks. Output: the `run*` stages stop faking outputs, and `initialize` stops re-running `apt-get` on every invocation.
 
-- [ ] `always_run: true` stage field — the stage runs every invocation regardless of inputs/outputs; replaces the `outputs: ["build/run/.always"]` hack in `run` / `run_gui` / `run_arm64`
-- [ ] Success "stamp" semantics — a stage with side effects but no file outputs may record success in the cache so it is skipped on re-run (opt-in), covering the `initialize` apt-get case
-- [ ] Reconcile with the Phase 7 rule that empty-`inputs`/`outputs` stages always run; make the behavior explicit and documented rather than implicit
-- [ ] Reflect both states in `--dry-run` (would-run vs would-skip) and the end-of-run summary
+- [x] `always_run: true` stage field — the stage runs every invocation regardless of inputs/outputs; replaces the `outputs: ["build/run/.always"]` hack in `run` / `run_gui` / `run_arm64`
+- [x] Success "stamp" semantics via `run_once: true` — a stage with side effects but no file outputs records success in the cache (a stable empty-input stamp) so it is skipped on re-run, covering the `initialize` apt-get case
+- [x] Reconcile with the Phase 7 rule that empty-`inputs`/`outputs` stages always run; the default is documented explicitly and `always_run` / `run_once` make it adjustable (the two are mutually exclusive, checked in sema)
+- [x] Reflect both states in `--dry-run` (would-run vs would-skip) and the end-of-run summary — both consume the shared `change_detection_inputs` decision so the plan and the run agree
 
 ---
 

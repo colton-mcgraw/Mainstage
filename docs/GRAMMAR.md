@@ -160,12 +160,35 @@ stage <name> {
 | `outputs`       | `list`            | No       | Paths this stage produces. Used for change detection.     |
 | `depends_on`    | stage-name list   | No       | Explicit ordering edges to other stages (see below).      |
 | `allow_failure` | `bool`            | No       | If `true`, pipeline does not stop on stage failure.       |
+| `always_run`    | `bool`            | No       | If `true`, the stage runs every invocation (see below).   |
+| `run_once`      | `bool`            | No       | If `true`, the stage's success is cached without `outputs` (see below). |
 | `steps`         | block             | No       | Ordered steps to execute.                                 |
 | `on_failure`    | block             | No       | Steps to run if this stage fails. Always runs on failure. |
 
 A stage with no `steps` is valid — it acts as a grouping node in the dependency graph.
 
-**Change detection:** Before running a stage, the runtime hashes all `inputs`. If the hashes match the previous run and all `outputs` exist, the stage is skipped. Stages with no `inputs` or `outputs` declared always run.
+**Change detection:** Before running a stage, the runtime hashes all `inputs`. If the hashes match the previous run and all `outputs` exist, the stage is skipped. A stage with `inputs` but no `outputs` is skipped purely on its inputs being unchanged. A stage with **neither** `inputs` nor `outputs` has nothing to compare, so by default it runs on every invocation; `always_run` and `run_once` make that behavior explicit and adjustable.
+
+**`always_run`:** Forces the stage to run on every invocation, bypassing change detection even when it has unchanged `inputs` and present `outputs`. This is the explicit form of an *action* stage — booting an emulator, deploying, running a server — that must never be treated as cached. Prefer it over the older idiom of declaring an output path the steps never create.
+
+```mainstage
+stage run {
+    inputs:     ["build/app.efi"]
+    always_run: true            // an action, not a cached artifact — never skipped
+    steps { $ qemu-system-x86_64 -kernel build/app.efi }
+}
+```
+
+**`run_once`:** Records the stage's success in the cache even when it declares **no** `outputs`, so a side-effecting setup stage runs once and is skipped thereafter. It is the complement of `always_run`: instead of "always run", it means "run, then remember". The stamp is invalidated when the stage's `inputs` change (if it has any) or when the cache is cleared with `mainstage clean`.
+
+```mainstage
+stage initialize {
+    run_once: true              // install the toolchain once; skip on later runs
+    steps { $ ./scripts/install-toolchain.sh }
+}
+```
+
+`always_run` and `run_once` are mutually exclusive — setting both on one stage is a semantic error.
 
 **Dependency resolution:** If a stage's `inputs` references another stage's `outputs` (e.g. `compile.outputs`), the runtime automatically runs that stage first. No explicit `depends_on` is needed for file-based dependencies.
 
@@ -726,6 +749,8 @@ stage_field     = "inputs"        ":" expr                              ","?
                 | "outputs"       ":" expr                              ","?
                 | "depends_on"    ":" "[" ( ident ( "," ident )* ","? )? "]" ","?
                 | "allow_failure" ":" bool                              ","?
+                | "always_run"    ":" bool                              ","?
+                | "run_once"      ":" bool                              ","?
                 | "steps"         "{" step*                             "}"
                 | "on_failure"    "{" step*                             "}" ;
 

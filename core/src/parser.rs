@@ -118,6 +118,8 @@ impl Builder {
         let mut outputs = None;
         let mut depends_on = Vec::new();
         let mut allow_failure = false;
+        let mut always_run = false;
+        let mut run_once = false;
         let mut steps = Vec::new();
         let mut on_failure = Vec::new();
 
@@ -139,6 +141,14 @@ impl Builder {
                     let val = field.into_inner().next().unwrap().as_str();
                     allow_failure = val == "true";
                 }
+                Rule::stage_always_run => {
+                    let val = field.into_inner().next().unwrap().as_str();
+                    always_run = val == "true";
+                }
+                Rule::stage_run_once => {
+                    let val = field.into_inner().next().unwrap().as_str();
+                    run_once = val == "true";
+                }
                 Rule::steps_block => {
                     steps = field.into_inner().map(|p| self.build_step(p)).collect();
                 }
@@ -149,7 +159,18 @@ impl Builder {
             }
         }
 
-        StageBlock { name, inputs, outputs, depends_on, allow_failure, steps, on_failure, span }
+        StageBlock {
+            name,
+            inputs,
+            outputs,
+            depends_on,
+            allow_failure,
+            always_run,
+            run_once,
+            steps,
+            on_failure,
+            span,
+        }
     }
 
     // ── Pipeline ──────────────────────────────────────────────────────────────

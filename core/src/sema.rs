@@ -192,6 +192,15 @@ impl Analyzer {
         if let Some(expr) = &stage.outputs {
             self.resolve_expr(expr, scope, ctx);
         }
+        if stage.always_run && stage.run_once {
+            self.error(
+                format!(
+                    "stage '{}' sets both always_run and run_once, which are contradictory",
+                    stage.name
+                ),
+                stage.span.clone(),
+            );
+        }
         for dep in &stage.depends_on {
             if dep.name == stage.name {
                 self.error(
