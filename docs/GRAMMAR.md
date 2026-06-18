@@ -158,6 +158,7 @@ stage <name> {
 |-----------------|-------------------|----------|-----------------------------------------------------------|
 | `inputs`        | `fileset` / `list`| No       | Files this stage consumes. Used for change detection.     |
 | `outputs`       | `list`            | No       | Paths this stage produces. Used for change detection.     |
+| `depends_on`    | stage-name list   | No       | Explicit ordering edges to other stages (see below).      |
 | `allow_failure` | `bool`            | No       | If `true`, pipeline does not stop on stage failure.       |
 | `steps`         | block             | No       | Ordered steps to execute.                                 |
 | `on_failure`    | block             | No       | Steps to run if this stage fails. Always runs on failure. |
@@ -166,7 +167,23 @@ A stage with no `steps` is valid — it acts as a grouping node in the dependenc
 
 **Change detection:** Before running a stage, the runtime hashes all `inputs`. If the hashes match the previous run and all `outputs` exist, the stage is skipped. Stages with no `inputs` or `outputs` declared always run.
 
-**Dependency resolution:** If a stage's `inputs` references another stage's `outputs` (e.g. `compile.outputs`), the runtime automatically runs that stage first. No explicit `depends_on` is needed.
+**Dependency resolution:** If a stage's `inputs` references another stage's `outputs` (e.g. `compile.outputs`), the runtime automatically runs that stage first. No explicit `depends_on` is needed for file-based dependencies.
+
+**Explicit ordering (`depends_on`):** When one stage must run after another but shares no file artifact with it — a side-effecting setup stage, or a "run after build" relationship — declare the edge explicitly. `depends_on` takes a bracketed list of stage names:
+
+```mainstage
+stage initialize {
+    steps { $ ./scripts/install-toolchain.sh }
+}
+
+stage build {
+    inputs:     glob("src/**")
+    depends_on: [initialize]   // run after `initialize`, even with no shared files
+    steps { $ make }
+}
+```
+
+These edges are merged with the inferred `<stage>.outputs` edges into a single dependency graph, so they participate identically in ordering, parallel scheduling, and failure propagation. A `depends_on` edge only orders stages **within the same pipeline** — like inferred edges, a reference to a stage not listed in the running pipeline is ignored, not auto-added. Referencing an unknown stage, depending on yourself, or forming a dependency cycle (across the combined `inputs`/`outputs` + `depends_on` graph) is a semantic error reported with a source span.
 
 ```mainstage
 stage compile {
@@ -705,11 +722,12 @@ project_block   = "project" "{" project_field* "}" ;
 project_field   = ident ":" expr ","? ;
 
 stage_block     = "stage" ident "{" stage_field* "}" ;
-stage_field     = "inputs"        ":" expr          ","?
-                | "outputs"       ":" expr          ","?
-                | "allow_failure" ":" bool          ","?
-                | "steps"         "{" step*         "}"
-                | "on_failure"    "{" step*         "}" ;
+stage_field     = "inputs"        ":" expr                              ","?
+                | "outputs"       ":" expr                              ","?
+                | "depends_on"    ":" "[" ( ident ( "," ident )* ","? )? "]" ","?
+                | "allow_failure" ":" bool                              ","?
+                | "steps"         "{" step*                             "}"
+                | "on_failure"    "{" step*                             "}" ;
 
 pipeline_block  = "default"? "pipeline" ident "{" pipeline_field* "}" ;
 pipeline_field  = "input"      ":" expr         ","?

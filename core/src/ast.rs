@@ -80,11 +80,23 @@ pub struct StageBlock {
     pub inputs: Option<Expr>,
     /// Expression describing the paths this stage is expected to produce.
     pub outputs: Option<Expr>,
+    /// Explicit ordering edges to other stages, declared via `depends_on: [a, b]`.
+    /// These add dependency edges the inferred `inputs`/`outputs` graph cannot express
+    /// (side-effecting setup, "run after" relationships with no shared file artifact).
+    pub depends_on: Vec<StageDep>,
     /// When `true`, a non-zero exit from this stage does not cancel downstream stages.
     pub allow_failure: bool,
     pub steps: Vec<Step>,
     /// Steps executed when the main `steps` block fails, before failure propagates.
     pub on_failure: Vec<Step>,
+    pub span: Span,
+}
+
+/// A single entry in a stage's `depends_on` list: the referenced stage name plus the
+/// source span of that reference, so unknown-stage and cycle diagnostics can point at it.
+#[derive(Debug, Clone)]
+pub struct StageDep {
+    pub name: String,
     pub span: Span,
 }
 

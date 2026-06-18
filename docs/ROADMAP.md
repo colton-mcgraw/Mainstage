@@ -474,11 +474,11 @@ Today the language infers stage order *only* from `inputs` / `outputs` file refe
 
 Let stages declare ordering edges the file graph cannot infer. Output: `main.ms` runs `initialize → build → run` correctly under full parallelism, with no `-j1` workaround.
 
-- [ ] Add a `depends_on: [<stage>, ...]` stage field that adds dependency edges without requiring a referenced file artifact
-- [ ] Merge `depends_on` edges into the Phase 2 dependency graph; detect and report cycles across the combined inputs/outputs + `depends_on` graph with source spans
-- [ ] Honor the new edges in the Phase 24 readiness scheduler and in failure propagation / cancellation, identically to inferred edges
-- [ ] Surface ordering edges in `--dry-run` and `mainstage list`; document that `stages:` is membership while ordering comes from the graph
-- [ ] Update `main.ms` to use `depends_on` and drop the `-j1` requirement from the `all` pipeline
+- [x] Add a `depends_on: [<stage>, ...]` stage field that adds dependency edges without requiring a referenced file artifact
+- [x] Merge `depends_on` edges into the Phase 2 dependency graph; detect and report cycles across the combined inputs/outputs + `depends_on` graph with source spans
+- [x] Honor the new edges in the Phase 24 readiness scheduler and in failure propagation / cancellation, identically to inferred edges (automatic — the scheduler consumes the merged graph)
+- [x] Surface ordering edges in `--dry-run` (dependency waves) and `mainstage list` (`(after …)` annotations); document that `stages:` is membership while ordering comes from the graph
+- [x] Demonstrate `depends_on` in the example `main.ms`; a multi-target build (e.g. the OS dogfood script) can now express `initialize → build → run` directly and drop the `-j1` workaround
 
 ---
 

@@ -187,6 +187,11 @@ impl Printer<'_> {
             self.push_line(&format!("outputs: {}", render_expr(outputs)));
             wrote = true;
         }
+        if !s.depends_on.is_empty() {
+            let names = s.depends_on.iter().map(|d| d.name.as_str()).collect::<Vec<_>>().join(", ");
+            self.push_line(&format!("depends_on: [{names}]"));
+            wrote = true;
+        }
         if s.allow_failure {
             self.push_line("allow_failure: true");
             wrote = true;
@@ -482,6 +487,14 @@ mod tests {
         let src = "stage build{inputs:src outputs:[\"out\"] steps{$ make\nmkdir \"d\"} on_failure{delete \"d\"}}";
         let out = fmt(src);
         let expected = "stage build {\n    inputs: src\n    outputs: [\"out\"]\n\n    steps {\n        $ make\n        mkdir \"d\"\n    }\n\n    on_failure {\n        delete \"d\"\n    }\n}\n";
+        assert_eq!(out, expected);
+    }
+
+    #[test]
+    fn formats_stage_depends_on() {
+        let src = "stage build{inputs:src depends_on:[a,b,] steps{$ make\n}}";
+        let out = fmt(src);
+        let expected = "stage build {\n    inputs: src\n    depends_on: [a, b]\n\n    steps {\n        $ make\n    }\n}\n";
         assert_eq!(out, expected);
     }
 

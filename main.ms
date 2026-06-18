@@ -44,8 +44,12 @@ stage lint {
     }
 }
 
+// Run the tests only after a successful build. `test` reads `sources`, not
+// `compile.outputs`, so this ordering is not inferable from files — `depends_on`
+// states it explicitly. Out-of-pipeline edges are ignored, so `dev` is unaffected.
 stage test {
     inputs: sources
+    depends_on: [compile]
 
     steps {
         $ cargo test

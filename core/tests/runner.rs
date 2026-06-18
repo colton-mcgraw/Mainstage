@@ -337,6 +337,36 @@ fn parallel_respects_dependency_order() {
 }
 
 #[test]
+fn depends_on_orders_stages_without_file_edge() {
+    let dir = unique_dir("depends_on_order");
+    let d = dir.display();
+    // `build` shares no file inputs/outputs with `setup`, so only the explicit
+    // `depends_on` edge can sequence them. Its step copies a file `setup` produces;
+    // were `build` allowed to run first (or concurrently, under 4 workers), the copy
+    // would fail because the source would not yet exist.
+    let src = format!(
+        r#"
+        default pipeline build {{
+            stages: [setup, build]
+        }}
+        stage setup {{
+            steps {{ write "{d}/setup.out" content: "ready" }}
+        }}
+        stage build {{
+            depends_on: [setup]
+            steps {{ copy "{d}/setup.out" to "{d}/build.out" }}
+        }}
+        "#
+    );
+
+    run_jobs(&src, &dir, None, 4).expect("build must run after setup via depends_on");
+
+    assert!(exists(&dir, "build.out"), "build ran after setup and copied its output");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn parallel_failure_cancels_downstream_only() {
     let dir = unique_dir("par_fail");
     let d = dir.display();

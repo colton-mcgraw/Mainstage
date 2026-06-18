@@ -116,6 +116,7 @@ impl Builder {
 
         let mut inputs = None;
         let mut outputs = None;
+        let mut depends_on = Vec::new();
         let mut allow_failure = false;
         let mut steps = Vec::new();
         let mut on_failure = Vec::new();
@@ -127,6 +128,12 @@ impl Builder {
                 }
                 Rule::stage_outputs => {
                     outputs = Some(self.build_expr(field.into_inner().next().unwrap()));
+                }
+                Rule::stage_depends_on => {
+                    depends_on = field
+                        .into_inner()
+                        .map(|p| StageDep { name: p.as_str().to_string(), span: self.span(&p) })
+                        .collect();
                 }
                 Rule::stage_allow_failure => {
                     let val = field.into_inner().next().unwrap().as_str();
@@ -142,7 +149,7 @@ impl Builder {
             }
         }
 
-        StageBlock { name, inputs, outputs, allow_failure, steps, on_failure, span }
+        StageBlock { name, inputs, outputs, depends_on, allow_failure, steps, on_failure, span }
     }
 
     // ── Pipeline ──────────────────────────────────────────────────────────────
