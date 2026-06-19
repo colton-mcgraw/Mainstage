@@ -209,6 +209,10 @@ impl Printer<'_> {
             self.push_line("run_once: true");
             wrote = true;
         }
+        if s.test {
+            self.push_line("test: true");
+            wrote = true;
+        }
         if !s.steps.is_empty() {
             if wrote {
                 self.blank();
@@ -320,6 +324,16 @@ impl Printer<'_> {
             Step::If(s) => self.if_step(s),
             Step::For(s) => self.for_step(s),
             Step::Try(s) => self.try_step(s),
+            Step::Expect(s) => self.node_line(&s.span, &render_expect(s)),
+            Step::Assert(s) => {
+                let content = format!(
+                    "assert {} {} {}",
+                    render_expr(&s.actual),
+                    render_match_op(s.op),
+                    render_string(&s.expected)
+                );
+                self.node_line(&s.span, &content);
+            }
         }
     }
 
@@ -364,6 +378,39 @@ impl Printer<'_> {
         }
         self.indent -= 1;
         self.close_block(&s.span);
+    }
+}
+
+// ── Test-harness step rendering ──────────────────────────────────────────────────
+
+fn render_expect(s: &ExpectStep) -> String {
+    let mut out = String::from("expect ");
+    match &s.check {
+        ExpectCheck::Ok => out.push_str("ok"),
+        ExpectCheck::Fails => out.push_str("fails"),
+        ExpectCheck::Output { op, expected } => {
+            out.push_str("output ");
+            out.push_str(render_match_op(*op));
+            out.push(' ');
+            out.push_str(&render_string(expected));
+        }
+    }
+    if let Some(t) = s.timeout_secs {
+        out.push_str(&format!(" timeout {t}"));
+    }
+    if s.command.is_empty() {
+        out.push_str(" $");
+    } else {
+        out.push_str(" $ ");
+        out.push_str(&s.command);
+    }
+    out
+}
+
+fn render_match_op(op: MatchOp) -> &'static str {
+    match op {
+        MatchOp::Contains => "contains",
+        MatchOp::Equals => "equals",
     }
 }
 
@@ -564,6 +611,14 @@ mod tests {
     fn formats_stage_matrix_block() {
         let src = "stage b{matrix{arch:[\"x64\",\"arm64\"]}inputs:src steps{$ go\n}}";
         let expected = "stage b {\n    matrix {\n        arch: [\"x64\", \"arm64\"]\n    }\n    inputs: src\n\n    steps {\n        $ go\n    }\n}\n";
+        assert_eq!(fmt(src), expected);
+        assert_idempotent(src);
+    }
+
+    #[test]
+    fn formats_test_stage_and_assertions() {
+        let src = "stage unit{test:true steps{assert \"${x}\"  equals  \"y\"\nexpect ok $ make test\nexpect output contains \"OK\" timeout 5 $ run\n}}";
+        let expected = "stage unit {\n    test: true\n\n    steps {\n        assert \"${x}\" equals \"y\"\n        expect ok $ make test\n        expect output contains \"OK\" timeout 5 $ run\n    }\n}\n";
         assert_eq!(fmt(src), expected);
         assert_idempotent(src);
     }

@@ -7,9 +7,12 @@
 
 use std::path::{Path, PathBuf};
 
+use std::sync::Mutex;
+
 use mainstage_core::{
-    CancelToken, NoopReporter, PlanStatus, Source, analyze, eval_program, parse, plan_pipeline,
-    run_pipeline, run_pipeline_cancellable, run_pipeline_reported_jobs,
+    AssertionResult, CancelToken, NoopReporter, PlanStatus, Reporter, Source, analyze,
+    eval_program, parse, plan_pipeline, run_pipeline, run_pipeline_cancellable,
+    run_pipeline_reported_jobs,
 };
 
 /// A unique temporary directory for a single test's marker files.
@@ -849,6 +852,235 @@ fn incremental_skip_disabled_when_outputs_missing() {
     run(&src, &dir, None).expect("second run should succeed");
     assert!(exists(&dir, "obj/a.o"), "changed input rebuilt");
     assert!(exists(&dir, "obj/b.o"), "missing outputs force a full rebuild of unchanged inputs");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+// ── Test harness (Phase 39) ───────────────────────────────────────────────────────
+
+/// One test stage's captured tally: `(stage, passed, failed, descriptions-of-failures)`.
+type StageTally = (String, usize, usize, Vec<String>);
+
+/// A reporter that records each test stage's assertion outcomes, so tests can inspect the
+/// tally the runner produced.
+#[derive(Default)]
+struct TestCapture {
+    stages: Mutex<Vec<StageTally>>,
+}
+
+impl Reporter for TestCapture {
+    fn stage_tests(&self, _out: &mut dyn std::io::Write, stage: &str, results: &[AssertionResult]) {
+        let passed = results.iter().filter(|r| r.passed).count();
+        let failed = results.len() - passed;
+        let failures =
+            results.iter().filter(|r| !r.passed).map(|r| r.description.clone()).collect();
+        self.stages.lock().unwrap().push((stage.to_string(), passed, failed, failures));
+    }
+}
+
+/// Run a script with a [`TestCapture`] reporter (sequentially, for deterministic output).
+fn run_with_capture(src: &str, dir: &Path) -> (mainstage_core::Result<()>, TestCapture) {
+    let program = parse(&Source::from_str("test.ms", src)).expect("parse should succeed");
+    let analysis = analyze(&program).expect("analysis should succeed");
+    let ctx = eval_program(&program, dir).expect("eval should succeed");
+    let reporter = TestCapture::default();
+    let result = run_pipeline_reported_jobs(&program, None, &ctx, &analysis, &reporter, 1);
+    (result, reporter)
+}
+
+#[test]
+fn test_stage_all_assertions_pass_pipeline_succeeds() {
+    let dir = unique_dir("test_pass");
+    let src = r#"
+        project { name: "demo" }
+        default pipeline check { stages: [unit] }
+        stage unit {
+            test: true
+            steps {
+                assert "${project.name}" equals "demo"
+                assert "release-${project.name}" contains "demo"
+            }
+        }
+    "#;
+
+    let (result, cap) = run_with_capture(src, &dir);
+    result.expect("a test stage whose assertions all pass should succeed");
+
+    let stages = cap.stages.lock().unwrap();
+    assert_eq!(stages.len(), 1, "the test stage reported its tally once");
+    assert_eq!(stages[0], ("unit".to_string(), 2, 0, Vec::new()));
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn test_stage_failing_assertion_fails_pipeline_and_runs_remaining_assertions() {
+    let dir = unique_dir("test_fail");
+    // The first assertion fails; the harness must still run the second (the stage does not
+    // short-circuit), tally one pass and one fail, and report overall failure.
+    let src = r#"
+        project { name: "demo" }
+        default pipeline check { stages: [unit] }
+        stage unit {
+            test: true
+            steps {
+                assert "${project.name}" equals "wrong"
+                assert "${project.name}" equals "demo"
+            }
+        }
+    "#;
+
+    let (result, cap) = run_with_capture(src, &dir);
+    assert!(result.is_err(), "a failed assertion must fail the pipeline");
+
+    let stages = cap.stages.lock().unwrap();
+    assert_eq!(stages[0].1, 1, "the second assertion still ran and passed");
+    assert_eq!(stages[0].2, 1, "the first assertion failed");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn test_stage_is_never_cached() {
+    // A test stage with unchanged inputs would normally be skipped, but a test stage must
+    // run its assertions every time. Plan it twice across a run and confirm it stays "run".
+    let dir = unique_dir("test_nocache");
+    let d = dir.display();
+    std::fs::write(dir.join("in.txt"), "seed").unwrap();
+    let src = format!(
+        r#"
+        default pipeline check {{ stages: [unit] }}
+        stage unit {{
+            test: true
+            inputs: ["{d}/in.txt"]
+            steps {{ assert "x" equals "x" }}
+        }}
+        "#
+    );
+
+    let program = parse(&Source::from_str("test.ms", &src)).expect("parse");
+    let analysis = analyze(&program).expect("analyze");
+    let ctx = eval_program(&program, &dir).expect("eval");
+
+    run_pipeline(&program, None, &ctx, &analysis).expect("first run");
+    let plan = plan_pipeline(&program, None, &ctx, &analysis).expect("re-plan");
+    assert!(
+        plan.stages().all(|s| s.status == PlanStatus::Run),
+        "a test stage is never cached, so it always plans to run"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn committed_testing_example_runs_green() {
+    // The repo-root `tests/testing.ms` example must parse, analyze, evaluate, and run with
+    // all its assertions passing.
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap().join("tests");
+    let source = Source::from_file(dir.join("testing.ms")).expect("example file should exist");
+    let program = parse(&source).expect("example should parse");
+    let analysis = analyze(&program).expect("example should analyze");
+    let ctx = eval_program(&program, &dir).expect("example should evaluate");
+
+    let reporter = TestCapture::default();
+    run_pipeline_reported_jobs(&program, None, &ctx, &analysis, &reporter, 1)
+        .expect("the committed testing example should run green");
+    assert_eq!(reporter.stages.lock().unwrap()[0].2, 0, "no assertion in the example should fail");
+}
+
+// `expect` exercises real commands; gate it on unix where `true` / `false` / `echo` exist.
+#[cfg(unix)]
+#[test]
+fn expect_checks_exit_status_and_output() {
+    let dir = unique_dir("test_expect");
+    let src = r#"
+        default pipeline check { stages: [unit] }
+        stage unit {
+            test: true
+            steps {
+                expect ok $ true
+                expect fails $ false
+                expect output contains "hello" $ echo hello world
+                expect output equals "hi" $ echo hi
+            }
+        }
+    "#;
+
+    let (result, cap) = run_with_capture(src, &dir);
+    result.expect("all command expectations should hold");
+    let stages = cap.stages.lock().unwrap();
+    assert_eq!(stages[0], ("unit".to_string(), 4, 0, Vec::new()));
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[cfg(unix)]
+#[test]
+fn expect_records_failures() {
+    let dir = unique_dir("test_expect_fail");
+    let src = r#"
+        default pipeline check { stages: [unit] }
+        stage unit {
+            test: true
+            steps {
+                expect ok $ false
+                expect output contains "missing" $ echo present
+            }
+        }
+    "#;
+
+    let (result, cap) = run_with_capture(src, &dir);
+    assert!(result.is_err(), "failed command expectations must fail the pipeline");
+    assert_eq!(cap.stages.lock().unwrap()[0].2, 2, "both expectations failed");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[cfg(unix)]
+#[test]
+fn expect_output_contains_stops_early_on_timeout() {
+    // A never-exiting process that prints a marker: `expect output contains` with a timeout
+    // must find the marker and pass without waiting out the full timeout.
+    let dir = unique_dir("test_expect_timeout");
+    let src = r#"
+        default pipeline check { stages: [unit] }
+        stage unit {
+            test: true
+            steps {
+                expect output contains "READY" timeout 5 $ sh -c "echo READY; sleep 30"
+            }
+        }
+    "#;
+
+    let start = std::time::Instant::now();
+    let (result, cap) = run_with_capture(src, &dir);
+    result.expect("the marker appears, so the expectation passes");
+    assert_eq!(cap.stages.lock().unwrap()[0].1, 1, "the output-contains check passed");
+    assert!(start.elapsed().as_secs() < 25, "early-stop must not wait out the 30s sleep");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+// An `expect` / `assert` outside a test stage is a hard assertion: a failure fails the stage.
+#[test]
+fn assert_outside_test_stage_hard_fails() {
+    let dir = unique_dir("assert_hard");
+    let d = dir.display();
+    let src = format!(
+        r#"
+        default pipeline build {{
+            stages: [a]
+            on_failure {{ write "{d}/failed" content: "x" }}
+        }}
+        stage a {{
+            steps {{ assert "x" equals "y" }}
+        }}
+        "#
+    );
+
+    let result = run(&src, &dir, None);
+    assert!(result.is_err(), "a failed assert in an ordinary stage fails the stage");
+    assert!(exists(&dir, "failed"), "the stage's failure triggers pipeline on_failure");
 
     let _ = std::fs::remove_dir_all(&dir);
 }

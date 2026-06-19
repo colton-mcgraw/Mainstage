@@ -108,6 +108,53 @@ impl OutputSink {
     }
 }
 
+// ── Test harness (Phase 39) ──────────────────────────────────────────────────────
+
+/// The outcome of a single `expect` / `assert` step inside a `test` stage.
+#[derive(Debug, Clone)]
+pub struct AssertionResult {
+    /// Human-readable description of what was asserted (e.g. `expect ok $ make test`).
+    pub description: String,
+    /// Whether the assertion held.
+    pub passed: bool,
+    /// On failure, why it failed — an expected/actual diff or a captured-output snippet.
+    pub detail: Option<String>,
+}
+
+/// Accumulates assertion outcomes for a `test` stage so the runner can report a pass/fail
+/// tally instead of collapsing the stage to a single exit code.
+///
+/// When an [`EvalContext`] carries a `TestRecorder`, the `expect` / `assert` steps record
+/// their outcome here and *continue* rather than aborting at the first failed assertion,
+/// so every assertion in the stage runs and is reported. Behind a mutex so the recorder is
+/// `Sync` and shareable across the per-iteration context clones of a `for` loop.
+#[derive(Debug, Default)]
+pub struct TestRecorder {
+    results: Mutex<Vec<AssertionResult>>,
+}
+
+impl TestRecorder {
+    /// Append one assertion's outcome.
+    pub fn record(&self, result: AssertionResult) {
+        self.results.lock().unwrap().push(result);
+    }
+
+    /// A snapshot of every recorded assertion, in execution order.
+    pub fn results(&self) -> Vec<AssertionResult> {
+        self.results.lock().unwrap().clone()
+    }
+
+    /// Number of assertions that passed.
+    pub fn passed(&self) -> usize {
+        self.results.lock().unwrap().iter().filter(|r| r.passed).count()
+    }
+
+    /// Number of assertions that failed.
+    pub fn failed(&self) -> usize {
+        self.results.lock().unwrap().iter().filter(|r| !r.passed).count()
+    }
+}
+
 // ── Evaluation context ────────────────────────────────────────────────────────
 
 /// Runtime context threaded through expression evaluation.
@@ -158,6 +205,11 @@ pub struct EvalContext {
     /// parallel runner can flush each stage's output atomically. `None` (the default
     /// and the sequential path) streams output live.
     pub output: Option<Arc<OutputSink>>,
+    /// Optional assertion tally for a `test` stage (Phase 39). When `Some`, the `expect`
+    /// and `assert` steps record their outcome here and continue instead of failing the
+    /// stage at the first failed assertion. `None` (an ordinary stage) makes a failed
+    /// assertion fail the step like any other.
+    pub tests: Option<Arc<TestRecorder>>,
 }
 
 impl EvalContext {
@@ -239,6 +291,9 @@ impl EvalContext {
             stage_output_refs: self.stage_output_refs.clone(),
             registry: self.registry.clone(),
             output: self.output.clone(),
+            // The test recorder is stage-scoped; preserve it so a `for` loop's per-iteration
+            // context clones still tally their `expect` / `assert` outcomes.
+            tests: self.tests.clone(),
         }
     }
 }
@@ -289,6 +344,7 @@ pub fn eval_program_with(
         stage_output_refs: HashMap::new(),
         registry,
         output: None,
+        tests: None,
     };
     let mut errors: Vec<Diagnostic> = Vec::new();
 
@@ -588,6 +644,7 @@ mod tests {
             stage_output_refs: HashMap::new(),
             registry: ModuleRegistry::standard(),
             output: None,
+            tests: None,
         }
     }
 

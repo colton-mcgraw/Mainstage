@@ -7,7 +7,7 @@
 //! [`Program`] once and collecting every identifier and `<stage>.outputs` site.
 
 use mainstage_core::Span;
-use mainstage_core::ast::{Condition, Expr, Item, Program, Step, StringPart};
+use mainstage_core::ast::{Condition, ExpectCheck, Expr, Item, Program, Step, StringPart};
 use tower_lsp::lsp_types::{DocumentHighlight, DocumentHighlightKind, Position, Range};
 
 use crate::cursor::{ident_at, offset_at, position_at, receiver_before, span_offsets};
@@ -312,6 +312,25 @@ fn walk_steps(steps: &[Step], occ: &mut Vec<Occurrence>) {
                 walk_steps(&s.steps, occ);
             }
             Step::Try(s) => walk_steps(&s.steps, occ),
+            Step::Assert(s) => {
+                walk_expr(&s.actual, occ);
+                for part in &s.expected.parts {
+                    if let StringPart::Interpolation(inner) = part {
+                        walk_expr(inner, occ);
+                    }
+                }
+            }
+            Step::Expect(s) => {
+                // The `$` command keeps its argument as a raw string (not walked); only an
+                // `output` check's expected value carries parsed `${…}` expressions.
+                if let ExpectCheck::Output { expected, .. } = &s.check {
+                    for part in &expected.parts {
+                        if let StringPart::Interpolation(inner) = part {
+                            walk_expr(inner, occ);
+                        }
+                    }
+                }
+            }
             // The `$` command keeps its argument as a raw string; its `${…}`
             // interpolations are not parsed into expression nodes.
             Step::Exec(_) => {}

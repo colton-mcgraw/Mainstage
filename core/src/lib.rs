@@ -16,8 +16,8 @@ pub mod trivia;
 
 pub use error::{Diagnostic, Error, Result, Span};
 pub use eval::{
-    EvalContext, FileEntry, OutputSink, Value, eval_condition, eval_expr, eval_program,
-    eval_program_with,
+    AssertionResult, EvalContext, FileEntry, OutputSink, TestRecorder, Value, eval_condition,
+    eval_expr, eval_program, eval_program_with,
 };
 pub use executor::{execute_step, execute_steps};
 pub use format::format;

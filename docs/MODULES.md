@@ -372,3 +372,28 @@ git
   tag(default?: string) -> string
 ...
 ```
+
+---
+
+## Test Harness
+
+Assertions are not module calls — they are built-in *steps* (`expect` and `assert`),
+most useful inside a `test` stage, where they are tallied into a pass/fail count instead
+of collapsing to a single exit code:
+
+```mainstage
+stage unit {
+    test: true
+    steps {
+        assert "${project.version}" contains "1.2"   // compare a value
+        expect ok $ ./run-unit-tests                 // assert a command exits 0
+        expect output contains "PASS" $ ./smoke       // scrape captured output
+    }
+}
+```
+
+`expect` can also assert a non-zero exit (`fails`), match captured output
+(`output contains` / `output equals`), and take a `timeout <seconds>` for boot-smoke
+checks. A failed assertion fails the stage (and the run's exit code) but does not stop the
+other assertions in the stage. See [GRAMMAR.md](GRAMMAR.md#test-harness) for the full
+syntax and the [`tests/testing.ms`](../tests/testing.ms) example.

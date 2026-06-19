@@ -93,6 +93,10 @@ pub struct StageBlock {
     /// `outputs`, so a side-effecting setup stage (e.g. `initialize`) runs once and is
     /// skipped thereafter until its inputs change or the cache is cleared.
     pub run_once: bool,
+    /// When `true`, the stage is a *test* stage: it is never cached (like `always_run`),
+    /// and its `expect` / `assert` steps are tallied into a pass/fail count rather than
+    /// collapsing to a single exit code. The stage fails when any assertion fails.
+    pub test: bool,
     /// Declared build-matrix dimensions, from `matrix { <dim>: [<values>] }`. Empty for
     /// an ordinary stage. Present only on the *authored* stage: the matrix lowering pass
     /// ([`crate::matrix::expand`]) replaces a matrixed stage with one concrete variant per
@@ -380,6 +384,11 @@ pub enum Step {
     For(ForStep),
     /// `try { … }` — run the inner steps, swallowing a failure so the stage continues.
     Try(TryStep),
+    /// `expect <check> [timeout N] $ <command>` — run a command and assert on its exit
+    /// status or captured output (test-harness step).
+    Expect(ExpectStep),
+    /// `assert <expr> equals|contains <string>` — compare a value to an expected one.
+    Assert(AssertStep),
 }
 
 impl Step {
@@ -395,6 +404,8 @@ impl Step {
             Step::If(s) => &s.span,
             Step::For(s) => &s.span,
             Step::Try(s) => &s.span,
+            Step::Expect(s) => &s.span,
+            Step::Assert(s) => &s.span,
         }
     }
 }
@@ -471,4 +482,52 @@ pub struct ForStep {
 pub struct TryStep {
     pub steps: Vec<Step>,
     pub span: Span,
+}
+
+/// `expect <check> [timeout <n>] $ <command>` — run a command and assert something about
+/// how it ran. Inside a `test` stage a failed expectation is tallied and execution
+/// continues; in an ordinary stage a failed expectation fails the step like any other.
+#[derive(Debug, Clone)]
+pub struct ExpectStep {
+    /// What to assert about the command (exit status or captured output).
+    pub check: ExpectCheck,
+    /// Optional timeout in seconds. When set, the command is killed if it does not finish
+    /// in time; for an `output contains` check the command is also stopped early as soon
+    /// as the marker appears (so a long-running boot-smoke process need not run to the end).
+    pub timeout_secs: Option<i64>,
+    /// Raw command line after `$`, with trailing whitespace trimmed. Interpolation is
+    /// resolved at eval time, exactly like the `$` exec step.
+    pub command: String,
+    pub span: Span,
+}
+
+/// The assertion an [`ExpectStep`] makes about its command.
+#[derive(Debug, Clone)]
+pub enum ExpectCheck {
+    /// The command exits successfully (status 0).
+    Ok,
+    /// The command exits with a non-zero status.
+    Fails,
+    /// The command's combined stdout/stderr matches `expected` per `op`.
+    Output { op: MatchOp, expected: StringExpr },
+}
+
+/// `assert <expr> equals|contains <string>` — compare an evaluated value against an
+/// expected string. The expected value supports `${…}` interpolation.
+#[derive(Debug, Clone)]
+pub struct AssertStep {
+    /// The value under test (rendered to a string for comparison).
+    pub actual: Expr,
+    pub op: MatchOp,
+    pub expected: StringExpr,
+    pub span: Span,
+}
+
+/// How an `expect output` / `assert` comparison matches its expected value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MatchOp {
+    /// The actual value contains the expected value as a substring.
+    Contains,
+    /// The actual value equals the expected value (compared after trimming).
+    Equals,
 }

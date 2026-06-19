@@ -21,7 +21,7 @@ project_field = { ident ~ ":" ~ expr ~ ","? }
 // ── Stage ─────────────────────────────────────────────────────────────────────
 
 stage_block         = { "stage" ~ ident ~ "{" ~ stage_field* ~ "}" }
-stage_field         = _{ stage_inputs | stage_outputs | stage_depends_on | stage_matrix | stage_allow_failure | stage_always_run | stage_run_once | steps_block | stage_on_failure }
+stage_field         = _{ stage_inputs | stage_outputs | stage_depends_on | stage_matrix | stage_allow_failure | stage_always_run | stage_run_once | stage_test | steps_block | stage_on_failure }
 stage_inputs        = { "inputs" ~ ":" ~ expr ~ ","? }
 stage_outputs       = { "outputs" ~ ":" ~ expr ~ ","? }
 stage_depends_on    = { "depends_on" ~ ":" ~ "[" ~ (ident ~ ("," ~ ident)* ~ ","?)? ~ "]" ~ ","? }
@@ -30,6 +30,7 @@ matrix_dim          = { ident ~ ":" ~ "[" ~ (string ~ ("," ~ string)* ~ ","?)? ~
 stage_allow_failure = { "allow_failure" ~ ":" ~ bool_lit ~ ","? }
 stage_always_run    = { "always_run" ~ ":" ~ bool_lit ~ ","? }
 stage_run_once      = { "run_once" ~ ":" ~ bool_lit ~ ","? }
+stage_test          = { "test" ~ ":" ~ bool_lit ~ ","? }
 steps_block         = { "steps" ~ "{" ~ step* ~ "}" }
 stage_on_failure    = { "on_failure" ~ "{" ~ step* ~ "}" }
 
@@ -45,7 +46,7 @@ pipeline_on_success = { "on_success" ~ "{" ~ step* ~ "}" }
 
 // ── Steps ─────────────────────────────────────────────────────────────────────
 
-step        = _{ exec_step | copy_step | move_step | mkdir_step | delete_step | write_step | if_step | for_step | try_step }
+step        = _{ exec_step | copy_step | move_step | mkdir_step | delete_step | write_step | if_step | for_step | try_step | expect_step | assert_step }
 // Compound-atomic so horizontal whitespace is consumed explicitly (prevents
 // WHITESPACE from swallowing the newline that terminates the exec line).
 exec_step   = ${ "$" ~ (" " | "\t")* ~ exec_line }
@@ -60,6 +61,17 @@ then_block  = { "{" ~ step* ~ "}" }
 else_block  = { "{" ~ step* ~ "}" }
 for_step    = { "for" ~ ident ~ "in" ~ expr ~ "{" ~ step* ~ "}" }
 try_step    = { "try" ~ "{" ~ step* ~ "}" }
+// Test-harness assertions (Phase 39). `expect` runs a command and asserts on its exit
+// status or captured output; the greedy `$` exec line must come last. `assert` compares
+// two values. `match_op` covers both.
+expect_step   = { "expect" ~ expect_check ~ expect_timeout? ~ exec_step }
+expect_check  = _{ expect_ok | expect_fail | expect_output }
+expect_ok     = { "ok" }
+expect_fail   = { "fails" }
+expect_output = { "output" ~ match_op ~ string }
+expect_timeout= { "timeout" ~ int_lit }
+assert_step   = { "assert" ~ expr ~ match_op ~ string }
+match_op      = { "contains" | "equals" }
 
 // ── Expressions ───────────────────────────────────────────────────────────────
 // Order resolves ambiguity: more-specific alternatives first.

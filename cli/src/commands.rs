@@ -13,10 +13,10 @@ use clap::{Arg, ArgAction, Command};
 use console::style;
 use mainstage_core::ast::Program;
 use mainstage_core::{
-    AnalysisResult, CancelToken, Diagnostic, Error, EvalContext, LintLevel, ModuleRegistry,
-    Permissions, Plan, PlanStatus, Reporter, Source, Span, StageOutcome, analyze_with, ast, cache,
-    eval_program_with, lint_plugin, parse, pipeline_input_paths, plan_pipeline,
-    run_pipeline_cancellable,
+    AnalysisResult, AssertionResult, CancelToken, Diagnostic, Error, EvalContext, LintLevel,
+    ModuleRegistry, Permissions, Plan, PlanStatus, Reporter, Source, Span, StageOutcome,
+    analyze_with, ast, cache, eval_program_with, lint_plugin, parse, pipeline_input_paths,
+    plan_pipeline, run_pipeline_cancellable,
 };
 
 use crate::scaffold::{self, Lang};
@@ -1049,6 +1049,45 @@ impl Reporter for TermReporter {
         }
         let _ =
             writeln!(out, "{} {} {}", style("⊘").yellow(), stage, style("(cancelled)").yellow());
+    }
+
+    fn stage_tests(&self, out: &mut dyn Write, _stage: &str, results: &[AssertionResult]) {
+        let passed = results.iter().filter(|r| r.passed).count();
+        let failed = results.len() - passed;
+
+        // Per-assertion detail. Passing lines are progress (suppressed when quiet); failing
+        // lines — with their reason — are always shown, even in quiet mode.
+        for r in results {
+            if r.passed {
+                if !self.quiet() {
+                    let _ =
+                        writeln!(out, "  {} {}", style("✓").green(), style(&r.description).dim());
+                }
+            } else {
+                let _ = writeln!(out, "  {} {}", style("✗").red(), r.description);
+                if let Some(detail) = &r.detail {
+                    let _ = writeln!(out, "      {}", style(detail).dim());
+                }
+            }
+        }
+
+        // The `--quiet`-aware summary line: always printed on failure; on success only when
+        // not quiet.
+        if failed > 0 {
+            let _ = writeln!(
+                out,
+                "  {} {}",
+                style("✗").red().bold(),
+                style(format!("tests: {failed} failed, {passed} passed")).red()
+            );
+        } else if !self.quiet() {
+            let _ = writeln!(
+                out,
+                "  {} {}",
+                style("✓").green().bold(),
+                style(format!("tests: {passed} passed")).green()
+            );
+        }
     }
 
     fn stage_finished(
