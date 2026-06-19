@@ -319,6 +319,29 @@ impl Analyzer {
                     self.resolve_step(step, scope, for_vars);
                 }
             }
+            Step::Workdir(s) => {
+                self.resolve_expr(&s.path, scope, ctx);
+                // The working directory must be a string-typed expression.
+                if let Some(t) = self.infer_type(&s.path, scope)
+                    && t != ExprType::String
+                {
+                    self.error(
+                        format!("`workdir` path must be a string, found {}", t.describe()),
+                        s.span.clone(),
+                    );
+                }
+                for step in &s.steps {
+                    self.resolve_step(step, scope, for_vars);
+                }
+            }
+            Step::WithEnv(s) => {
+                for binding in &s.vars {
+                    self.resolve_expr(&binding.value, scope, ctx);
+                }
+                for step in &s.steps {
+                    self.resolve_step(step, scope, for_vars);
+                }
+            }
             Step::Expect(s) => {
                 if let ExpectCheck::Output { expected, .. } = &s.check {
                     self.resolve_string_parts(&expected.parts, scope, ctx);

@@ -372,6 +372,49 @@ fn parses_try_step() {
     }
 }
 
+#[test]
+fn parses_workdir_step() {
+    let steps = stage_steps(
+        r#"stage s {
+            steps {
+                workdir "build" {
+                    $ make
+                    write "out.txt" content: "x"
+                }
+            }
+        }"#,
+    );
+    match &steps[0] {
+        Step::Workdir(s) => {
+            assert!(matches!(&s.path, Expr::String(_)));
+            assert_eq!(s.steps.len(), 2);
+        }
+        other => panic!("expected workdir step, got {other:?}"),
+    }
+}
+
+#[test]
+fn parses_with_env_step() {
+    let steps = stage_steps(
+        r#"stage s {
+            steps {
+                with_env { RUSTFLAGS: "-Dwarnings", CC: "clang" } {
+                    $ cargo build
+                }
+            }
+        }"#,
+    );
+    match &steps[0] {
+        Step::WithEnv(s) => {
+            assert_eq!(s.vars.len(), 2);
+            assert_eq!(s.vars[0].key, "RUSTFLAGS");
+            assert_eq!(s.vars[1].key, "CC");
+            assert_eq!(s.steps.len(), 1);
+        }
+        other => panic!("expected with_env step, got {other:?}"),
+    }
+}
+
 // ── Conditions ──────────────────────────────────────────────────────────────────
 
 fn if_condition(src: &str) -> Condition {

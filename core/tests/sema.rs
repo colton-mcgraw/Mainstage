@@ -506,6 +506,63 @@ fn try_block_with_valid_steps_ok() {
 }
 
 #[test]
+fn workdir_and_with_env_resolve_inner_names() {
+    // Name resolution descends into `workdir` / `with_env` bodies, and the `workdir`
+    // path and `with_env` values are resolved like any expression.
+    analyze_ok(
+        r#"
+        let root = "build";
+        let flag = "-Dwarnings";
+        stage s {
+            steps {
+                workdir root {
+                    with_env { RUSTFLAGS: flag } {
+                        mkdir "obj"
+                    }
+                }
+            }
+        }
+        "#,
+    );
+
+    let diags = analyze_err(
+        r#"
+        stage s {
+            steps {
+                workdir "build" { mkdir nope }
+            }
+        }
+        "#,
+    );
+    assert!(has_msg(&diags, "undefined name 'nope'"));
+
+    let diags = analyze_err(
+        r#"
+        stage s {
+            steps {
+                with_env { K: missing } { mkdir "x" }
+            }
+        }
+        "#,
+    );
+    assert!(has_msg(&diags, "undefined name 'missing'"));
+}
+
+#[test]
+fn workdir_path_must_be_a_string() {
+    let diags = analyze_err(
+        r#"
+        stage s {
+            steps {
+                workdir 42 { mkdir "x" }
+            }
+        }
+        "#,
+    );
+    assert!(has_msg(&diags, "`workdir` path must be a string"));
+}
+
+#[test]
 fn always_run_and_run_once_conflict_errors() {
     let diags = analyze_err(
         r#"

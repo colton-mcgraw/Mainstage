@@ -622,16 +622,16 @@ step directly, retiring the "route everything through `env()`" workaround.
 Give steps a working directory and environment without dropping to a shell. Output: the most
 common remaining `sh -c "cd … && …"` and `FOO=bar cmd` patterns become native, checkable steps.
 
-- [ ] `workdir "<path>" { <step>* }` and `with_env { <key>: <expr>, … } { <step>* }` block
+- [x] `workdir "<path>" { <step>* }` and `with_env { <key>: <expr>, … } { <step>* }` block
       steps in the grammar, AST, and parser; both nest and compose with `if` / `for` / `try`
-- [ ] Thread an execution context (cwd + env overlay) through `executor.rs::execute_step`,
+- [x] Thread an execution context (cwd + env overlay) through `executor.rs::execute_step`,
       replacing the hardcoded `current_dir(&ctx.script_dir)` with the active context; apply to
       `$`, `copy`, `move`, `write`, `mkdir`, `delete` uniformly
-- [ ] `sema.rs`: resolve `with_env` value expressions and the `workdir` path; validate the
+- [x] `sema.rs`: resolve `with_env` value expressions and the `workdir` path; validate the
       path is a string-typed expression
-- [ ] Confirm `workdir` + `with_env` compose to replace the `sh -c "cd … && VAR=… cmd"`
+- [x] Confirm `workdir` + `with_env` compose to replace the `sh -c "cd … && VAR=… cmd"`
       escape hatch; document when to prefer them over `$ sh -c` (`docs/GRAMMAR.md`)
-- [ ] `format.rs` / LSP exhaustive-match arms; tests for nesting, env overlay precedence, and
+- [x] `format.rs` / LSP exhaustive-match arms; tests for nesting, env overlay precedence, and
       a relative `workdir` resolved against `script_dir`
 
 ---

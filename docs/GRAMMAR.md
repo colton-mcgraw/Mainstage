@@ -691,7 +691,57 @@ stage initialize {
 
 A step's captured output is still shown; only its non-zero exit is swallowed. `try` does not trigger the stage's `on_failure` block, because the stage itself does not fail.
 
-> **Prefer native steps over `$ sh -c`.** Reach for `copy` / `move` / `mkdir` / `delete` / `write` and `try` instead of shelling out: they run without a shell (no quoting or `PATH` surprises), are validated at analysis time, and work identically across platforms. For example, `sh -c "rm -rf d && mkdir -p d/sub && cp a d/sub/b"` is better written as `delete "d"` then `mkdir "d/sub"` then `copy a to "d/sub/b"`, and `sh -c "cmd || true"` as `try { $ cmd }`.
+### `workdir` — Set the Working Directory
+
+Runs a block of steps with the working directory set to `<path>`. This applies uniformly to `$` exec commands **and** to relative paths in `copy` / `move` / `write` / `mkdir` / `delete`. A relative `<path>` is resolved against the enclosing working directory — the script directory at the top level, or an outer `workdir` when nested — so blocks compose. An absolute path inside the block is unaffected by the active `workdir`.
+
+```text
+workdir <path> {
+    <step>
+    ...
+}
+```
+
+```mainstage
+stage build {
+    steps {
+        // Equivalent to `sh -c "cd crates/core && cargo build"`, but without a shell.
+        workdir "crates/core" {
+            $ cargo build --release
+            // Relative file paths resolve against the workdir too:
+            copy "target/release/libcore.a" to "out/libcore.a"
+        }
+    }
+}
+```
+
+This is the native replacement for `$ sh -c "cd … && …"`.
+
+### `with_env` — Set Environment Variables
+
+Runs a block of steps with additional environment variables set on spawned commands (`$` exec and `expect`). Nested `with_env` blocks merge, with the inner block overriding outer keys. Values support the usual `${…}` interpolation.
+
+```text
+with_env { <KEY>: <value>, ... } {
+    <step>
+    ...
+}
+```
+
+```mainstage
+stage build {
+    steps {
+        // Equivalent to `sh -c "RUSTFLAGS=-Dwarnings CC=clang cargo build"`.
+        with_env { RUSTFLAGS: "-Dwarnings", CC: "clang" } {
+            $ cargo build --release
+        }
+    }
+}
+```
+
+`workdir` and `with_env` nest in either order and compose with `if` / `for` / `try`, so `sh -c "cd build && VAR=1 cmd"` becomes `workdir "build" { with_env { VAR: "1" } { $ cmd } }`. This is the native replacement for `$ sh -c "VAR=… cmd"`.
+
+> **Prefer native steps over `$ sh -c`.** Reach for `copy` / `move` / `mkdir` / `delete` / `write`, `try`, `workdir`, and `with_env` instead of shelling out: they run without a shell (no quoting or `PATH` surprises), are validated at analysis time, and work identically across platforms. For example, `sh -c "rm -rf d && mkdir -p d/sub && cp a d/sub/b"` is better written as `delete "d"` then `mkdir "d/sub"` then `copy a to "d/sub/b"`; `sh -c "cmd || true"` as `try { $ cmd }`; and `sh -c "cd build && VAR=1 make"` as `workdir "build" { with_env { VAR: "1" } { $ make } }`.
 
 ### Test Harness
 
@@ -952,6 +1002,8 @@ step            = exec_step
                 | if_step
                 | for_step
                 | try_step
+                | workdir_step
+                | with_env_step
                 | expect_step
                 | assert_step ;
 
@@ -964,6 +1016,9 @@ write_step      = "write" expr "content" ":" string ;
 if_step         = "if" condition "{" step* "}" ( "else" "{" step* "}" )? ;
 for_step        = "for" ident "in" expr "{" step* "}" ;
 try_step        = "try" "{" step* "}" ;
+workdir_step    = "workdir" expr "{" step* "}" ;
+with_env_step   = "with_env" "{" env_binding* "}" "{" step* "}" ;
+env_binding     = ident ":" expr ","? ;
 expect_step     = "expect" expect_check ( "timeout" int )? exec_step ;
 expect_check    = "ok"
                 | "fails"

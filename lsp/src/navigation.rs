@@ -344,6 +344,16 @@ fn walk_steps(steps: &[Step], occ: &mut Vec<Occurrence>) {
                 walk_steps(&s.steps, occ);
             }
             Step::Try(s) => walk_steps(&s.steps, occ),
+            Step::Workdir(s) => {
+                walk_expr(&s.path, occ);
+                walk_steps(&s.steps, occ);
+            }
+            Step::WithEnv(s) => {
+                for binding in &s.vars {
+                    walk_expr(&binding.value, occ);
+                }
+                walk_steps(&s.steps, occ);
+            }
             Step::Assert(s) => {
                 walk_expr(&s.actual, occ);
                 for part in &s.expected.parts {

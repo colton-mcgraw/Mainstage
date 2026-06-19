@@ -47,7 +47,7 @@ pipeline_on_success = { "on_success" ~ "{" ~ step* ~ "}" }
 
 // ── Steps ─────────────────────────────────────────────────────────────────────
 
-step        = _{ exec_step | copy_step | move_step | mkdir_step | delete_step | write_step | if_step | for_step | try_step | expect_step | assert_step }
+step        = _{ exec_step | copy_step | move_step | mkdir_step | delete_step | write_step | if_step | for_step | try_step | workdir_step | with_env_step | expect_step | assert_step }
 // Compound-atomic so horizontal whitespace is consumed explicitly (prevents
 // WHITESPACE from swallowing the newline that terminates the exec line).
 exec_step   = ${ "$" ~ (" " | "\t")* ~ exec_line }
@@ -62,6 +62,11 @@ then_block  = { "{" ~ step* ~ "}" }
 else_block  = { "{" ~ step* ~ "}" }
 for_step    = { "for" ~ ident ~ "in" ~ expr ~ "{" ~ step* ~ "}" }
 try_step    = { "try" ~ "{" ~ step* ~ "}" }
+// Step execution context (Phase 42). `workdir` sets the working directory for its steps;
+// `with_env` sets environment variables. Both nest and compose with `if` / `for` / `try`.
+workdir_step  = { "workdir" ~ expr ~ "{" ~ step* ~ "}" }
+with_env_step = { "with_env" ~ "{" ~ env_binding* ~ "}" ~ "{" ~ step* ~ "}" }
+env_binding   = { arg_key ~ ":" ~ expr ~ ","? }
 // Test-harness assertions (Phase 39). `expect` runs a command and asserts on its exit
 // status or captured output; the greedy `$` exec line must come last. `assert` compares
 // two values. `match_op` covers both.
