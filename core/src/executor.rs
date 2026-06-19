@@ -3,6 +3,7 @@
 //! Executes the step sequences inside `steps {}`, `on_failure {}`, and `on_success {}` blocks.
 //! Each step runs synchronously; the first failure short-circuits the sequence.
 
+use std::collections::HashMap;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -37,6 +38,8 @@ pub fn execute_step(step: &Step, ctx: &EvalContext) -> Result<()> {
         Step::If(s) => if_step(s, ctx),
         Step::For(s) => for_step(s, ctx),
         Step::Try(s) => try_step(s, ctx),
+        Step::Workdir(s) => workdir_step(s, ctx),
+        Step::WithEnv(s) => with_env_step(s, ctx),
         Step::Expect(s) => expect_step(s, ctx),
         Step::Assert(s) => assert_step(s, ctx),
     }
@@ -51,7 +54,8 @@ fn exec_step(s: &ExecStep, ctx: &EvalContext) -> Result<()> {
         return Err(step_err("empty exec command", &s.span));
     }
     let mut cmd = std::process::Command::new(&argv[0]);
-    cmd.args(&argv[1..]).current_dir(&ctx.script_dir);
+    cmd.args(&argv[1..]).current_dir(ctx.effective_cwd());
+    cmd.envs(&ctx.env_overlay);
 
     // With an output sink (the parallel runner), capture stdout/stderr and append it
     // to the stage's buffer so concurrent stages never interleave on the terminal.
@@ -166,6 +170,29 @@ fn try_step(s: &TryStep, ctx: &EvalContext) -> Result<()> {
     Ok(())
 }
 
+/// `workdir <path> { … }` — run the inner steps with the working directory set to `<path>`.
+/// A relative `<path>` is resolved against the current effective directory, so nested
+/// `workdir` blocks compose.
+fn workdir_step(s: &WorkdirStep, ctx: &EvalContext) -> Result<()> {
+    let raw = eval_as_path_raw(&s.path, ctx)?;
+    let dir = resolve_against(ctx.effective_cwd(), &raw);
+    let child = ctx.with_workdir(dir);
+    execute_steps(&s.steps, &child)
+}
+
+/// `with_env { KEY: <value>, … } { … }` — run the inner steps with extra environment
+/// variables set on spawned commands. Merges over any overlay already in scope, with the
+/// inner keys winning.
+fn with_env_step(s: &WithEnvStep, ctx: &EvalContext) -> Result<()> {
+    let mut overlay = ctx.env_overlay.clone();
+    for binding in &s.vars {
+        let value = eval_expr(&binding.value, ctx)?.display_string();
+        overlay.insert(binding.key.clone(), value);
+    }
+    let child = ctx.with_env_overlay(overlay);
+    execute_steps(&s.steps, &child)
+}
+
 // ── Test-harness steps (Phase 39) ────────────────────────────────────────────────
 
 fn assert_step(s: &AssertStep, ctx: &EvalContext) -> Result<()> {
@@ -200,7 +227,14 @@ fn expect_step(s: &ExpectStep, ctx: &EvalContext) -> Result<()> {
         _ => None,
     };
 
-    let cap = run_capture(&argv, &ctx.script_dir, timeout, stop_marker.as_deref(), &s.span)?;
+    let cap = run_capture(
+        &argv,
+        ctx.effective_cwd(),
+        &ctx.env_overlay,
+        timeout,
+        stop_marker.as_deref(),
+        &s.span,
+    )?;
     // Echo the command's captured output so it appears in the stage's (buffered) log,
     // matching the `$` exec step. The assertion is evaluated against the same bytes.
     if let Some(sink) = &ctx.output {
@@ -359,12 +393,14 @@ struct Capture {
 fn run_capture(
     argv: &[String],
     cwd: &Path,
+    envs: &HashMap<String, String>,
     timeout: Option<Duration>,
     stop_marker: Option<&str>,
     span: &Span,
 ) -> Result<Capture> {
     let mut cmd = std::process::Command::new(&argv[0]);
     cmd.args(&argv[1..]).current_dir(cwd);
+    cmd.envs(envs);
 
     // Fast path: run to completion and let `output()` collect both streams.
     let Some(timeout) = timeout else {
@@ -569,11 +605,24 @@ fn build_simple_expr(s: &str, span: &Span) -> Result<Expr> {
 
 // ── File-operation helpers ─────────────────────────────────────────────────────
 
-fn eval_as_path(expr: &Expr, ctx: &EvalContext) -> Result<PathBuf> {
+/// Evaluate `expr` to a raw path string, without working-directory resolution.
+fn eval_as_path_raw(expr: &Expr, ctx: &EvalContext) -> Result<PathBuf> {
     match eval_expr(expr, ctx)? {
         Value::String(s) => Ok(PathBuf::from(s)),
         _ => Err(step_err("expected a string (path) value", expr.span())),
     }
+}
+
+/// Evaluate `expr` to a path, resolving a relative path against the active working
+/// directory (Phase 42 `workdir`; the script directory by default).
+fn eval_as_path(expr: &Expr, ctx: &EvalContext) -> Result<PathBuf> {
+    let raw = eval_as_path_raw(expr, ctx)?;
+    Ok(resolve_against(ctx.effective_cwd(), &raw))
+}
+
+/// Join `p` onto `base` unless `p` is already absolute.
+fn resolve_against(base: &Path, p: &Path) -> PathBuf {
+    if p.is_absolute() { p.to_path_buf() } else { base.join(p) }
 }
 
 fn eval_as_fileset(expr: &Expr, ctx: &EvalContext, span: &Span) -> Result<Vec<FileEntry>> {
@@ -681,6 +730,8 @@ mod tests {
             registry: ModuleRegistry::standard(),
             output: None,
             tests: None,
+            cwd_override: None,
+            env_overlay: HashMap::new(),
         }
     }
 
@@ -799,6 +850,8 @@ mod tests {
             registry: ModuleRegistry::standard(),
             output: None,
             tests: None,
+            cwd_override: None,
+            env_overlay: HashMap::new(),
         };
         let span = span();
         let path_expr = Expr::Ident(IdentExpr { name: "p".to_string(), span: span.clone() });
@@ -961,6 +1014,8 @@ mod tests {
             registry: ModuleRegistry::standard(),
             output: None,
             tests: None,
+            cwd_override: None,
+            env_overlay: HashMap::new(),
         };
         let span = span();
         let path_expr = Expr::Ident(IdentExpr { name: "p".to_string(), span: span.clone() });
@@ -974,5 +1029,161 @@ mod tests {
 
         assert_eq!(std::fs::read_to_string(&tmp).unwrap(), "hello phase5");
         let _ = std::fs::remove_file(&tmp);
+    }
+
+    // ── workdir / with_env (Phase 42) ─────────────────────────────────────────
+
+    /// A string-literal `Expr` for building step ASTs in tests.
+    fn str_expr(s: &str) -> Expr {
+        Expr::String(StringExpr { parts: vec![StringPart::Literal(s.to_string())], span: span() })
+    }
+
+    /// A `write <path> content: "<text>"` step.
+    fn write(path: &str, text: &str) -> Step {
+        Step::Write(WriteStep {
+            path: str_expr(path),
+            content: StringExpr {
+                parts: vec![StringPart::Literal(text.to_string())],
+                span: span(),
+            },
+            span: span(),
+        })
+    }
+
+    fn unique_dir(tag: &str) -> PathBuf {
+        let nanos =
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+        let dir = std::env::temp_dir().join(format!("ms_exec_{tag}_{nanos}"));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn workdir_resolves_relative_file_step_against_script_dir() {
+        let dir = unique_dir("workdir");
+        let mut ctx = ctx_with(&[]);
+        ctx.script_dir = dir.clone();
+
+        // workdir "sub" { write "f.txt" content: "x" }
+        let step = Step::Workdir(WorkdirStep {
+            path: str_expr("sub"),
+            steps: vec![write("f.txt", "x")],
+            span: span(),
+        });
+        execute_step(&step, &ctx).expect("workdir step should succeed");
+        assert!(dir.join("sub").join("f.txt").exists(), "relative write lands in the workdir");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn nested_workdir_composes() {
+        let dir = unique_dir("workdir_nested");
+        let mut ctx = ctx_with(&[]);
+        ctx.script_dir = dir.clone();
+
+        // workdir "a" { workdir "b" { write "f.txt" content: "x" } }
+        let step = Step::Workdir(WorkdirStep {
+            path: str_expr("a"),
+            steps: vec![Step::Workdir(WorkdirStep {
+                path: str_expr("b"),
+                steps: vec![write("f.txt", "x")],
+                span: span(),
+            })],
+            span: span(),
+        });
+        execute_step(&step, &ctx).expect("nested workdir should succeed");
+        assert!(
+            dir.join("a").join("b").join("f.txt").exists(),
+            "the inner relative workdir resolves against the outer one"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn absolute_path_ignores_workdir() {
+        let dir = unique_dir("workdir_abs");
+        let outside = unique_dir("workdir_abs_target");
+        let target = outside.join("f.txt");
+        let mut ctx = ctx_with(&[]);
+        ctx.script_dir = dir.clone();
+
+        // workdir "sub" { write "<absolute>/f.txt" content: "x" }
+        let step = Step::Workdir(WorkdirStep {
+            path: str_expr("sub"),
+            steps: vec![write(target.to_str().unwrap(), "x")],
+            span: span(),
+        });
+        execute_step(&step, &ctx).expect("workdir step should succeed");
+        assert!(target.exists(), "an absolute path is unaffected by the active workdir");
+
+        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::remove_dir_all(&outside);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn with_env_sets_command_environment() {
+        use crate::eval::OutputSink;
+        let dir = unique_dir("with_env");
+        let mut ctx = ctx_with(&[]);
+        ctx.script_dir = dir.clone();
+        let sink = Arc::new(OutputSink::default());
+        ctx.output = Some(Arc::clone(&sink));
+
+        // with_env { MS_TEST_VAR: "hello42" } { $ sh -c "echo $MS_TEST_VAR" }
+        let step = Step::WithEnv(WithEnvStep {
+            vars: vec![EnvBinding {
+                key: "MS_TEST_VAR".to_string(),
+                value: str_expr("hello42"),
+                span: span(),
+            }],
+            steps: vec![Step::Exec(ExecStep {
+                command: "sh -c \"echo $MS_TEST_VAR\"".to_string(),
+                span: span(),
+            })],
+            span: span(),
+        });
+        execute_step(&step, &ctx).expect("with_env step should succeed");
+        let out = String::from_utf8_lossy(&sink.take()).to_string();
+        assert!(out.contains("hello42"), "the env var reaches the command; got: {out}");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn nested_with_env_merges_inner_overriding_outer() {
+        use crate::eval::OutputSink;
+        let dir = unique_dir("with_env_nested");
+        let mut ctx = ctx_with(&[]);
+        ctx.script_dir = dir.clone();
+        let sink = Arc::new(OutputSink::default());
+        ctx.output = Some(Arc::clone(&sink));
+
+        // with_env { A: "1", B: "2" } { with_env { A: "9" } { $ sh -c "echo $A $B" } }
+        let inner = Step::WithEnv(WithEnvStep {
+            vars: vec![EnvBinding { key: "A".to_string(), value: str_expr("9"), span: span() }],
+            steps: vec![Step::Exec(ExecStep {
+                command: "sh -c \"echo $A $B\"".to_string(),
+                span: span(),
+            })],
+            span: span(),
+        });
+        let step = Step::WithEnv(WithEnvStep {
+            vars: vec![
+                EnvBinding { key: "A".to_string(), value: str_expr("1"), span: span() },
+                EnvBinding { key: "B".to_string(), value: str_expr("2"), span: span() },
+            ],
+            steps: vec![inner],
+            span: span(),
+        });
+        execute_step(&step, &ctx).expect("nested with_env should succeed");
+        let out = String::from_utf8_lossy(&sink.take()).to_string();
+        // Inner `A` overrides outer; outer `B` is preserved through the merge.
+        assert!(out.contains("9 2"), "inner overlay wins and outer keys survive; got: {out}");
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

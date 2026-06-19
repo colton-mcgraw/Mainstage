@@ -109,6 +109,8 @@ fn collect_for_vars(steps: &[Step], vars: &mut Vec<String>) {
                 collect_for_vars(&i.else_steps, vars);
             }
             Step::Try(t) => collect_for_vars(&t.steps, vars),
+            Step::Workdir(w) => collect_for_vars(&w.steps, vars),
+            Step::WithEnv(e) => collect_for_vars(&e.steps, vars),
             _ => {}
         }
     }

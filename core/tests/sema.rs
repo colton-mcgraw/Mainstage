@@ -342,6 +342,41 @@ fn compatible_if_branches_ok() {
     analyze_ok(r#"let x = if platform == "linux" { "a" } else { "b" };"#);
 }
 
+#[test]
+fn general_comparison_resolves_operand_names() {
+    // A `let`-bound name used as a comparison operand resolves like any expression.
+    analyze_ok(r#"let m = "x"; let y = if m == "x" { "a" } else { "b" };"#);
+    // An undefined operand name is reported.
+    let diags = analyze_err(r#"let y = if nope == "x" { "a" } else { "b" };"#);
+    assert!(has_msg(&diags, "undefined name 'nope'"));
+}
+
+#[test]
+fn incompatible_comparison_operands_error() {
+    let diags = analyze_err(r#"let x = if "a" == 1 { "y" } else { "n" };"#);
+    assert!(has_msg(&diags, "incompatible types"));
+}
+
+#[test]
+fn contains_and_in_allow_mixed_operand_types() {
+    // `contains` / `in` deliberately accept mixed operand types (string in a list),
+    // so they must not trip the `==`/`!=` compatibility check.
+    analyze_ok(r#"let x = if "a" in ["a", "b"] { "y" } else { "n" };"#);
+    analyze_ok(r#"let x = if "abc" contains "b" { "y" } else { "n" };"#);
+}
+
+#[test]
+fn comparison_forward_reference_is_rejected() {
+    // The forward-reference rule applies inside condition operands too.
+    let diags = analyze_err(
+        r#"
+        let a = if b == "x" { "y" } else { "n" };
+        let b = "x";
+        "#,
+    );
+    assert!(has_msg(&diags, "forward reference"));
+}
+
 // ── Dependency graph ────────────────────────────────────────────────────────────
 
 #[test]
@@ -468,6 +503,63 @@ fn try_block_with_valid_steps_ok() {
         }
         "#,
     );
+}
+
+#[test]
+fn workdir_and_with_env_resolve_inner_names() {
+    // Name resolution descends into `workdir` / `with_env` bodies, and the `workdir`
+    // path and `with_env` values are resolved like any expression.
+    analyze_ok(
+        r#"
+        let root = "build";
+        let flag = "-Dwarnings";
+        stage s {
+            steps {
+                workdir root {
+                    with_env { RUSTFLAGS: flag } {
+                        mkdir "obj"
+                    }
+                }
+            }
+        }
+        "#,
+    );
+
+    let diags = analyze_err(
+        r#"
+        stage s {
+            steps {
+                workdir "build" { mkdir nope }
+            }
+        }
+        "#,
+    );
+    assert!(has_msg(&diags, "undefined name 'nope'"));
+
+    let diags = analyze_err(
+        r#"
+        stage s {
+            steps {
+                with_env { K: missing } { mkdir "x" }
+            }
+        }
+        "#,
+    );
+    assert!(has_msg(&diags, "undefined name 'missing'"));
+}
+
+#[test]
+fn workdir_path_must_be_a_string() {
+    let diags = analyze_err(
+        r#"
+        stage s {
+            steps {
+                workdir 42 { mkdir "x" }
+            }
+        }
+        "#,
+    );
+    assert!(has_msg(&diags, "`workdir` path must be a string"));
 }
 
 #[test]

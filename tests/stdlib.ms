@@ -47,3 +47,10 @@ let feature0 = json.get(fs.read("data/sample.json"), "features.0"); // "build"
 // ── fs (read-only) ─────────────────────────────────────────────────────────────────
 let present = fs.exists("data/sample.json"); // true
 let is_file = fs.is_file("data/sample.json"); // true
+
+// ── General comparison conditions (Phase 41) ──────────────────────────────────────
+// A value already held in a `let` can drive an `if` directly — no `env(...)` detour.
+let release = if project.version == "1.0.0" { "ga" } else { "pre" }; // "ga"
+let mode = if "stage" in parts { "found" } else { "missing" }; // "missing" (parts = [x,y,z])
+let tagged = if shout contains "STAGE" { "yes" } else { "no" }; // "yes"
+let no_ports = if empty(ports) { "none" } else { "some" }; // "some"

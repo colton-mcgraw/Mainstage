@@ -262,6 +262,8 @@ impl Builder {
             Rule::if_step => Step::If(self.build_if_step(pair)),
             Rule::for_step => Step::For(self.build_for_step(pair)),
             Rule::try_step => Step::Try(self.build_try_step(pair)),
+            Rule::workdir_step => Step::Workdir(self.build_workdir_step(pair)),
+            Rule::with_env_step => Step::WithEnv(self.build_with_env_step(pair)),
             Rule::expect_step => Step::Expect(self.build_expect_step(pair)),
             Rule::assert_step => Step::Assert(self.build_assert_step(pair)),
             r => unreachable!("unexpected step rule: {:?}", r),
@@ -341,6 +343,36 @@ impl Builder {
         let span = self.span(&pair);
         let steps = pair.into_inner().map(|p| self.build_step(p)).collect();
         TryStep { steps, span }
+    }
+
+    fn build_workdir_step(&mut self, pair: Pair<Rule>) -> WorkdirStep {
+        let span = self.span(&pair);
+        let mut inner = pair.into_inner();
+        let path = self.build_expr(inner.next().unwrap());
+        let steps = inner.map(|p| self.build_step(p)).collect();
+        WorkdirStep { path, steps, span }
+    }
+
+    fn build_with_env_step(&mut self, pair: Pair<Rule>) -> WithEnvStep {
+        let span = self.span(&pair);
+        // Inner pairs are the `env_binding`s followed by the body `step`s, in order.
+        let mut vars = Vec::new();
+        let mut steps = Vec::new();
+        for p in pair.into_inner() {
+            match p.as_rule() {
+                Rule::env_binding => vars.push(self.build_env_binding(p)),
+                _ => steps.push(self.build_step(p)),
+            }
+        }
+        WithEnvStep { vars, steps, span }
+    }
+
+    fn build_env_binding(&mut self, pair: Pair<Rule>) -> EnvBinding {
+        let span = self.span(&pair);
+        let mut inner = pair.into_inner();
+        let key = inner.next().unwrap().as_str().to_string();
+        let value = self.build_expr(inner.next().unwrap());
+        EnvBinding { key, value, span }
     }
 
     fn build_expect_step(&mut self, pair: Pair<Rule>) -> ExpectStep {
@@ -603,6 +635,8 @@ impl Builder {
             Rule::condition => self.build_condition(inner),
             Rule::env_cond => self.build_env_cond(inner),
             Rule::platform_cond => self.build_platform_cond(inner),
+            Rule::empty_cond => self.build_empty_cond(inner),
+            Rule::expr_cond => self.build_expr_cond(inner),
             r => unreachable!("unexpected primary_cond rule: {:?}", r),
         }
     }
@@ -647,6 +681,21 @@ impl Builder {
         Condition::Platform(PlatformCondition { op, value: platform, span })
     }
 
+    fn build_expr_cond(&mut self, pair: Pair<Rule>) -> Condition {
+        let span = self.span(&pair);
+        let mut inner = pair.into_inner();
+        let lhs = self.build_expr(inner.next().unwrap());
+        let op = parse_cond_op(inner.next().unwrap().as_str());
+        let rhs = self.build_expr(inner.next().unwrap());
+        Condition::Compare(CompareCondition { lhs, op, rhs, span })
+    }
+
+    fn build_empty_cond(&mut self, pair: Pair<Rule>) -> Condition {
+        let span = self.span(&pair);
+        let expr = self.build_expr(pair.into_inner().next().unwrap());
+        Condition::Empty(EmptyCondition { expr, span })
+    }
+
     // ── Helpers ───────────────────────────────────────────────────────────────
 
     fn merge_spans(&self, a: &Span, b: &Span) -> Span {
@@ -675,6 +724,16 @@ fn parse_compare_op(s: &str) -> CompareOp {
         "==" => CompareOp::Eq,
         "!=" => CompareOp::Ne,
         _ => unreachable!("unexpected compare_op: {}", s),
+    }
+}
+
+fn parse_cond_op(s: &str) -> CondOp {
+    match s {
+        "==" => CondOp::Eq,
+        "!=" => CondOp::Ne,
+        "contains" => CondOp::Contains,
+        "in" => CondOp::In,
+        _ => unreachable!("unexpected cond_op: {}", s),
     }
 }
 

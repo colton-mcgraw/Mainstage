@@ -329,6 +329,8 @@ impl Printer<'_> {
             Step::If(s) => self.if_step(s),
             Step::For(s) => self.for_step(s),
             Step::Try(s) => self.try_step(s),
+            Step::Workdir(s) => self.workdir_step(s),
+            Step::WithEnv(s) => self.with_env_step(s),
             Step::Expect(s) => self.node_line(&s.span, &render_expect(s)),
             Step::Assert(s) => {
                 let content = format!(
@@ -377,6 +379,35 @@ impl Printer<'_> {
     fn try_step(&mut self, s: &TryStep) {
         self.emit_leading(&s.span);
         self.push_line("try {");
+        self.indent += 1;
+        for step in &s.steps {
+            self.step(step);
+        }
+        self.indent -= 1;
+        self.close_block(&s.span);
+    }
+
+    fn workdir_step(&mut self, s: &WorkdirStep) {
+        self.emit_leading(&s.span);
+        self.push_line(&format!("workdir {} {{", render_expr(&s.path)));
+        self.indent += 1;
+        for step in &s.steps {
+            self.step(step);
+        }
+        self.indent -= 1;
+        self.close_block(&s.span);
+    }
+
+    fn with_env_step(&mut self, s: &WithEnvStep) {
+        self.emit_leading(&s.span);
+        // Render the env map inline: `with_env { KEY: <value>, … } {`.
+        let bindings = s
+            .vars
+            .iter()
+            .map(|b| format!("{}: {}", b.key, render_expr(&b.value)))
+            .collect::<Vec<_>>()
+            .join(", ");
+        self.push_line(&format!("with_env {{ {bindings} }} {{"));
         self.indent += 1;
         for step in &s.steps {
             self.step(step);
@@ -494,6 +525,12 @@ fn render_cond_prec(cond: &Condition, parent: u8) -> String {
         Condition::Platform(c) => {
             format!("platform {} {}", render_compare_op(&c.op), render_platform(&c.value))
         }
+        // Comparisons and `empty(...)` are primaries: they bind tighter than `and`/`or`
+        // and never need precedence parentheses relative to the parent.
+        Condition::Compare(c) => {
+            format!("{} {} {}", render_expr(&c.lhs), render_cond_op(&c.op), render_expr(&c.rhs))
+        }
+        Condition::Empty(c) => format!("empty({})", render_expr(&c.expr)),
         Condition::Not(inner, _) => format!("!{}", render_cond_prec(inner, PREC_UNARY)),
         Condition::And(a, b, _) => {
             let text =
@@ -525,6 +562,15 @@ fn render_compare_op(op: &CompareOp) -> &'static str {
     match op {
         CompareOp::Eq => "==",
         CompareOp::Ne => "!=",
+    }
+}
+
+fn render_cond_op(op: &CondOp) -> &'static str {
+    match op {
+        CondOp::Eq => "==",
+        CondOp::Ne => "!=",
+        CondOp::Contains => "contains",
+        CondOp::In => "in",
     }
 }
 
@@ -655,6 +701,36 @@ mod tests {
     fn formats_if_expression_inline() {
         let out = fmt("let t = if platform == \"windows\" { \"w\" } else { \"u\" };");
         assert_eq!(out, "let t = if platform == \"windows\" { \"w\" } else { \"u\" };\n");
+    }
+
+    #[test]
+    fn formats_general_comparison_conditions() {
+        // `==`, `in`, `contains`, and `empty(...)` round-trip with canonical spacing.
+        let out = fmt("let a=\"x\";let b=if a==\"x\"{\"y\"}else{\"n\"};");
+        assert!(out.contains("if a == \"x\" {"), "got: {out}");
+
+        let out = fmt("let b = if \"a\" in [\"a\",\"b\"] { \"y\" } else { \"n\" };");
+        assert_eq!(out, "let b = if \"a\" in [\"a\", \"b\"] { \"y\" } else { \"n\" };\n");
+
+        let out = fmt("let b = if \"rc\" contains \"r\" { \"y\" } else { \"n\" };");
+        assert_eq!(out, "let b = if \"rc\" contains \"r\" { \"y\" } else { \"n\" };\n");
+
+        let src = "let s = glob(\"x/*\");\nlet b = if !empty(s) { \"y\" } else { \"n\" };\n";
+        let out = fmt(src);
+        assert!(out.contains("if !empty(s) {"), "got: {out}");
+        assert_idempotent(src);
+    }
+
+    #[test]
+    fn formats_workdir_and_with_env_steps() {
+        let src = "stage s {\n steps {\n workdir \"build\" {\n $ make\n write \"o\" content: \"x\"\n }\n with_env{RUSTFLAGS:\"-Dwarnings\",CC:\"clang\"}{\n $ cargo build\n }\n }\n}";
+        let out = fmt(src);
+        assert!(out.contains("        workdir \"build\" {"), "got: {out}");
+        assert!(
+            out.contains("        with_env { RUSTFLAGS: \"-Dwarnings\", CC: \"clang\" } {"),
+            "got: {out}"
+        );
+        assert_idempotent(src);
     }
 
     #[test]

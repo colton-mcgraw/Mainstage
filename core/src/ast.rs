@@ -311,6 +311,10 @@ pub struct IdentExpr {
 pub enum Condition {
     Env(EnvCondition),
     Platform(PlatformCondition),
+    /// `<expr> <op> <expr>` — compare two arbitrary expression values (Phase 41).
+    Compare(CompareCondition),
+    /// `empty(<expr>)` — true when the operand is an empty string, list, or fileset.
+    Empty(EmptyCondition),
     /// `!<cond>` — logical negation.
     Not(Box<Condition>, Span),
     /// `<cond> and <cond>` — short-circuit logical conjunction.
@@ -325,6 +329,8 @@ impl Condition {
         match self {
             Condition::Env(c) => &c.span,
             Condition::Platform(c) => &c.span,
+            Condition::Compare(c) => &c.span,
+            Condition::Empty(c) => &c.span,
             Condition::Not(_, s) | Condition::And(_, _, s) | Condition::Or(_, _, s) => s,
         }
     }
@@ -348,6 +354,40 @@ pub struct PlatformCondition {
     pub op: CompareOp,
     pub value: Platform,
     pub span: Span,
+}
+
+/// `<expr> == <expr>`, `<expr> != <expr>`, `<expr> contains <expr>`, or
+/// `<expr> in <expr>` — compares two evaluated values (Phase 41). Unlike
+/// `EnvCondition` / `PlatformCondition`, either operand may be any expression
+/// (a `let`, module-call result, `project.<field>`, list, literal, …).
+#[derive(Debug, Clone)]
+pub struct CompareCondition {
+    pub lhs: Expr,
+    pub op: CondOp,
+    pub rhs: Expr,
+    pub span: Span,
+}
+
+/// `empty(<expr>)` — true when the operand evaluates to an empty string, an empty
+/// list, or an empty fileset.
+#[derive(Debug, Clone)]
+pub struct EmptyCondition {
+    pub expr: Expr,
+    pub span: Span,
+}
+
+/// Operator in a general expression-comparison condition (Phase 41).
+#[derive(Debug, Clone, PartialEq)]
+pub enum CondOp {
+    /// `==` — the two operands are equal.
+    Eq,
+    /// `!=` — the two operands are not equal.
+    Ne,
+    /// `contains` — the left operand (string substring, or list/fileset membership)
+    /// contains the right operand.
+    Contains,
+    /// `in` — the left operand is contained in the right (the mirror of `contains`).
+    In,
 }
 
 /// `==` or `!=` comparison operator used in conditions.
@@ -388,6 +428,12 @@ pub enum Step {
     For(ForStep),
     /// `try { … }` — run the inner steps, swallowing a failure so the stage continues.
     Try(TryStep),
+    /// `workdir <path> { … }` — run the inner steps with the working directory set to
+    /// `<path>` (for `$` exec and relative file-step paths alike).
+    Workdir(WorkdirStep),
+    /// `with_env { KEY: <value>, … } { … }` — run the inner steps with extra environment
+    /// variables set on spawned commands.
+    WithEnv(WithEnvStep),
     /// `expect <check> [timeout N] $ <command>` — run a command and assert on its exit
     /// status or captured output (test-harness step).
     Expect(ExpectStep),
@@ -408,6 +454,8 @@ impl Step {
             Step::If(s) => &s.span,
             Step::For(s) => &s.span,
             Step::Try(s) => &s.span,
+            Step::Workdir(s) => &s.span,
+            Step::WithEnv(s) => &s.span,
             Step::Expect(s) => &s.span,
             Step::Assert(s) => &s.span,
         }
@@ -485,6 +533,37 @@ pub struct ForStep {
 #[derive(Debug, Clone)]
 pub struct TryStep {
     pub steps: Vec<Step>,
+    pub span: Span,
+}
+
+/// `workdir <path> { … }` — runs its steps with the working directory set to `<path>`.
+/// A relative `<path>` is resolved against the enclosing working directory (the script
+/// directory at the top level, or an outer `workdir` when nested). Applies uniformly to
+/// `$` exec commands and to relative paths in `copy` / `move` / `write` / `mkdir` /
+/// `delete`. The native replacement for `$ sh -c "cd … && …"`.
+#[derive(Debug, Clone)]
+pub struct WorkdirStep {
+    pub path: Expr,
+    pub steps: Vec<Step>,
+    pub span: Span,
+}
+
+/// `with_env { KEY: <value>, … } { … }` — runs its steps with the given environment
+/// variables set on spawned commands (`$` exec and `expect`). Nested `with_env` blocks
+/// merge, with the inner block overriding outer keys. The native replacement for
+/// `$ sh -c "VAR=… cmd"`.
+#[derive(Debug, Clone)]
+pub struct WithEnvStep {
+    pub vars: Vec<EnvBinding>,
+    pub steps: Vec<Step>,
+    pub span: Span,
+}
+
+/// A single `KEY: <value>` entry inside a `with_env` block.
+#[derive(Debug, Clone)]
+pub struct EnvBinding {
+    pub key: String,
+    pub value: Expr,
     pub span: Span,
 }
 

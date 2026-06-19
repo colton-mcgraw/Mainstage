@@ -468,6 +468,11 @@ Conditions appear in `if` expressions and `if` steps.
 | `platform == "linux"`           | True on Linux                                 |
 | `platform == "macos"`           | True on macOS                                 |
 | `platform != "windows"`         | True on any platform except Windows           |
+| `<expr> == <expr>`              | True if the two values are equal              |
+| `<expr> != <expr>`              | True if the two values are not equal          |
+| `<expr> contains <expr>`        | True if the left value contains the right     |
+| `<expr> in <expr>`              | True if the left value is contained in the right |
+| `empty(<expr>)`                 | True if the value is an empty string, list, or fileset |
 | `!<condition>`                  | Logical negation                              |
 | `<condition> and <condition>`   | Logical AND                                   |
 | `<condition> or <condition>`    | Logical OR                                    |
@@ -479,6 +484,38 @@ if env("CI") and (platform == "linux" or platform == "macos") {
     ...
 }
 ```
+
+### General comparisons
+
+Beyond the special `env(...)` and `platform` forms, a condition can compare any two
+expressions — a `let` binding, a module-call result, a `project.<field>`, a list, or a
+literal. This means a value you already hold can drive an `if` directly, instead of being
+routed back through `env(...)`:
+
+```mainstage
+let mode = env.get("MODE", default: "debug");
+let flags = if mode == "release" { "-O2" } else { "-g" };
+
+// `contains` is substring containment for strings and membership for lists/filesets.
+let prerelease = if project.version contains "-rc" { "yes" } else { "no" };
+
+// `in` is the mirror of `contains`: left operand inside the right.
+let supported = if arch in ["x86_64", "aarch64"] { "yes" } else { "no" };
+```
+
+`empty(...)` is true for an empty string, an empty list, or an empty fileset (a `glob`
+that matched nothing); combine it with `!` for the non-empty case:
+
+```mainstage
+let sources = glob("src/**/*.rs");
+let plan = if empty(sources) { "nothing to build" } else { "build" };
+```
+
+For `==` and `!=`, both operands must produce the same type — this is checked during
+semantic analysis, exactly like the two branches of an `if/else` expression. `contains`
+and `in` accept mixed operand types (for example, a string tested against a list), so they
+are checked at evaluation time. The `env(...)` and `platform` spellings remain the
+canonical, preferred form for environment and platform tests.
 
 ---
 
@@ -654,7 +691,57 @@ stage initialize {
 
 A step's captured output is still shown; only its non-zero exit is swallowed. `try` does not trigger the stage's `on_failure` block, because the stage itself does not fail.
 
-> **Prefer native steps over `$ sh -c`.** Reach for `copy` / `move` / `mkdir` / `delete` / `write` and `try` instead of shelling out: they run without a shell (no quoting or `PATH` surprises), are validated at analysis time, and work identically across platforms. For example, `sh -c "rm -rf d && mkdir -p d/sub && cp a d/sub/b"` is better written as `delete "d"` then `mkdir "d/sub"` then `copy a to "d/sub/b"`, and `sh -c "cmd || true"` as `try { $ cmd }`.
+### `workdir` — Set the Working Directory
+
+Runs a block of steps with the working directory set to `<path>`. This applies uniformly to `$` exec commands **and** to relative paths in `copy` / `move` / `write` / `mkdir` / `delete`. A relative `<path>` is resolved against the enclosing working directory — the script directory at the top level, or an outer `workdir` when nested — so blocks compose. An absolute path inside the block is unaffected by the active `workdir`.
+
+```text
+workdir <path> {
+    <step>
+    ...
+}
+```
+
+```mainstage
+stage build {
+    steps {
+        // Equivalent to `sh -c "cd crates/core && cargo build"`, but without a shell.
+        workdir "crates/core" {
+            $ cargo build --release
+            // Relative file paths resolve against the workdir too:
+            copy "target/release/libcore.a" to "out/libcore.a"
+        }
+    }
+}
+```
+
+This is the native replacement for `$ sh -c "cd … && …"`.
+
+### `with_env` — Set Environment Variables
+
+Runs a block of steps with additional environment variables set on spawned commands (`$` exec and `expect`). Nested `with_env` blocks merge, with the inner block overriding outer keys. Values support the usual `${…}` interpolation.
+
+```text
+with_env { <KEY>: <value>, ... } {
+    <step>
+    ...
+}
+```
+
+```mainstage
+stage build {
+    steps {
+        // Equivalent to `sh -c "RUSTFLAGS=-Dwarnings CC=clang cargo build"`.
+        with_env { RUSTFLAGS: "-Dwarnings", CC: "clang" } {
+            $ cargo build --release
+        }
+    }
+}
+```
+
+`workdir` and `with_env` nest in either order and compose with `if` / `for` / `try`, so `sh -c "cd build && VAR=1 cmd"` becomes `workdir "build" { with_env { VAR: "1" } { $ cmd } }`. This is the native replacement for `$ sh -c "VAR=… cmd"`.
+
+> **Prefer native steps over `$ sh -c`.** Reach for `copy` / `move` / `mkdir` / `delete` / `write`, `try`, `workdir`, and `with_env` instead of shelling out: they run without a shell (no quoting or `PATH` surprises), are validated at analysis time, and work identically across platforms. For example, `sh -c "rm -rf d && mkdir -p d/sub && cp a d/sub/b"` is better written as `delete "d"` then `mkdir "d/sub"` then `copy a to "d/sub/b"`; `sh -c "cmd || true"` as `try { $ cmd }`; and `sh -c "cd build && VAR=1 make"` as `workdir "build" { with_env { VAR: "1" } { $ make } }`.
 
 ### Test Harness
 
@@ -915,6 +1002,8 @@ step            = exec_step
                 | if_step
                 | for_step
                 | try_step
+                | workdir_step
+                | with_env_step
                 | expect_step
                 | assert_step ;
 
@@ -927,6 +1016,9 @@ write_step      = "write" expr "content" ":" string ;
 if_step         = "if" condition "{" step* "}" ( "else" "{" step* "}" )? ;
 for_step        = "for" ident "in" expr "{" step* "}" ;
 try_step        = "try" "{" step* "}" ;
+workdir_step    = "workdir" expr "{" step* "}" ;
+with_env_step   = "with_env" "{" env_binding* "}" "{" step* "}" ;
+env_binding     = ident ":" expr ","? ;
 expect_step     = "expect" expect_check ( "timeout" int )? exec_step ;
 expect_check    = "ok"
                 | "fails"
@@ -962,7 +1054,10 @@ and_cond        = unary_cond ( "and" unary_cond )* ;
 unary_cond      = "!" unary_cond | primary_cond ;
 primary_cond    = "(" condition ")"
                 | "env" "(" string ")" ( ( "==" | "!=" ) string )?
-                | "platform" ( "==" | "!=" ) platform_val ;
+                | "platform" ( "==" | "!=" ) platform_val
+                | "empty" "(" expr ")"
+                | expr cond_op expr ;
+cond_op         = "==" | "!=" | "contains" | "in" ;
 platform_val    = '"windows"' | '"linux"' | '"macos"' ;
 
 (* Primitives *)

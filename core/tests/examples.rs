@@ -57,6 +57,12 @@ fn stdlib_example_evaluates_successfully() {
     assert!(matches!(let_val(&lets, "app_port"), Value::String(s) if s == "8080"));
     assert!(matches!(let_val(&lets, "feature0"), Value::String(s) if s == "build"));
     assert!(matches!(let_val(&lets, "present"), Value::Bool(true)));
+
+    // General comparison conditions (Phase 41): a `let`/`project.<field>`-driven `if`.
+    assert!(matches!(let_val(&lets, "release"), Value::String(s) if s == "ga"));
+    assert!(matches!(let_val(&lets, "mode"), Value::String(s) if s == "missing"));
+    assert!(matches!(let_val(&lets, "tagged"), Value::String(s) if s == "yes"));
+    assert!(matches!(let_val(&lets, "no_ports"), Value::String(s) if s == "some"));
 }
 
 #[test]

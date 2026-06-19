@@ -210,6 +210,14 @@ pub struct EvalContext {
     /// stage at the first failed assertion. `None` (an ordinary stage) makes a failed
     /// assertion fail the step like any other.
     pub tests: Option<Arc<TestRecorder>>,
+    /// Active working-directory override for step execution (Phase 42). When `Some`, `$`
+    /// exec commands run in this directory and relative file-step paths resolve against
+    /// it; when `None`, both fall back to `script_dir`. Set by a `workdir { … }` block.
+    pub cwd_override: Option<PathBuf>,
+    /// Environment variables overlaid onto spawned commands (`$` exec / `expect`) by an
+    /// enclosing `with_env { … }` block (Phase 42). Empty outside such a block; nested
+    /// blocks merge with inner keys winning.
+    pub env_overlay: HashMap<String, String>,
 }
 
 impl EvalContext {
@@ -262,6 +270,35 @@ impl EvalContext {
         child
     }
 
+    /// The effective working directory for step execution: the active `workdir` override
+    /// if one is in scope, otherwise the script directory.
+    pub fn effective_cwd(&self) -> &Path {
+        self.cwd_override.as_deref().unwrap_or(&self.script_dir)
+    }
+
+    /// Return a child context whose steps run with `dir` as the working directory
+    /// (Phase 42 `workdir`). Preserves the stage and loop bindings already in scope.
+    pub fn with_workdir(&self, dir: PathBuf) -> Self {
+        let mut child = self.clone_base();
+        child.stage_inputs = self.stage_inputs.clone();
+        child.stage_outputs = self.stage_outputs.clone();
+        child.for_vars = self.for_vars.clone();
+        child.cwd_override = Some(dir);
+        child
+    }
+
+    /// Return a child context whose spawned commands carry `overlay` as their environment
+    /// overlay (Phase 42 `with_env`). The caller merges any outer overlay before passing
+    /// it in. Preserves the stage and loop bindings already in scope.
+    pub fn with_env_overlay(&self, overlay: HashMap<String, String>) -> Self {
+        let mut child = self.clone_base();
+        child.stage_inputs = self.stage_inputs.clone();
+        child.stage_outputs = self.stage_outputs.clone();
+        child.for_vars = self.for_vars.clone();
+        child.env_overlay = overlay;
+        child
+    }
+
     /// Return a context where `failed_stage` resolves to `stage_name` (for pipeline on_failure).
     pub fn with_failed_stage(&self, stage_name: String) -> Self {
         let mut child = self.clone_base();
@@ -291,6 +328,10 @@ impl EvalContext {
             stage_output_refs: self.stage_output_refs.clone(),
             registry: self.registry.clone(),
             output: self.output.clone(),
+            // Step-execution context (Phase 42) is block-scoped but must survive the
+            // per-iteration clones of a `for` loop nested inside a `workdir` / `with_env`.
+            cwd_override: self.cwd_override.clone(),
+            env_overlay: self.env_overlay.clone(),
             // The test recorder is stage-scoped; preserve it so a `for` loop's per-iteration
             // context clones still tally their `expect` / `assert` outcomes.
             tests: self.tests.clone(),
@@ -345,6 +386,8 @@ pub fn eval_program_with(
         registry,
         output: None,
         tests: None,
+        cwd_override: None,
+        env_overlay: HashMap::new(),
     };
     let mut errors: Vec<Diagnostic> = Vec::new();
 
@@ -384,6 +427,62 @@ pub fn eval_expr(expr: &Expr, ctx: &EvalContext) -> Result<Value> {
 /// Evaluate a boolean condition within `ctx`.
 pub fn eval_condition(condition: &Condition, ctx: &EvalContext) -> Result<bool> {
     Evaluator { ctx }.eval_condition(condition)
+}
+
+// ── General comparison conditions (Phase 41) ───────────────────────────────────
+
+/// Apply a comparison operator to two evaluated values. Operand type compatibility for
+/// `==` / `!=` is checked statically in `sema`; at runtime, mismatched types simply
+/// compare unequal rather than erroring.
+fn eval_compare(op: &CondOp, lhs: &Value, rhs: &Value) -> bool {
+    match op {
+        CondOp::Eq => values_equal(lhs, rhs),
+        CondOp::Ne => !values_equal(lhs, rhs),
+        CondOp::Contains => value_contains(lhs, rhs),
+        // `a in b` is the mirror of `b contains a`.
+        CondOp::In => value_contains(rhs, lhs),
+    }
+}
+
+/// Structural equality between two runtime values. Different value kinds are never equal.
+fn values_equal(a: &Value, b: &Value) -> bool {
+    match (a, b) {
+        (Value::String(x), Value::String(y)) => x == y,
+        (Value::Int(x), Value::Int(y)) => x == y,
+        (Value::Bool(x), Value::Bool(y)) => x == y,
+        (Value::List(x), Value::List(y)) => {
+            x.len() == y.len() && x.iter().zip(y).all(|(p, q)| values_equal(p, q))
+        }
+        (Value::FileSet(x), Value::FileSet(y)) => {
+            x.len() == y.len() && x.iter().zip(y).all(|(p, q)| p.path == q.path)
+        }
+        _ => false,
+    }
+}
+
+/// Whether `haystack` contains `needle`: substring for strings, membership for lists
+/// and filesets.
+fn value_contains(haystack: &Value, needle: &Value) -> bool {
+    match haystack {
+        Value::String(s) => s.contains(needle.display_string().as_str()),
+        Value::List(items) => items.iter().any(|item| values_equal(item, needle)),
+        Value::FileSet(entries) => {
+            let n = needle.display_string();
+            entries.iter().any(|e| e.path.to_string_lossy() == n)
+        }
+        // Scalars have no notion of containment.
+        Value::Int(_) | Value::Bool(_) => false,
+    }
+}
+
+/// Emptiness is defined for strings, lists, and filesets; scalars are never empty.
+fn value_is_empty(v: &Value) -> bool {
+    match v {
+        Value::String(s) => s.is_empty(),
+        Value::List(items) => items.is_empty(),
+        Value::FileSet(entries) => entries.is_empty(),
+        Value::Int(_) | Value::Bool(_) => false,
+    }
 }
 
 // ── Evaluator ─────────────────────────────────────────────────────────────────
@@ -525,6 +624,12 @@ impl<'a> Evaluator<'a> {
                     CompareOp::Ne => self.ctx.platform != rhs,
                 })
             }
+            Condition::Compare(c) => {
+                let lhs = self.eval(&c.lhs)?;
+                let rhs = self.eval(&c.rhs)?;
+                Ok(eval_compare(&c.op, &lhs, &rhs))
+            }
+            Condition::Empty(c) => Ok(value_is_empty(&self.eval(&c.expr)?)),
             Condition::Not(inner, _) => Ok(!self.eval_condition(inner)?),
             Condition::And(a, b, _) => Ok(self.eval_condition(a)? && self.eval_condition(b)?),
             Condition::Or(a, b, _) => Ok(self.eval_condition(a)? || self.eval_condition(b)?),
@@ -645,6 +750,8 @@ mod tests {
             registry: ModuleRegistry::standard(),
             output: None,
             tests: None,
+            cwd_override: None,
+            env_overlay: HashMap::new(),
         }
     }
 
