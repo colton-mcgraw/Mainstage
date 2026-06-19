@@ -547,6 +547,19 @@ fn cmd_list(file: &str, perms: Permissions) -> i32 {
         return 0;
     }
 
+    // Map each stage name to its explicit `depends_on` edges so the listing can show the
+    // ordering that the `stages:` membership list alone does not convey.
+    let depends_on: std::collections::HashMap<&str, Vec<&str>> = program
+        .items
+        .iter()
+        .filter_map(|item| match item {
+            ast::Item::Stage(s) => {
+                Some((s.name.as_str(), s.depends_on.iter().map(|d| d.name.as_str()).collect()))
+            }
+            _ => None,
+        })
+        .collect();
+
     for p in pipelines {
         let marker =
             if p.is_default { format!(" {}", style("(default)").dim()) } else { String::new() };
@@ -557,7 +570,13 @@ fn cmd_list(file: &str, perms: Permissions) -> i32 {
             println!("  {}", style("(no stages)").dim());
         } else {
             for s in stages {
-                println!("  - {s}");
+                match depends_on.get(s.as_str()) {
+                    Some(deps) if !deps.is_empty() => {
+                        let after = style(format!("(after {})", deps.join(", "))).dim();
+                        println!("  - {s} {after}");
+                    }
+                    _ => println!("  - {s}"),
+                }
             }
         }
     }

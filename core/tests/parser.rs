@@ -354,6 +354,24 @@ fn parses_for_step() {
     }
 }
 
+#[test]
+fn parses_try_step() {
+    let steps = stage_steps(
+        r#"stage s {
+            steps {
+                try {
+                    $ apt-get update
+                    mkdir "x"
+                }
+            }
+        }"#,
+    );
+    match &steps[0] {
+        Step::Try(s) => assert_eq!(s.steps.len(), 2),
+        other => panic!("expected try step, got {other:?}"),
+    }
+}
+
 // ── Conditions ──────────────────────────────────────────────────────────────────
 
 fn if_condition(src: &str) -> Condition {

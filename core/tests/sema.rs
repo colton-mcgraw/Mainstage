@@ -377,3 +377,148 @@ fn dependency_graph_collects_refs_through_if_branches() {
     deps.sort();
     assert_eq!(deps, vec!["a".to_string(), "b".to_string()]);
 }
+
+// ── Explicit ordering (depends_on) ───────────────────────────────────────────────
+
+#[test]
+fn depends_on_adds_graph_edges() {
+    let result = analyze_ok(
+        r#"
+        stage setup { steps { mkdir "x" } }
+        stage build {
+            depends_on: [setup]
+            steps { mkdir "y" }
+        }
+        "#,
+    );
+    let deps = result.dependency_graph.get("build").expect("build in graph");
+    assert_eq!(deps, &vec!["setup".to_string()]);
+}
+
+#[test]
+fn depends_on_merges_with_inferred_edges_without_duplicates() {
+    let result = analyze_ok(
+        r#"
+        stage setup   { steps { mkdir "x" } }
+        stage compile { steps { mkdir "y" } }
+        stage build {
+            inputs: [compile.outputs]
+            depends_on: [setup, compile]
+            steps { mkdir "z" }
+        }
+        "#,
+    );
+    let mut deps = result.dependency_graph.get("build").unwrap().clone();
+    deps.sort();
+    // `compile` appears via both inputs and depends_on but is listed once.
+    assert_eq!(deps, vec!["compile".to_string(), "setup".to_string()]);
+}
+
+#[test]
+fn depends_on_unknown_stage_errors() {
+    let diags = analyze_err(
+        r#"
+        stage build {
+            depends_on: [nope]
+            steps { mkdir "y" }
+        }
+        "#,
+    );
+    assert!(has_msg(&diags, "unknown stage 'nope' in depends_on"));
+}
+
+#[test]
+fn depends_on_self_errors() {
+    let diags = analyze_err(
+        r#"
+        stage build {
+            depends_on: [build]
+            steps { mkdir "y" }
+        }
+        "#,
+    );
+    assert!(has_msg(&diags, "cannot depend on itself"));
+}
+
+#[test]
+fn try_block_resolves_inner_steps() {
+    // Name resolution must descend into `try` blocks: an undefined identifier used by an
+    // inner step is still reported.
+    let diags = analyze_err(
+        r#"
+        stage s {
+            steps {
+                try { mkdir nope }
+            }
+        }
+        "#,
+    );
+    assert!(has_msg(&diags, "undefined name 'nope'"));
+}
+
+#[test]
+fn try_block_with_valid_steps_ok() {
+    analyze_ok(
+        r#"
+        let d = "x";
+        stage s {
+            steps {
+                try { mkdir d }
+            }
+        }
+        "#,
+    );
+}
+
+#[test]
+fn always_run_and_run_once_conflict_errors() {
+    let diags = analyze_err(
+        r#"
+        stage setup {
+            always_run: true
+            run_once: true
+            steps { mkdir "x" }
+        }
+        "#,
+    );
+    assert!(has_msg(&diags, "both always_run and run_once"));
+}
+
+#[test]
+fn always_run_alone_ok() {
+    analyze_ok(r#"stage act { always_run: true steps { mkdir "x" } }"#);
+}
+
+#[test]
+fn run_once_alone_ok() {
+    analyze_ok(r#"stage setup { run_once: true steps { mkdir "x" } }"#);
+}
+
+#[test]
+fn depends_on_cycle_errors() {
+    let diags = analyze_err(
+        r#"
+        stage a { depends_on: [b] steps { mkdir "x" } }
+        stage b { depends_on: [a] steps { mkdir "y" } }
+        "#,
+    );
+    assert!(has_msg(&diags, "dependency cycle"));
+}
+
+#[test]
+fn mixed_inputs_and_depends_on_cycle_errors() {
+    // a → b via depends_on, b → a via inferred inputs edge; the combined graph cycles.
+    let diags = analyze_err(
+        r#"
+        stage a {
+            depends_on: [b]
+            steps { mkdir "x" }
+        }
+        stage b {
+            inputs: [a.outputs]
+            steps { mkdir "y" }
+        }
+        "#,
+    );
+    assert!(has_msg(&diags, "dependency cycle"));
+}

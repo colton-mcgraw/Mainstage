@@ -53,7 +53,13 @@ impl Analyzer {
     fn run(&mut self, program: &Program) -> AnalysisResult {
         let scope = self.collect_scope(program);
         self.resolve_program(program, &scope);
-        AnalysisResult { dependency_graph: build_dependency_graph(program) }
+        let dependency_graph = build_dependency_graph(program);
+        // Reject cycles over the combined inputs/outputs + depends_on graph here, with a
+        // source span, rather than leaving it to the runtime toposort's generic error.
+        for diag in detect_cycles(program, &dependency_graph) {
+            self.errors.push(diag);
+        }
+        AnalysisResult { dependency_graph }
     }
 
     // ── Pass 1: collect declarations ──────────────────────────────────────────
@@ -186,6 +192,25 @@ impl Analyzer {
         if let Some(expr) = &stage.outputs {
             self.resolve_expr(expr, scope, ctx);
         }
+        if stage.always_run && stage.run_once {
+            self.error(
+                format!(
+                    "stage '{}' sets both always_run and run_once, which are contradictory",
+                    stage.name
+                ),
+                stage.span.clone(),
+            );
+        }
+        for dep in &stage.depends_on {
+            if dep.name == stage.name {
+                self.error(
+                    format!("stage '{}' cannot depend on itself", stage.name),
+                    dep.span.clone(),
+                );
+            } else if !scope.stage_names.contains_key(&dep.name) {
+                self.error(format!("unknown stage '{}' in depends_on", dep.name), dep.span.clone());
+            }
+        }
         for step in &stage.steps {
             self.resolve_step(step, scope, &[]);
         }
@@ -267,6 +292,11 @@ impl Analyzer {
                 inner.push(s.var.clone());
                 for step in &s.steps {
                     self.resolve_step(step, scope, &inner);
+                }
+            }
+            Step::Try(s) => {
+                for step in &s.steps {
+                    self.resolve_step(step, scope, for_vars);
                 }
             }
         }
@@ -562,10 +592,80 @@ fn build_dependency_graph(program: &Program) -> HashMap<String, Vec<String>> {
             if let Some(inputs) = &stage.inputs {
                 collect_stage_refs(inputs, &mut deps);
             }
+            // Explicit `depends_on` edges sit alongside the inferred `<stage>.outputs` ones.
+            for dep in &stage.depends_on {
+                if !deps.contains(&dep.name) {
+                    deps.push(dep.name.clone());
+                }
+            }
             graph.insert(stage.name.clone(), deps);
         }
     }
     graph
+}
+
+/// Detect dependency cycles over the full stage graph and return one diagnostic per cycle,
+/// anchored at a stage involved in it. Uses Kahn's algorithm (the same approach as the
+/// runtime toposort) so it never recurses on adversarial input: nodes whose dependencies
+/// can all be removed are peeled away; whatever remains forms one or more cycles.
+fn detect_cycles(program: &Program, graph: &HashMap<String, Vec<String>>) -> Vec<Diagnostic> {
+    // Stage declaration order and spans, for deterministic, locatable diagnostics.
+    let order: Vec<&str> = program
+        .items
+        .iter()
+        .filter_map(|item| match item {
+            Item::Stage(s) => Some(s.name.as_str()),
+            _ => None,
+        })
+        .collect();
+    let spans: HashMap<&str, &Span> = program
+        .items
+        .iter()
+        .filter_map(|item| match item {
+            Item::Stage(s) => Some((s.name.as_str(), &s.span)),
+            _ => None,
+        })
+        .collect();
+
+    // Remaining unsatisfied dependencies per node, counting only edges to real stages.
+    let mut remaining: HashMap<&str, usize> = HashMap::new();
+    // Reverse adjacency: for each dependency, the stages that depend on it.
+    let mut dependents: HashMap<&str, Vec<&str>> = HashMap::new();
+    for &name in &order {
+        let deps: Vec<&str> =
+            graph[name].iter().map(String::as_str).filter(|d| graph.contains_key(*d)).collect();
+        remaining.insert(name, deps.len());
+        for d in deps {
+            dependents.entry(d).or_default().push(name);
+        }
+    }
+
+    // Peel nodes with no remaining dependencies, in declaration order.
+    let mut queue: Vec<&str> = order.iter().copied().filter(|n| remaining[n] == 0).collect();
+    let mut removed = 0usize;
+    while let Some(node) = queue.pop() {
+        removed += 1;
+        if let Some(deps) = dependents.get(node) {
+            for &m in deps {
+                let r = remaining.get_mut(m).unwrap();
+                *r -= 1;
+                if *r == 0 {
+                    queue.push(m);
+                }
+            }
+        }
+    }
+
+    if removed == order.len() {
+        return Vec::new();
+    }
+
+    // Report the earliest-declared stage still entangled in a cycle.
+    let culprit = order.iter().copied().find(|n| remaining[n] > 0).unwrap();
+    let span = spans[culprit].clone();
+    vec![
+        Diagnostic::new(format!("stage '{culprit}' is part of a dependency cycle")).with_span(span),
+    ]
 }
 
 fn collect_stage_refs(expr: &Expr, out: &mut Vec<String>) {

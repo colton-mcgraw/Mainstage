@@ -116,7 +116,10 @@ impl Builder {
 
         let mut inputs = None;
         let mut outputs = None;
+        let mut depends_on = Vec::new();
         let mut allow_failure = false;
+        let mut always_run = false;
+        let mut run_once = false;
         let mut steps = Vec::new();
         let mut on_failure = Vec::new();
 
@@ -128,9 +131,23 @@ impl Builder {
                 Rule::stage_outputs => {
                     outputs = Some(self.build_expr(field.into_inner().next().unwrap()));
                 }
+                Rule::stage_depends_on => {
+                    depends_on = field
+                        .into_inner()
+                        .map(|p| StageDep { name: p.as_str().to_string(), span: self.span(&p) })
+                        .collect();
+                }
                 Rule::stage_allow_failure => {
                     let val = field.into_inner().next().unwrap().as_str();
                     allow_failure = val == "true";
+                }
+                Rule::stage_always_run => {
+                    let val = field.into_inner().next().unwrap().as_str();
+                    always_run = val == "true";
+                }
+                Rule::stage_run_once => {
+                    let val = field.into_inner().next().unwrap().as_str();
+                    run_once = val == "true";
                 }
                 Rule::steps_block => {
                     steps = field.into_inner().map(|p| self.build_step(p)).collect();
@@ -142,7 +159,18 @@ impl Builder {
             }
         }
 
-        StageBlock { name, inputs, outputs, allow_failure, steps, on_failure, span }
+        StageBlock {
+            name,
+            inputs,
+            outputs,
+            depends_on,
+            allow_failure,
+            always_run,
+            run_once,
+            steps,
+            on_failure,
+            span,
+        }
     }
 
     // ── Pipeline ──────────────────────────────────────────────────────────────
@@ -199,6 +227,7 @@ impl Builder {
             Rule::write_step => Step::Write(self.build_write_step(pair)),
             Rule::if_step => Step::If(self.build_if_step(pair)),
             Rule::for_step => Step::For(self.build_for_step(pair)),
+            Rule::try_step => Step::Try(self.build_try_step(pair)),
             r => unreachable!("unexpected step rule: {:?}", r),
         }
     }
@@ -270,6 +299,12 @@ impl Builder {
         let iterable = self.build_expr(inner.next().unwrap());
         let steps = inner.map(|p| self.build_step(p)).collect();
         ForStep { var, iterable, steps, span }
+    }
+
+    fn build_try_step(&mut self, pair: Pair<Rule>) -> TryStep {
+        let span = self.span(&pair);
+        let steps = pair.into_inner().map(|p| self.build_step(p)).collect();
+        TryStep { steps, span }
     }
 
     // ── Expressions ───────────────────────────────────────────────────────────

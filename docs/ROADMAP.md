@@ -453,3 +453,99 @@ Give newcomers a clear path in. Output: a docs site, a getting-started guide, an
 - [x] Update the README "not yet usable" status once Goals 4 and 5 land
 
 ---
+
+## Goal 6: Expressive Builds — Ordering, Reuse, Incrementality & Testing
+
+Closes the gaps that surface when Mainstage drives a large, multi-target build like the dogfood `main.ms` OS script. That script is, in effect, a bug report against the language: nearly every explanatory comment documents a workaround for a feature the runtime does not yet have. This goal turns those workarounds into first-class constructs.
+
+Today the language infers stage order *only* from `inputs` / `outputs` file references, caches at whole-stage granularity, and has no abstraction that produces stages — so multi-target builds resort to `-j1` plus list order for sequencing, sentinel files to force or suppress caching, copy-pasted per-architecture stages, and `sh -c` strings to escape the no-shell step model. Goal 6 makes ordering, always-run/run-once, step-level failure tolerance, stage parameterization, incremental rebuilds, and a real test harness explicit, while preserving the change-detection and failure-propagation semantics of Goals 1 and 4.
+
+**Design decisions:**
+
+- **Ordering is additive, not a replacement:** the inferred `inputs`/`outputs` dependency graph (Phase 2) stays the source of truth; `depends_on` only adds edges the file graph cannot express (side-effecting setup, "boot after build"). Cycles across the combined graph are a semantic error.
+- **Caching becomes intent-revealing:** `always_run` and a success "stamp" replace the two sentinel-file hacks (`outputs: [".always"]` to force re-runs; empty `inputs`/`outputs` to mean "run every time") with declared behavior the reporter and `--dry-run` understand.
+- **Parameterization produces stages, not values:** the `matrix` lowering expands one authored stage into N concrete stages *before* analysis, so the dependency graph, change detection, and parallel scheduler see ordinary stages and need no changes. The matrix value is exposed as a built-in alongside `platform`.
+- **Incrementality stays compatible:** per-output change detection refines the Phase 7 / Phase 25 cache (mapping each declared output to the inputs that produced it) without breaking the `.mainstage/cache.json` format or the whole-stage fast path.
+- **Testing reuses existing machinery:** the test harness is a stage flavor over the Phase 24 reporter — buffered, atomic output, exit-code propagation — not a parallel runtime; assertions are steps so they compose with `for`, `if`, and interpolation.
+
+---
+
+### Phase 34: Explicit Stage Ordering (`depends_on`)
+
+Let stages declare ordering edges the file graph cannot infer. Output: `main.ms` runs `initialize → build → run` correctly under full parallelism, with no `-j1` workaround.
+
+- [x] Add a `depends_on: [<stage>, ...]` stage field that adds dependency edges without requiring a referenced file artifact
+- [x] Merge `depends_on` edges into the Phase 2 dependency graph; detect and report cycles across the combined inputs/outputs + `depends_on` graph with source spans
+- [x] Honor the new edges in the Phase 24 readiness scheduler and in failure propagation / cancellation, identically to inferred edges (automatic — the scheduler consumes the merged graph)
+- [x] Surface ordering edges in `--dry-run` (dependency waves) and `mainstage list` (`(after …)` annotations); document that `stages:` is membership while ordering comes from the graph
+- [x] Demonstrate `depends_on` in the example `main.ms`; a multi-target build (e.g. the OS dogfood script) can now express `initialize → build → run` directly and drop the `-j1` workaround
+
+---
+
+### Phase 35: Always-Run & Run-Once Stages
+
+Make "never cache this" and "cache success without a file artifact" declared behaviors instead of sentinel-file tricks. Output: the `run*` stages stop faking outputs, and `initialize` stops re-running `apt-get` on every invocation.
+
+- [x] `always_run: true` stage field — the stage runs every invocation regardless of inputs/outputs; replaces the `outputs: ["build/run/.always"]` hack in `run` / `run_gui` / `run_arm64`
+- [x] Success "stamp" semantics via `run_once: true` — a stage with side effects but no file outputs records success in the cache (a stable empty-input stamp) so it is skipped on re-run, covering the `initialize` apt-get case
+- [x] Reconcile with the Phase 7 rule that empty-`inputs`/`outputs` stages always run; the default is documented explicitly and `always_run` / `run_once` make it adjustable (the two are mutually exclusive, checked in sema)
+- [x] Reflect both states in `--dry-run` (would-run vs would-skip) and the end-of-run summary — both consume the shared `change_detection_inputs` decision so the plan and the run agree
+
+---
+
+### Phase 36: Step-Level Failure Tolerance & Richer File Steps
+
+Bring the `sh -c` escape hatches back into native, checkable steps. Output: `main.ms` expresses its setup and staging file ops without dropping to a shell.
+
+- [x] Step-level failure tolerance via a `try { }` block so steps may continue on non-zero exit — replaces `sh -c "... || true"` (e.g. `apt-get update`). A failure inside the block is swallowed (the stage does not fail and `on_failure` does not fire); captured output is still shown
+- [x] Force/overwrite semantics for `copy` (removes an existing destination first, so a read-only target is replaced) — replaces `sh -c "cp -f ..."`
+- [x] Confirmed `delete` + `mkdir` + `copy` compose to replace the `sh -c "rm -rf ... && mkdir ... && cp ..."` ESP-staging steps; `mkdir` already creates parents, `delete` is recursive, and `copy` now force-overwrites — no missing primitive
+- [x] Documented when to prefer native steps over `$ sh -c` (GRAMMAR.md) and added a `try` block to the example `main.ms`
+
+---
+
+### Phase 37: Parameterized Stages / Build Matrix
+
+Stop copy-pasting per-architecture stages. Output: one authored bootloader stage and one kernel stage expand to their x64 and arm64 variants.
+
+- [ ] `matrix { <dim>: [<values>] }` on a stage, lowered to N concrete stages before semantic analysis so the graph, change detection, and scheduler are unchanged
+- [ ] Expose the active matrix value as a built-in (alongside `platform`) for use in flags, paths, and tool-name selection
+- [ ] Deterministic generated stage names (e.g. `bootloader[x64]`) usable in `pipeline` stage lists, `depends_on`, and `<stage>.outputs` references
+- [ ] Validate matrix dimensions/values and report conflicts (duplicate expansion names, empty dimensions) with spans
+- [ ] Collapse the duplicated `bootloader_*` / `kernel_*` stages in `main.ms` to a single matrixed definition each
+
+---
+
+### Phase 38: Per-Output (Incremental) Change Detection
+
+Refine change detection below whole-stage granularity so editing one source recompiles one object. Output: tight edit/rebuild loops for large stages like the eight-file kernel build.
+
+- [ ] Map each declared output to the subset of inputs that produced it (pattern-rule or per-output input association) so unaffected outputs are skipped
+- [ ] Reuse the Phase 25 mtime+size fast path and parallel hashing per output; keep the `.mainstage/cache.json` format backward-compatible
+- [ ] Combine with `for file in inputs { ... }` so per-file compile loops gain per-object caching instead of re-running the whole stage
+- [ ] Benchmark incremental single-file edits against the Phase 23 baselines and the current whole-stage behavior
+
+---
+
+### Phase 39: Test Harness
+
+Make tests first-class instead of a bare non-zero exit. Output: a stage flavor that reports pass/fail counts and assertion failures, suitable for unit tests and OS boot-smoke checks.
+
+- [ ] A `test` stage flavor (never cached, like Phase 35 `always_run`) whose result is a pass/fail tally rather than a single exit code
+- [ ] `expect` / `assert` steps — assert a command's exit status and/or compare its captured stdout/stderr against an expected value, with interpolation support
+- [ ] Capture-and-match assertions usable for boot-smoke tests (run a `$` step, scrape output for an expected marker, fail on timeout)
+- [ ] Integrate with the Phase 24 reporter (buffered, atomic per-stage output) and exit-code propagation; add a `--quiet`-aware summary line
+- [ ] Document the harness in `docs/GRAMMAR.md`/`docs/MODULES.md` and add `tests/` example scripts covering passing and failing assertions
+
+---
+
+### Phase 40: Discovery & Ergonomics
+
+Polish the long-tail papercuts a large multi-stage script exposes. Output: portable firmware/tool discovery and a navigable stage list.
+
+- [ ] First-existing-path discovery helper (e.g. `fs.find_first([...])`) so hardcoded firmware paths like `OVMF_CODE_4M.fd` vs `OVMF_CODE.fd` resolve portably across distros
+- [ ] Optional `description:` field on stages, surfaced by `mainstage list` (and an optional `--describe`) so a 12-stage build is navigable from the CLI
+- [ ] Carry stage descriptions and ordering into LSP document symbols / hover (reusing Goal 3 infrastructure)
+- [ ] Update `main.ms` to use path discovery and stage descriptions
+
+---

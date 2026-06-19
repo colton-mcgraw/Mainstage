@@ -150,3 +150,89 @@ fn clean_forces_full_rebuild() {
 
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+// ── Phase 35: always_run / run_once ──────────────────────────────────────────────
+
+/// Run an arbitrary pipeline script once against `dir`, returning the recorder.
+fn run_src(src: &str, dir: &Path) -> Recorder {
+    let program = parse(&Source::from_str("test.ms", src)).expect("parse");
+    let analysis = analyze(&program).expect("analyze");
+    let ctx = eval_program(&program, dir).expect("eval");
+    let recorder = Recorder::default();
+    run_pipeline_reported(&program, None, &ctx, &analysis, &recorder).expect("run");
+    recorder
+}
+
+#[test]
+fn run_once_stage_runs_then_skips() {
+    let dir = unique_dir("run_once");
+    let d = dir.display();
+    // No inputs and no outputs: without run_once this would run every time (Phase 7).
+    let src = format!(
+        r#"
+        default pipeline p {{ stages: [setup] }}
+        stage setup {{
+            run_once: true
+            steps {{ write "{d}/marker" content: "x" }}
+        }}
+        "#
+    );
+
+    assert!(run_src(&src, &dir).ran("setup"), "first run executes the run_once stage");
+
+    let second = run_src(&src, &dir);
+    assert!(second.skipped("setup"), "run_once stage is skipped on re-run");
+    assert!(!second.ran("setup"));
+
+    // Clearing the cache drops the stamp, so it runs again.
+    cache::clean(&dir).unwrap();
+    assert!(run_src(&src, &dir).ran("setup"), "after clean the run_once stamp is gone");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn no_inputs_stage_without_run_once_always_runs() {
+    let dir = unique_dir("no_once");
+    let d = dir.display();
+    let src = format!(
+        r#"
+        default pipeline p {{ stages: [setup] }}
+        stage setup {{
+            steps {{ write "{d}/marker" content: "x" }}
+        }}
+        "#
+    );
+
+    assert!(run_src(&src, &dir).ran("setup"));
+    assert!(run_src(&src, &dir).ran("setup"), "a plain no-inputs stage runs every time");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn always_run_stage_never_skips() {
+    let dir = unique_dir("always");
+    std::fs::write(dir.join("src/a.txt"), "alpha").unwrap();
+    let d = dir.display();
+    // Unchanged inputs plus a present output would normally skip on the second run;
+    // always_run forces execution regardless.
+    let src = format!(
+        r#"
+        default pipeline p {{ stages: [act] }}
+        stage act {{
+            inputs:  glob("src/*.txt")
+            outputs: ["{d}/out/result.bin"]
+            always_run: true
+            steps {{ write "{d}/out/result.bin" content: "built" }}
+        }}
+        "#
+    );
+
+    assert!(run_src(&src, &dir).ran("act"));
+    let second = run_src(&src, &dir);
+    assert!(second.ran("act"), "always_run forces re-run despite unchanged inputs");
+    assert!(!second.skipped("act"));
+
+    let _ = std::fs::remove_dir_all(&dir);
+}

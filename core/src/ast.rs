@@ -80,11 +80,30 @@ pub struct StageBlock {
     pub inputs: Option<Expr>,
     /// Expression describing the paths this stage is expected to produce.
     pub outputs: Option<Expr>,
+    /// Explicit ordering edges to other stages, declared via `depends_on: [a, b]`.
+    /// These add dependency edges the inferred `inputs`/`outputs` graph cannot express
+    /// (side-effecting setup, "run after" relationships with no shared file artifact).
+    pub depends_on: Vec<StageDep>,
     /// When `true`, a non-zero exit from this stage does not cancel downstream stages.
     pub allow_failure: bool,
+    /// When `true`, the stage runs on every invocation, bypassing change detection —
+    /// the explicit form of an action stage (e.g. `run`) that must never be cached.
+    pub always_run: bool,
+    /// When `true`, the stage's success is recorded in the cache even with no file
+    /// `outputs`, so a side-effecting setup stage (e.g. `initialize`) runs once and is
+    /// skipped thereafter until its inputs change or the cache is cleared.
+    pub run_once: bool,
     pub steps: Vec<Step>,
     /// Steps executed when the main `steps` block fails, before failure propagates.
     pub on_failure: Vec<Step>,
+    pub span: Span,
+}
+
+/// A single entry in a stage's `depends_on` list: the referenced stage name plus the
+/// source span of that reference, so unknown-stage and cycle diagnostics can point at it.
+#[derive(Debug, Clone)]
+pub struct StageDep {
+    pub name: String,
     pub span: Span,
 }
 
@@ -321,6 +340,8 @@ pub enum Step {
     If(IfStep),
     /// `for <var> in <expr> { … }` — iterate over a fileset.
     For(ForStep),
+    /// `try { … }` — run the inner steps, swallowing a failure so the stage continues.
+    Try(TryStep),
 }
 
 impl Step {
@@ -335,6 +356,7 @@ impl Step {
             Step::Write(s) => &s.span,
             Step::If(s) => &s.span,
             Step::For(s) => &s.span,
+            Step::Try(s) => &s.span,
         }
     }
 }
@@ -400,6 +422,15 @@ pub struct ForStep {
     /// The loop variable name, available as `<var>.*` inside the body.
     pub var: String,
     pub iterable: Expr,
+    pub steps: Vec<Step>,
+    pub span: Span,
+}
+
+/// `try { … }` — executes its steps in order but does not propagate a failure: if a step
+/// fails, the remaining steps in the block are skipped and the stage continues as if the
+/// block succeeded. The native, checkable replacement for the `$ sh -c "… || true"` idiom.
+#[derive(Debug, Clone)]
+pub struct TryStep {
     pub steps: Vec<Step>,
     pub span: Span,
 }

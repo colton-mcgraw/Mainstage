@@ -311,6 +311,7 @@ fn walk_steps(steps: &[Step], occ: &mut Vec<Occurrence>) {
                 walk_expr(&s.iterable, occ);
                 walk_steps(&s.steps, occ);
             }
+            Step::Try(s) => walk_steps(&s.steps, occ),
             // The `$` command keeps its argument as a raw string; its `${…}`
             // interpolations are not parsed into expression nodes.
             Step::Exec(_) => {}

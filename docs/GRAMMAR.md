@@ -158,15 +158,55 @@ stage <name> {
 |-----------------|-------------------|----------|-----------------------------------------------------------|
 | `inputs`        | `fileset` / `list`| No       | Files this stage consumes. Used for change detection.     |
 | `outputs`       | `list`            | No       | Paths this stage produces. Used for change detection.     |
+| `depends_on`    | stage-name list   | No       | Explicit ordering edges to other stages (see below).      |
 | `allow_failure` | `bool`            | No       | If `true`, pipeline does not stop on stage failure.       |
+| `always_run`    | `bool`            | No       | If `true`, the stage runs every invocation (see below).   |
+| `run_once`      | `bool`            | No       | If `true`, the stage's success is cached without `outputs` (see below). |
 | `steps`         | block             | No       | Ordered steps to execute.                                 |
 | `on_failure`    | block             | No       | Steps to run if this stage fails. Always runs on failure. |
 
 A stage with no `steps` is valid — it acts as a grouping node in the dependency graph.
 
-**Change detection:** Before running a stage, the runtime hashes all `inputs`. If the hashes match the previous run and all `outputs` exist, the stage is skipped. Stages with no `inputs` or `outputs` declared always run.
+**Change detection:** Before running a stage, the runtime hashes all `inputs`. If the hashes match the previous run and all `outputs` exist, the stage is skipped. A stage with `inputs` but no `outputs` is skipped purely on its inputs being unchanged. A stage with **neither** `inputs` nor `outputs` has nothing to compare, so by default it runs on every invocation; `always_run` and `run_once` make that behavior explicit and adjustable.
 
-**Dependency resolution:** If a stage's `inputs` references another stage's `outputs` (e.g. `compile.outputs`), the runtime automatically runs that stage first. No explicit `depends_on` is needed.
+**`always_run`:** Forces the stage to run on every invocation, bypassing change detection even when it has unchanged `inputs` and present `outputs`. This is the explicit form of an *action* stage — booting an emulator, deploying, running a server — that must never be treated as cached. Prefer it over the older idiom of declaring an output path the steps never create.
+
+```mainstage
+stage run {
+    inputs:     ["build/app.efi"]
+    always_run: true            // an action, not a cached artifact — never skipped
+    steps { $ qemu-system-x86_64 -kernel build/app.efi }
+}
+```
+
+**`run_once`:** Records the stage's success in the cache even when it declares **no** `outputs`, so a side-effecting setup stage runs once and is skipped thereafter. It is the complement of `always_run`: instead of "always run", it means "run, then remember". The stamp is invalidated when the stage's `inputs` change (if it has any) or when the cache is cleared with `mainstage clean`.
+
+```mainstage
+stage initialize {
+    run_once: true              // install the toolchain once; skip on later runs
+    steps { $ ./scripts/install-toolchain.sh }
+}
+```
+
+`always_run` and `run_once` are mutually exclusive — setting both on one stage is a semantic error.
+
+**Dependency resolution:** If a stage's `inputs` references another stage's `outputs` (e.g. `compile.outputs`), the runtime automatically runs that stage first. No explicit `depends_on` is needed for file-based dependencies.
+
+**Explicit ordering (`depends_on`):** When one stage must run after another but shares no file artifact with it — a side-effecting setup stage, or a "run after build" relationship — declare the edge explicitly. `depends_on` takes a bracketed list of stage names:
+
+```mainstage
+stage initialize {
+    steps { $ ./scripts/install-toolchain.sh }
+}
+
+stage build {
+    inputs:     glob("src/**")
+    depends_on: [initialize]   // run after `initialize`, even with no shared files
+    steps { $ make }
+}
+```
+
+These edges are merged with the inferred `<stage>.outputs` edges into a single dependency graph, so they participate identically in ordering, parallel scheduling, and failure propagation. A `depends_on` edge only orders stages **within the same pipeline** — like inferred edges, a reference to a stage not listed in the running pipeline is ignored, not auto-added. Referencing an unknown stage, depending on yourself, or forming a dependency cycle (across the combined `inputs`/`outputs` + `depends_on` graph) is a semantic error reported with a source span.
 
 ```mainstage
 stage compile {
@@ -405,7 +445,7 @@ The runtime resolves the program name against the system `PATH`. Path separators
 
 ### `copy` — Copy Files
 
-Copies a file, file set, or directory to a destination path. Creates the destination directory if it does not exist.
+Copies a file, file set, or directory to a destination path. Creates the destination directory if it does not exist, and **force-overwrites** an existing destination file — even a read-only one (the destination is removed first, like `cp -f`) — so re-copying a file whose previous copy inherited read-only permissions does not fail. Copying a directory merges into the destination, overwriting files of the same name; files present only in the destination are left untouched. For a clean replacement, `delete` the destination first, then `copy`.
 
 ```text
 copy <src> to <dest>
@@ -414,6 +454,7 @@ copy <src> to <dest>
 ```mainstage
 copy assets to "${out}/assets/"
 copy "LICENSE" to "${out}/LICENSE"
+copy ovmf_vars to "build/run/OVMF_VARS.fd"   // overwrites the prior run's copy
 ```
 
 ### `move` — Move Files
@@ -527,6 +568,34 @@ stage compile {
 | `file.stem` | Filename without extension                   | `"main"`                   |
 | `file.ext`  | Extension without leading dot                | `"rs"`                     |
 | `file.dir`  | Parent directory path                        | `"src"`                    |
+
+### `try` — Tolerate a Failing Step
+
+Runs a block of steps but does **not** propagate a failure: if a step inside the block fails, the remaining steps in the block are skipped and the stage continues as though the block had succeeded. This is the native, checkable replacement for the `$ sh -c "… || true"` idiom — a best-effort step whose failure is acceptable.
+
+```text
+try {
+    <step>
+    ...
+}
+```
+
+```mainstage
+stage initialize {
+    steps {
+        // A refresh that may fail on an unrelated third-party source must not block
+        // the install that follows.
+        try {
+            $ apt-get update
+        }
+        $ apt-get install -y nasm gcc
+    }
+}
+```
+
+A step's captured output is still shown; only its non-zero exit is swallowed. `try` does not trigger the stage's `on_failure` block, because the stage itself does not fail.
+
+> **Prefer native steps over `$ sh -c`.** Reach for `copy` / `move` / `mkdir` / `delete` / `write` and `try` instead of shelling out: they run without a shell (no quoting or `PATH` surprises), are validated at analysis time, and work identically across platforms. For example, `sh -c "rm -rf d && mkdir -p d/sub && cp a d/sub/b"` is better written as `delete "d"` then `mkdir "d/sub"` then `copy a to "d/sub/b"`, and `sh -c "cmd || true"` as `try { $ cmd }`.
 
 ---
 
@@ -705,11 +774,14 @@ project_block   = "project" "{" project_field* "}" ;
 project_field   = ident ":" expr ","? ;
 
 stage_block     = "stage" ident "{" stage_field* "}" ;
-stage_field     = "inputs"        ":" expr          ","?
-                | "outputs"       ":" expr          ","?
-                | "allow_failure" ":" bool          ","?
-                | "steps"         "{" step*         "}"
-                | "on_failure"    "{" step*         "}" ;
+stage_field     = "inputs"        ":" expr                              ","?
+                | "outputs"       ":" expr                              ","?
+                | "depends_on"    ":" "[" ( ident ( "," ident )* ","? )? "]" ","?
+                | "allow_failure" ":" bool                              ","?
+                | "always_run"    ":" bool                              ","?
+                | "run_once"      ":" bool                              ","?
+                | "steps"         "{" step*                             "}"
+                | "on_failure"    "{" step*                             "}" ;
 
 pipeline_block  = "default"? "pipeline" ident "{" pipeline_field* "}" ;
 pipeline_field  = "input"      ":" expr         ","?
@@ -725,7 +797,8 @@ step            = exec_step
                 | delete_step
                 | write_step
                 | if_step
-                | for_step ;
+                | for_step
+                | try_step ;
 
 exec_step       = "$" token+ NEWLINE ;
 copy_step       = "copy" expr "to" expr ;
@@ -735,6 +808,7 @@ delete_step     = "delete" expr ;
 write_step      = "write" expr "content" ":" string ;
 if_step         = "if" condition "{" step* "}" ( "else" "{" step* "}" )? ;
 for_step        = "for" ident "in" expr "{" step* "}" ;
+try_step        = "try" "{" step* "}" ;
 
 (* Expressions *)
 expr            = string
