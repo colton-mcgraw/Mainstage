@@ -69,9 +69,10 @@ Three pieces are doing the work:
 Run it:
 
 ```sh
-mainstage list     # show pipelines and their stages
-mainstage          # run the default pipeline
-cat dist/hello.txt # -> Hello from hello v1.0.0!
+mainstage list            # show pipelines and their stages
+mainstage list --describe # also show each stage's description:
+mainstage                 # run the default pipeline
+cat dist/hello.txt        # -> Hello from hello v1.0.0!
 ```
 
 This is the [`examples/hello`](../examples/hello/) project — copy it and tinker.

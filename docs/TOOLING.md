@@ -40,12 +40,12 @@ It speaks LSP over stdio.
 |------------|--------------|
 | **Diagnostics** | Parse and semantic errors as you type, published on open and change (debounced). Messages, ranges, and notes mirror the CLI; stale squiggles clear when the document becomes valid. |
 | **Completion** | Module names inside `import "…"`; methods after `alias.` (inserted as call snippets from the method signature); `let` bindings, stage names, and `project.<field>` in expression positions. |
-| **Hover** | Signature and return type for a module method; the resolved form of a module alias, `let` binding, stage name, or `project.<field>`. |
+| **Hover** | Signature and return type for a module method; the resolved form of a module alias, `let` binding, stage name, or `project.<field>`. A stage also shows its `description:` and any `depends_on` ordering. |
 | **Signature help** | The active parameter while typing inside a module call's `(…)`. |
 | **Go-to-definition** | Jump to the declaration of a `let`, an import alias, or a `<stage>.outputs` reference. |
 | **Find references** | All uses of a stage or `let` binding. |
 | **Document highlight** | With the cursor on a `let` binding or stage, highlight its declaration (as a write) and every use (as reads) in the document. |
-| **Document symbols** | An outline of pipelines, stages, and top-level `let` bindings. |
+| **Document symbols** | An outline of pipelines, stages, and top-level `let` bindings; a stage's description and ordering appear as its detail. |
 | **Formatting** | Whole-document formatting via the shared [formatter](#formatter). |
 
 **Document sync** is full-document in V1 (the editor sends the entire buffer on each

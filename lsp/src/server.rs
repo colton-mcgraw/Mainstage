@@ -290,7 +290,7 @@ fn to_document_symbol(symbol: &navigation::Symbol) -> DocumentSymbol {
     #[allow(deprecated)] // `deprecated` field is mandatory but unused.
     DocumentSymbol {
         name: symbol.name.clone(),
-        detail: None,
+        detail: symbol.detail.clone(),
         kind,
         tags: None,
         deprecated: None,

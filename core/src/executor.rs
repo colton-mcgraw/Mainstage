@@ -3,12 +3,16 @@
 //! Executes the step sequences inside `steps {}`, `on_failure {}`, and `on_success {}` blocks.
 //! Each step runs synchronously; the first failure short-circuits the sequence.
 
+use std::io::Read;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use crate::{
     ast::*,
     error::{Diagnostic, Error, Result, Span},
-    eval::{EvalContext, FileEntry, Value, eval_condition, eval_expr},
+    eval::{AssertionResult, EvalContext, FileEntry, Value, eval_condition, eval_expr},
 };
 
 // ── Public API ─────────────────────────────────────────────────────────────────
@@ -33,6 +37,8 @@ pub fn execute_step(step: &Step, ctx: &EvalContext) -> Result<()> {
         Step::If(s) => if_step(s, ctx),
         Step::For(s) => for_step(s, ctx),
         Step::Try(s) => try_step(s, ctx),
+        Step::Expect(s) => expect_step(s, ctx),
+        Step::Assert(s) => assert_step(s, ctx),
     }
 }
 
@@ -158,6 +164,313 @@ fn try_step(s: &TryStep, ctx: &EvalContext) -> Result<()> {
     // normal sequence would), but the error is not propagated past `try`.
     let _ = execute_steps(&s.steps, ctx);
     Ok(())
+}
+
+// ── Test-harness steps (Phase 39) ────────────────────────────────────────────────
+
+fn assert_step(s: &AssertStep, ctx: &EvalContext) -> Result<()> {
+    let actual = eval_expr(&s.actual, ctx)?.display_string();
+    let expected = eval_string_expr(&s.expected, ctx)?;
+    let passed = match s.op {
+        MatchOp::Equals => actual == expected,
+        MatchOp::Contains => actual.contains(&expected),
+    };
+    let description = format!("assert \"{actual}\" {} \"{expected}\"", match_op_word(s.op));
+    let detail = (!passed).then(|| match s.op {
+        MatchOp::Equals => format!("expected \"{expected}\", got \"{actual}\""),
+        MatchOp::Contains => format!("\"{actual}\" does not contain \"{expected}\""),
+    });
+    record_assertion(ctx, &s.span, description, passed, detail)
+}
+
+fn expect_step(s: &ExpectStep, ctx: &EvalContext) -> Result<()> {
+    let command = interpolate_exec_command(&s.command, ctx, &s.span)?;
+    let argv = tokenize_command(&command, &s.span)?;
+    if argv.is_empty() {
+        return Err(step_err("empty expect command", &s.span));
+    }
+    let timeout = s.timeout_secs.filter(|n| *n > 0).map(|n| Duration::from_secs(n as u64));
+
+    // For an `output contains` check with a timeout, stop as soon as the marker appears so
+    // a long-running (e.g. booting) process need not run out its full timeout.
+    let stop_marker = match (&s.check, timeout) {
+        (ExpectCheck::Output { op: MatchOp::Contains, expected }, Some(_)) => {
+            Some(eval_string_expr(expected, ctx)?)
+        }
+        _ => None,
+    };
+
+    let cap = run_capture(&argv, &ctx.script_dir, timeout, stop_marker.as_deref(), &s.span)?;
+    // Echo the command's captured output so it appears in the stage's (buffered) log,
+    // matching the `$` exec step. The assertion is evaluated against the same bytes.
+    if let Some(sink) = &ctx.output {
+        sink.write(&cap.output);
+    }
+    let output = String::from_utf8_lossy(&cap.output);
+
+    let timed = |n: i64| format!("command did not finish within {n}s");
+    let (passed, detail) = match &s.check {
+        ExpectCheck::Ok => {
+            let ok = matches!(cap.status, Some(st) if st.success());
+            let detail = (!ok).then(|| {
+                if cap.timed_out {
+                    timed(s.timeout_secs.unwrap_or(0))
+                } else {
+                    format!("command exited with {}", describe_status(&cap))
+                }
+            });
+            (ok, detail)
+        }
+        ExpectCheck::Fails => {
+            let failed = matches!(cap.status, Some(st) if !st.success());
+            let detail = (!failed).then(|| {
+                if cap.timed_out {
+                    timed(s.timeout_secs.unwrap_or(0))
+                } else {
+                    "command unexpectedly succeeded".to_string()
+                }
+            });
+            (failed, detail)
+        }
+        ExpectCheck::Output { op, expected } => {
+            let want = eval_string_expr(expected, ctx)?;
+            let ok = match op {
+                MatchOp::Contains => output.contains(&want),
+                MatchOp::Equals => output.trim() == want,
+            };
+            let detail = (!ok).then(|| match op {
+                MatchOp::Contains => {
+                    format!("output did not contain \"{want}\"{}", output_snippet(&output))
+                }
+                MatchOp::Equals => {
+                    format!("expected output \"{want}\", got \"{}\"", output.trim())
+                }
+            });
+            (ok, detail)
+        }
+    };
+
+    record_assertion(ctx, &s.span, describe_expect(s), passed, detail)
+}
+
+/// Record one assertion's outcome. In a `test` stage (the context carries a recorder) the
+/// result is tallied and execution continues; otherwise a failed assertion aborts the step
+/// like any other failure.
+fn record_assertion(
+    ctx: &EvalContext,
+    span: &Span,
+    description: String,
+    passed: bool,
+    detail: Option<String>,
+) -> Result<()> {
+    match &ctx.tests {
+        Some(rec) => {
+            rec.record(AssertionResult { description, passed, detail });
+            Ok(())
+        }
+        None if passed => Ok(()),
+        None => {
+            let msg = match detail {
+                Some(d) => format!("{description}: {d}"),
+                None => description,
+            };
+            Err(step_err(msg, span))
+        }
+    }
+}
+
+/// Evaluate a `StringExpr` (resolving interpolation) to its string value.
+fn eval_string_expr(s: &StringExpr, ctx: &EvalContext) -> Result<String> {
+    match eval_expr(&Expr::String(s.clone()), ctx)? {
+        Value::String(v) => Ok(v),
+        _ => unreachable!("StringExpr always evaluates to Value::String"),
+    }
+}
+
+fn match_op_word(op: MatchOp) -> &'static str {
+    match op {
+        MatchOp::Contains => "contains",
+        MatchOp::Equals => "equals",
+    }
+}
+
+/// A one-line description of an `expect` step for the test report.
+fn describe_expect(s: &ExpectStep) -> String {
+    let check = match &s.check {
+        ExpectCheck::Ok => "ok".to_string(),
+        ExpectCheck::Fails => "fails".to_string(),
+        ExpectCheck::Output { op, expected } => {
+            format!("output {} \"{}\"", match_op_word(*op), stringexpr_preview(expected))
+        }
+    };
+    let timeout = s.timeout_secs.map(|n| format!(" timeout {n}")).unwrap_or_default();
+    format!("expect {check}{timeout} $ {}", s.command)
+}
+
+/// A literal-only preview of a `StringExpr` (interpolations shown as `${…}`), used only in
+/// human-readable assertion descriptions.
+fn stringexpr_preview(s: &StringExpr) -> String {
+    let mut out = String::new();
+    for part in &s.parts {
+        match part {
+            StringPart::Literal(t) => out.push_str(t),
+            StringPart::Interpolation(_) => out.push_str("${…}"),
+        }
+    }
+    out
+}
+
+fn describe_status(c: &Capture) -> String {
+    match &c.status {
+        Some(st) => st.to_string(),
+        None => "no exit status".to_string(),
+    }
+}
+
+/// A short, bounded tail of a command's captured output for an assertion-failure detail.
+fn output_snippet(output: &str) -> String {
+    let trimmed = output.trim();
+    if trimmed.is_empty() {
+        return " (no output)".to_string();
+    }
+    let preview: String = trimmed.chars().take(200).collect();
+    let ellipsis = if preview.chars().count() < trimmed.chars().count() { "…" } else { "" };
+    format!("; got: {preview}{ellipsis}")
+}
+
+// ── Command capture ──────────────────────────────────────────────────────────────
+
+/// The result of running a command under [`run_capture`].
+struct Capture {
+    /// Combined stdout then stderr.
+    output: Vec<u8>,
+    /// Exit status, or `None` if the command was killed (early stop on marker or timeout).
+    status: Option<std::process::ExitStatus>,
+    /// `true` if the command was killed because it exceeded its timeout.
+    timed_out: bool,
+}
+
+/// Run `argv` in `cwd`, capturing combined stdout/stderr.
+///
+/// With no `timeout`, the command runs to completion. With a timeout, it is killed if it
+/// does not finish in time (`timed_out = true`); when a `stop_marker` is given as well, the
+/// command is also stopped early as soon as the captured output contains the marker, so a
+/// never-exiting boot-smoke process is not forced to wait out the full timeout.
+fn run_capture(
+    argv: &[String],
+    cwd: &Path,
+    timeout: Option<Duration>,
+    stop_marker: Option<&str>,
+    span: &Span,
+) -> Result<Capture> {
+    let mut cmd = std::process::Command::new(&argv[0]);
+    cmd.args(&argv[1..]).current_dir(cwd);
+
+    // Fast path: run to completion and let `output()` collect both streams.
+    let Some(timeout) = timeout else {
+        let out = cmd
+            .output()
+            .map_err(|e| step_err(format!("failed to run '{}': {}", argv[0], e), span))?;
+        let mut buf = out.stdout;
+        buf.extend_from_slice(&out.stderr);
+        return Ok(Capture { output: buf, status: Some(out.status), timed_out: false });
+    };
+
+    cmd.stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped());
+    let mut child =
+        cmd.spawn().map_err(|e| step_err(format!("failed to run '{}': {}", argv[0], e), span))?;
+
+    let buf = Arc::new(Mutex::new(Vec::<u8>::new()));
+    let found = Arc::new(AtomicBool::new(false));
+    let marker = stop_marker.filter(|m| !m.is_empty()).map(|m| m.as_bytes().to_vec());
+
+    let readers = [
+        child.stdout.take().map(|p| spawn_reader(p, &buf, &found, &marker)),
+        child.stderr.take().map(|p| spawn_reader(p, &buf, &found, &marker)),
+    ];
+
+    let deadline = Instant::now() + timeout;
+    let mut status = None;
+    let mut timed_out = false;
+    let mut killed = false;
+    loop {
+        match child.try_wait() {
+            Ok(Some(st)) => {
+                status = Some(st);
+                break;
+            }
+            Ok(None) => {}
+            Err(e) => return Err(step_err(format!("waiting on '{}': {}", argv[0], e), span)),
+        }
+        if found.load(Ordering::SeqCst) {
+            let _ = child.kill();
+            let _ = child.wait();
+            killed = true;
+            break;
+        }
+        if Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            timed_out = true;
+            killed = true;
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+
+    if killed {
+        // The child was killed (early-stop or timeout). Do *not* join the readers: a killed
+        // process may have left a grandchild that still holds the pipe's write end open, so
+        // a reader could block indefinitely. Give them a brief moment to flush, then take a
+        // snapshot of what was captured and let the detached readers exit on their own EOF.
+        std::thread::sleep(Duration::from_millis(50));
+        drop(readers);
+        let output = buf.lock().unwrap().clone();
+        return Ok(Capture { output, status, timed_out });
+    }
+
+    // Normal exit: the pipes are closed, so the readers reach EOF and finish promptly.
+    for handle in readers.into_iter().flatten() {
+        let _ = handle.join();
+    }
+    let output = std::mem::take(&mut *buf.lock().unwrap());
+    Ok(Capture { output, status, timed_out })
+}
+
+/// Spawn a thread that drains `reader` into the shared `buf`, flipping `found` once the
+/// accumulated output contains `marker` (if any).
+fn spawn_reader<R: Read + Send + 'static>(
+    mut reader: R,
+    buf: &Arc<Mutex<Vec<u8>>>,
+    found: &Arc<AtomicBool>,
+    marker: &Option<Vec<u8>>,
+) -> std::thread::JoinHandle<()> {
+    let buf = Arc::clone(buf);
+    let found = Arc::clone(found);
+    let marker = marker.clone();
+    std::thread::spawn(move || {
+        let mut chunk = [0u8; 4096];
+        loop {
+            match reader.read(&mut chunk) {
+                Ok(0) | Err(_) => break,
+                Ok(n) => {
+                    let mut b = buf.lock().unwrap();
+                    b.extend_from_slice(&chunk[..n]);
+                    if let Some(m) = &marker
+                        && contains_subslice(&b, m)
+                    {
+                        found.store(true, Ordering::SeqCst);
+                    }
+                }
+            }
+        }
+    })
+}
+
+/// Whether `haystack` contains `needle` as a contiguous subslice.
+fn contains_subslice(haystack: &[u8], needle: &[u8]) -> bool {
+    needle.is_empty()
+        || (needle.len() <= haystack.len() && haystack.windows(needle.len()).any(|w| w == needle))
 }
 
 // ── Exec helpers ───────────────────────────────────────────────────────────────
@@ -367,6 +680,7 @@ mod tests {
             stage_output_refs: HashMap::new(),
             registry: ModuleRegistry::standard(),
             output: None,
+            tests: None,
         }
     }
 
@@ -484,6 +798,7 @@ mod tests {
             stage_output_refs: HashMap::new(),
             registry: ModuleRegistry::standard(),
             output: None,
+            tests: None,
         };
         let span = span();
         let path_expr = Expr::Ident(IdentExpr { name: "p".to_string(), span: span.clone() });
@@ -645,6 +960,7 @@ mod tests {
             stage_output_refs: HashMap::new(),
             registry: ModuleRegistry::standard(),
             output: None,
+            tests: None,
         };
         let span = span();
         let path_expr = Expr::Ident(IdentExpr { name: "p".to_string(), span: span.clone() });

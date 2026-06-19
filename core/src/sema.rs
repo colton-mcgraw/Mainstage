@@ -209,6 +209,16 @@ impl Analyzer {
                 stage.span.clone(),
             );
         }
+        // A test stage is never cached, so `run_once` (cache success) contradicts it.
+        if stage.test && stage.run_once {
+            self.error(
+                format!(
+                    "stage '{}' sets both test and run_once; a test stage is never cached",
+                    stage.name
+                ),
+                stage.span.clone(),
+            );
+        }
         for dep in &stage.depends_on {
             if dep.name == stage.name {
                 self.error(
@@ -307,6 +317,23 @@ impl Analyzer {
                 for step in &s.steps {
                     self.resolve_step(step, scope, for_vars);
                 }
+            }
+            Step::Expect(s) => {
+                if let ExpectCheck::Output { expected, .. } = &s.check {
+                    self.resolve_string_parts(&expected.parts, scope, ctx);
+                }
+                if let Some(t) = s.timeout_secs
+                    && t <= 0
+                {
+                    self.error(
+                        "expect timeout must be a positive number of seconds",
+                        s.span.clone(),
+                    );
+                }
+            }
+            Step::Assert(s) => {
+                self.resolve_expr(&s.actual, scope, ctx);
+                self.resolve_string_parts(&s.expected.parts, scope, ctx);
             }
         }
     }

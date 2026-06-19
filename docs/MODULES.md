@@ -162,6 +162,20 @@ directory.
 | `is_file` | `is_file(path: string) -> bool` | Whether the path is a regular file. |
 | `size` | `size(path: string) -> string` | Size in bytes (as a string). |
 | `list` | `list(path: string) -> list` | Directory entries, sorted, joined onto `path`. |
+| `find_first` | `find_first(paths: list, default?: string) -> string` | First path in the list that exists; falls back to `default:`, or errors if none exist and no default. |
+
+`find_first` resolves a file whose location varies across systems without hardcoding a
+single name — for example, OVMF firmware that is `OVMF_CODE_4M.fd` on some distros and
+`OVMF_CODE.fd` on others:
+
+```mainstage
+import "fs" as fs;
+
+let firmware = fs.find_first([
+    "/usr/share/OVMF/OVMF_CODE_4M.fd",
+    "/usr/share/OVMF/OVMF_CODE.fd",
+]);
+```
 
 ### `json`
 
@@ -372,3 +386,28 @@ git
   tag(default?: string) -> string
 ...
 ```
+
+---
+
+## Test Harness
+
+Assertions are not module calls — they are built-in *steps* (`expect` and `assert`),
+most useful inside a `test` stage, where they are tallied into a pass/fail count instead
+of collapsing to a single exit code:
+
+```mainstage
+stage unit {
+    test: true
+    steps {
+        assert "${project.version}" contains "1.2"   // compare a value
+        expect ok $ ./run-unit-tests                 // assert a command exits 0
+        expect output contains "PASS" $ ./smoke       // scrape captured output
+    }
+}
+```
+
+`expect` can also assert a non-zero exit (`fails`), match captured output
+(`output contains` / `output equals`), and take a `timeout <seconds>` for boot-smoke
+checks. A failed assertion fails the stage (and the run's exit code) but does not stop the
+other assertions in the stage. See [GRAMMAR.md](GRAMMAR.md#test-harness) for the full
+syntax and the [`tests/testing.ms`](../tests/testing.ms) example.

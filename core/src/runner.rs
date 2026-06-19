@@ -23,7 +23,7 @@ use crate::{
     ast::*,
     cache::{self, Cache},
     error::{Diagnostic, Error, Result},
-    eval::{EvalContext, OutputSink, Value, eval_expr},
+    eval::{AssertionResult, EvalContext, OutputSink, TestRecorder, Value, eval_expr},
     executor::execute_steps,
     sema::AnalysisResult,
 };
@@ -69,6 +69,9 @@ pub trait Reporter: Sync {
     }
     /// A stage was cancelled because a dependency failed.
     fn stage_cancelled(&self, _out: &mut dyn Write, _stage: &str) {}
+    /// A `test` stage finished its assertions; `results` lists every `expect` / `assert`
+    /// outcome in order, for rendering a pass/fail tally and per-assertion detail.
+    fn stage_tests(&self, _out: &mut dyn Write, _stage: &str, _results: &[AssertionResult]) {}
     /// A stage settled (passed, skipped, or failed), with the wall-clock time it took.
     /// Reported in addition to the live markers so a frontend can accumulate per-stage
     /// timings and render a summary; this method itself should not write progress output.
@@ -286,7 +289,9 @@ fn default_jobs() -> usize {
 ///   in the cache and is skipped on re-run until the cache is cleared.
 /// - otherwise (no inputs, not `run_once`) → `None`: the Phase 7 "always runs" default.
 fn change_detection_inputs(stage: &StageBlock, stage_inputs: &Option<Value>) -> Option<Value> {
-    if stage.always_run {
+    // A test stage is never cached (its assertions must run every invocation), like
+    // `always_run`.
+    if stage.always_run || stage.test {
         None
     } else if let Some(inputs) = stage_inputs {
         Some(inputs.clone())
@@ -835,12 +840,20 @@ fn run_one_stage(
         None => stage_ctx,
     };
     exec_ctx.skip_inputs = skip_inputs;
+    // A test stage tallies its `expect` / `assert` outcomes instead of failing at the first
+    // one. The recorder is read after the steps run to decide the stage's pass/fail state.
+    let recorder = stage.test.then(|| Arc::new(TestRecorder::default()));
+    exec_ctx.tests = recorder.clone();
 
     let mut buf = Vec::new();
     write_event(reporter, buffered, &mut buf, |r, out| r.stage_start(out, name));
 
-    let result = execute_steps(&stage.steps, &exec_ctx);
-    if result.is_err() {
+    let step_result = execute_steps(&stage.steps, &exec_ctx);
+    // A test stage fails when any assertion failed, even if no step errored.
+    let test_failed = recorder.as_ref().map(|r| r.failed() > 0).unwrap_or(false);
+    let stage_ok = step_result.is_ok() && !test_failed;
+
+    if !stage_ok {
         // Stage on_failure: run but do not propagate its own errors.
         let _ = execute_steps(&stage.on_failure, &exec_ctx);
     }
@@ -848,29 +861,39 @@ fn run_one_stage(
         buf.extend_from_slice(&s.take());
     }
 
+    // Render the test tally (per-assertion detail + pass/fail summary) for a test stage.
+    if let Some(rec) = &recorder {
+        let results = rec.results();
+        write_event(reporter, buffered, &mut buf, |r, out| r.stage_tests(out, name, &results));
+    }
+
     let elapsed = start.elapsed();
-    let outcome = if result.is_ok() { StageOutcome::Passed } else { StageOutcome::Failed };
-    let run = match &result {
-        Ok(()) => {
-            // Record the stage as up-to-date for the next run, persisting per-file
-            // metadata so the next run can take the fast path.
-            if let Some(fp) = fingerprint {
-                cache.lock().unwrap().update_fingerprint(name, fp, output_paths);
-            }
-            write_event(reporter, buffered, &mut buf, |r, out| r.stage_passed(out, name));
-            StageRun::Done { outputs: stage_outputs_value, success: true }
+    let outcome = if stage_ok { StageOutcome::Passed } else { StageOutcome::Failed };
+    let run = if stage_ok {
+        // Record the stage as up-to-date for the next run, persisting per-file metadata so
+        // the next run can take the fast path. (A test stage has no fingerprint.)
+        if let Some(fp) = fingerprint {
+            cache.lock().unwrap().update_fingerprint(name, fp, output_paths);
         }
-        Err(e) => {
+        // For a test stage the tally summary is its pass marker, so skip the plain ✓ line.
+        if !stage.test {
+            write_event(reporter, buffered, &mut buf, |r, out| r.stage_passed(out, name));
+        }
+        StageRun::Done { outputs: stage_outputs_value, success: true }
+    } else {
+        // A hard step error (not an assertion failure) carries a diagnostic to render; an
+        // assertion-only failure is already conveyed by the test tally above.
+        if let Err(e) = &step_result {
             write_event(reporter, buffered, &mut buf, |r, out| {
                 r.stage_failed(out, name, e, stage.allow_failure)
             });
-            if stage.allow_failure {
-                // Treat as success — the cache is not updated, so the stage re-runs next
-                // time, but its declared outputs are still published for dependents.
-                StageRun::Done { outputs: stage_outputs_value, success: true }
-            } else {
-                StageRun::Done { outputs: None, success: false }
-            }
+        }
+        if stage.allow_failure {
+            // Treat as success — the cache is not updated, so the stage re-runs next time,
+            // but its declared outputs are still published for dependents.
+            StageRun::Done { outputs: stage_outputs_value, success: true }
+        } else {
+            StageRun::Done { outputs: None, success: false }
         }
     };
     write_event(reporter, buffered, &mut buf, |r, out| {

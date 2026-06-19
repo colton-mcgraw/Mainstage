@@ -156,6 +156,7 @@ stage <name> {
 
 | Field           | Type              | Required | Description                                               |
 |-----------------|-------------------|----------|-----------------------------------------------------------|
+| `description`   | `string`          | No       | Human-readable summary, shown by `mainstage list --describe` and the editor. |
 | `inputs`        | `fileset` / `list`| No       | Files this stage consumes. Used for change detection.     |
 | `outputs`       | `list`            | No       | Paths this stage produces. Used for change detection.     |
 | `depends_on`    | stage-name list   | No       | Explicit ordering edges to other stages (see below).      |
@@ -163,6 +164,7 @@ stage <name> {
 | `allow_failure` | `bool`            | No       | If `true`, pipeline does not stop on stage failure.       |
 | `always_run`    | `bool`            | No       | If `true`, the stage runs every invocation (see below).   |
 | `run_once`      | `bool`            | No       | If `true`, the stage's success is cached without `outputs` (see below). |
+| `test`          | `bool`            | No       | If `true`, the stage is a test stage: never cached, its `expect` / `assert` steps tallied (see below). |
 | `steps`         | block             | No       | Ordered steps to execute.                                 |
 | `on_failure`    | block             | No       | Steps to run if this stage fails. Always runs on failure. |
 
@@ -192,6 +194,30 @@ stage initialize {
 ```
 
 `always_run` and `run_once` are mutually exclusive — setting both on one stage is a semantic error.
+
+**`test`:** Marks the stage as a *test* stage. A test stage is never cached (like `always_run`), and its `expect` / `assert` steps are **tallied** rather than collapsed to a single exit code: a failed assertion does not stop the stage, so every assertion runs and is reported, and the stage fails (failing the pipeline, exit code non-zero) when any assertion fails. See [Test Harness](#test-harness) for the assertion steps.
+
+```mainstage
+stage unit {
+    test: true
+    steps {
+        assert "${project.version}" contains "1.2"
+        expect ok $ ./run-unit-tests
+    }
+}
+```
+
+`test` and `run_once` are mutually exclusive (a test stage is never cached) — setting both is a semantic error.
+
+**`description`:** An optional one-line summary of what the stage does. It is static text (no interpolation) and has no effect on execution; it makes a multi-stage build navigable from the CLI (`mainstage list --describe`) and from the editor (LSP document symbols and hover).
+
+```mainstage
+stage compile {
+    description: "Build the release binary for the host target"
+    inputs: sources
+    steps { $ cargo build --release }
+}
+```
 
 **Dependency resolution:** If a stage's `inputs` references another stage's `outputs` (e.g. `compile.outputs`), the runtime automatically runs that stage first. No explicit `depends_on` is needed for file-based dependencies.
 
@@ -630,6 +656,57 @@ A step's captured output is still shown; only its non-zero exit is swallowed. `t
 
 > **Prefer native steps over `$ sh -c`.** Reach for `copy` / `move` / `mkdir` / `delete` / `write` and `try` instead of shelling out: they run without a shell (no quoting or `PATH` surprises), are validated at analysis time, and work identically across platforms. For example, `sh -c "rm -rf d && mkdir -p d/sub && cp a d/sub/b"` is better written as `delete "d"` then `mkdir "d/sub"` then `copy a to "d/sub/b"`, and `sh -c "cmd || true"` as `try { $ cmd }`.
 
+### Test Harness
+
+`expect` and `assert` are *assertion* steps. They are most useful inside a [`test` stage](#stage-block), where a failed assertion is recorded into a pass/fail tally and execution continues, so every assertion runs and is reported. Used in an ordinary stage, a failed assertion fails the step (and therefore the stage) like any other step — a hard guard.
+
+#### `expect` — Assert About a Command
+
+Runs a command (the greedy `$` exec line, with the usual `${…}` interpolation) and asserts something about how it ran:
+
+```text
+expect ok                          [timeout <n>] $ <command>   // exits 0
+expect fails                       [timeout <n>] $ <command>   // exits non-zero
+expect output contains "<string>"  [timeout <n>] $ <command>   // combined stdout/stderr contains the string
+expect output equals "<string>"    [timeout <n>] $ <command>   // combined output (trimmed) equals the string
+```
+
+The expected string in an `output` check supports interpolation. The optional `timeout <n>` (seconds) kills the command if it does not finish in time; for `output contains` the command is also stopped **early** as soon as the marker appears, so a long-running boot-smoke process need not run out the full timeout.
+
+```mainstage
+stage smoke {
+    test: true
+    always_run: true
+    steps {
+        expect ok $ ./build/cli --version
+        expect fails $ ./build/cli --no-such-flag
+        // Boot the image, scrape the serial log for a marker, give up after 30s.
+        expect output contains "Boot OK" timeout 30 $ qemu-system-x86_64 -kernel build/os.bin -nographic
+    }
+}
+```
+
+#### `assert` — Compare Two Values
+
+Compares an evaluated value against an expected string. Both `equals` (exact, after trimming) and `contains` (substring) are available, and the expected value supports interpolation:
+
+```text
+assert <expr> equals   "<string>"
+assert <expr> contains "<string>"
+```
+
+```mainstage
+stage unit {
+    test: true
+    steps {
+        assert "${project.name}" equals "demo"
+        assert "${project.version}" contains "1.2"
+    }
+}
+```
+
+When run, a test stage prints each assertion's result and a `--quiet`-aware summary line (`tests: N passed` / `tests: M failed, N passed`); the run's exit code is non-zero if any assertion failed.
+
 ---
 
 ## Failure Handling
@@ -809,13 +886,15 @@ project_block   = "project" "{" project_field* "}" ;
 project_field   = ident ":" expr ","? ;
 
 stage_block     = "stage" ident "{" stage_field* "}" ;
-stage_field     = "inputs"        ":" expr                              ","?
+stage_field     = "description"   ":" string                            ","?
+                | "inputs"        ":" expr                              ","?
                 | "outputs"       ":" expr                              ","?
                 | "depends_on"    ":" "[" ( ident ( "," ident )* ","? )? "]" ","?
                 | "matrix"        "{" matrix_dim*                       "}"
                 | "allow_failure" ":" bool                              ","?
                 | "always_run"    ":" bool                              ","?
                 | "run_once"      ":" bool                              ","?
+                | "test"          ":" bool                              ","?
                 | "steps"         "{" step*                             "}"
                 | "on_failure"    "{" step*                             "}" ;
 matrix_dim      = ident ":" "[" ( string ( "," string )* ","? )? "]" ","? ;
@@ -835,7 +914,9 @@ step            = exec_step
                 | write_step
                 | if_step
                 | for_step
-                | try_step ;
+                | try_step
+                | expect_step
+                | assert_step ;
 
 exec_step       = "$" token+ NEWLINE ;
 copy_step       = "copy" expr "to" expr ;
@@ -846,6 +927,12 @@ write_step      = "write" expr "content" ":" string ;
 if_step         = "if" condition "{" step* "}" ( "else" "{" step* "}" )? ;
 for_step        = "for" ident "in" expr "{" step* "}" ;
 try_step        = "try" "{" step* "}" ;
+expect_step     = "expect" expect_check ( "timeout" int )? exec_step ;
+expect_check    = "ok"
+                | "fails"
+                | "output" match_op string ;
+assert_step     = "assert" expr match_op string ;
+match_op        = "contains" | "equals" ;
 
 (* Expressions *)
 expr            = string

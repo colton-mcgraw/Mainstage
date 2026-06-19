@@ -26,6 +26,10 @@ pub struct StageInfo {
     pub name: String,
     pub span: Span,
     pub outputs: Option<Span>,
+    /// The stage's `description:` text, if any (surfaced on hover and in the outline).
+    pub description: Option<String>,
+    /// Explicit `depends_on` ordering edges, by stage name.
+    pub depends_on: Vec<String>,
 }
 
 /// A single `<name>: <value>` field of the `project` block.
@@ -64,6 +68,8 @@ impl DocumentIndex {
                     name: s.name.clone(),
                     span: s.span.clone(),
                     outputs: s.outputs.as_ref().map(|e| e.span().clone()),
+                    description: s.description.clone(),
+                    depends_on: s.depends_on.iter().map(|d| d.name.clone()).collect(),
                 }),
                 Item::Project(p) => {
                     for f in &p.fields {

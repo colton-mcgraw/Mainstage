@@ -114,6 +114,7 @@ impl Builder {
         let mut inner = pair.into_inner();
         let name = inner.next().unwrap().as_str().to_string();
 
+        let mut description = None;
         let mut inputs = None;
         let mut outputs = None;
         let mut depends_on = Vec::new();
@@ -121,11 +122,16 @@ impl Builder {
         let mut allow_failure = false;
         let mut always_run = false;
         let mut run_once = false;
+        let mut test = false;
         let mut steps = Vec::new();
         let mut on_failure = Vec::new();
 
         for field in inner {
             match field.as_rule() {
+                Rule::stage_description => {
+                    // Static text (no interpolation), like import paths and matrix values.
+                    description = Some(self.extract_raw_string(field.into_inner().next().unwrap()));
+                }
                 Rule::stage_inputs => {
                     inputs = Some(self.build_expr(field.into_inner().next().unwrap()));
                 }
@@ -153,6 +159,10 @@ impl Builder {
                     let val = field.into_inner().next().unwrap().as_str();
                     run_once = val == "true";
                 }
+                Rule::stage_test => {
+                    let val = field.into_inner().next().unwrap().as_str();
+                    test = val == "true";
+                }
                 Rule::steps_block => {
                     steps = field.into_inner().map(|p| self.build_step(p)).collect();
                 }
@@ -165,6 +175,7 @@ impl Builder {
 
         StageBlock {
             name,
+            description,
             inputs,
             outputs,
             depends_on,
@@ -173,6 +184,7 @@ impl Builder {
             allow_failure,
             always_run,
             run_once,
+            test,
             steps,
             on_failure,
             span,
@@ -250,6 +262,8 @@ impl Builder {
             Rule::if_step => Step::If(self.build_if_step(pair)),
             Rule::for_step => Step::For(self.build_for_step(pair)),
             Rule::try_step => Step::Try(self.build_try_step(pair)),
+            Rule::expect_step => Step::Expect(self.build_expect_step(pair)),
+            Rule::assert_step => Step::Assert(self.build_assert_step(pair)),
             r => unreachable!("unexpected step rule: {:?}", r),
         }
     }
@@ -327,6 +341,63 @@ impl Builder {
         let span = self.span(&pair);
         let steps = pair.into_inner().map(|p| self.build_step(p)).collect();
         TryStep { steps, span }
+    }
+
+    fn build_expect_step(&mut self, pair: Pair<Rule>) -> ExpectStep {
+        let span = self.span(&pair);
+        let mut inner = pair.into_inner();
+        // First child is the check (expect_check is silent, so a concrete rule arrives).
+        let check_pair = inner.next().unwrap();
+        let check = match check_pair.as_rule() {
+            Rule::expect_ok => ExpectCheck::Ok,
+            Rule::expect_fail => ExpectCheck::Fails,
+            Rule::expect_output => {
+                let mut c = check_pair.into_inner();
+                let op = parse_match_op(c.next().unwrap().as_str());
+                let expected = self.build_string(c.next().unwrap());
+                ExpectCheck::Output { op, expected }
+            }
+            r => unreachable!("unexpected expect check rule: {:?}", r),
+        };
+        // Then an optional `timeout <n>` and the trailing `$` exec line.
+        let mut timeout_secs = None;
+        let mut command = String::new();
+        for p in inner {
+            match p.as_rule() {
+                Rule::expect_timeout => {
+                    let n = p.into_inner().next().unwrap();
+                    let nspan = self.span(&n);
+                    timeout_secs = Some(n.as_str().parse::<i64>().unwrap_or_else(|_| {
+                        self.error(
+                            format!(
+                                "timeout '{}' is out of range for a 64-bit integer",
+                                n.as_str()
+                            ),
+                            nspan,
+                        );
+                        0
+                    }));
+                }
+                Rule::exec_step => {
+                    command = p
+                        .into_inner()
+                        .next()
+                        .map(|x| x.as_str().trim_end().to_string())
+                        .unwrap_or_default();
+                }
+                r => unreachable!("unexpected expect_step child rule: {:?}", r),
+            }
+        }
+        ExpectStep { check, timeout_secs, command, span }
+    }
+
+    fn build_assert_step(&mut self, pair: Pair<Rule>) -> AssertStep {
+        let span = self.span(&pair);
+        let mut inner = pair.into_inner();
+        let actual = self.build_expr(inner.next().unwrap());
+        let op = parse_match_op(inner.next().unwrap().as_str());
+        let expected = self.build_string(inner.next().unwrap());
+        AssertStep { actual, op, expected, span }
     }
 
     // ── Expressions ───────────────────────────────────────────────────────────
@@ -590,6 +661,14 @@ impl Builder {
 }
 
 // ── Free helpers ──────────────────────────────────────────────────────────────
+
+fn parse_match_op(s: &str) -> MatchOp {
+    match s {
+        "contains" => MatchOp::Contains,
+        "equals" => MatchOp::Equals,
+        _ => unreachable!("unexpected match_op: {}", s),
+    }
+}
 
 fn parse_compare_op(s: &str) -> CompareOp {
     match s {

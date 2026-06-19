@@ -1,5 +1,6 @@
 import "env" as env;
 import "git" as git;
+import "fs" as fs;
 
 project {
     name: "my-app"
@@ -9,6 +10,9 @@ project {
 let sources = glob("src/**/*.rs");
 let out = env.get("OUT_DIR", default: "dist");
 let target = if platform == "windows" { "x86_64-pc-windows-msvc" } else { "x86_64-unknown-linux-gnu" };
+// Different projects spell the changelog differently; pick whichever exists so the
+// release bundle includes it without hardcoding a single name.
+let changelog = fs.find_first(["CHANGELOG.md", "CHANGES.md", "HISTORY.md"], default: "CHANGELOG.md");
 
 default pipeline dev {
     stages: [compile]
@@ -23,6 +27,7 @@ pipeline release {
 }
 
 stage compile {
+    description: "Build the release binary for the host target"
     inputs: sources
     outputs: ["target/${target}/release/my-app"]
 
@@ -36,6 +41,7 @@ stage compile {
 }
 
 stage lint {
+    description: "Run clippy; non-blocking so a warning never fails the build"
     inputs: sources
     allow_failure: true
 
@@ -48,6 +54,7 @@ stage lint {
 // `compile.outputs`, so this ordering is not inferable from files — `depends_on`
 // states it explicitly. Out-of-pipeline edges are ignored, so `dev` is unaffected.
 stage test {
+    description: "Run the test suite after a successful build"
     inputs: sources
     depends_on: [compile]
 
@@ -61,12 +68,14 @@ stage test {
 }
 
 stage package {
+    description: "Assemble the versioned release tarball"
     inputs: [compile.outputs]
     outputs: ["${out}/${project.name}-${project.version}.tar.gz"]
 
     steps {
         mkdir "${out}/"
         write "${out}/VERSION" content: "${project.version}"
+        copy "${changelog}" to "${out}/CHANGELOG.md"
         $ tar -czf "${outputs[0]}" "${out}/"
     }
 }
@@ -77,6 +86,7 @@ stage package {
 // single definition instead of copy-pasted stages. Listing the base name `bundle` in
 // the `release` pipeline runs every variant.
 stage bundle {
+    description: "Cross-compile and archive a tarball per target architecture"
     matrix {
         arch: ["x86_64", "aarch64"]
     }

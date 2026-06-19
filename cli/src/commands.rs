@@ -13,10 +13,10 @@ use clap::{Arg, ArgAction, Command};
 use console::style;
 use mainstage_core::ast::Program;
 use mainstage_core::{
-    AnalysisResult, CancelToken, Diagnostic, Error, EvalContext, LintLevel, ModuleRegistry,
-    Permissions, Plan, PlanStatus, Reporter, Source, Span, StageOutcome, analyze_with, ast, cache,
-    eval_program_with, lint_plugin, parse, pipeline_input_paths, plan_pipeline,
-    run_pipeline_cancellable,
+    AnalysisResult, AssertionResult, CancelToken, Diagnostic, Error, EvalContext, LintLevel,
+    ModuleRegistry, Permissions, Plan, PlanStatus, Reporter, Source, Span, StageOutcome,
+    analyze_with, ast, cache, eval_program_with, lint_plugin, parse, pipeline_input_paths,
+    plan_pipeline, run_pipeline_cancellable,
 };
 
 use crate::scaffold::{self, Lang};
@@ -104,7 +104,13 @@ pub fn setup(cli: Command) -> Command {
         .subcommand(
             Command::new("list")
                 .about("List all declared pipelines and their stages")
-                .arg(file_arg()),
+                .arg(file_arg())
+                .arg(
+                    Arg::new("describe")
+                        .long("describe")
+                        .action(ArgAction::SetTrue)
+                        .help("Show each stage's description: field, when present"),
+                ),
         )
         .subcommand(Command::new("clean").about("Clear the change-detection cache").arg(file_arg()))
         .subcommand(
@@ -220,7 +226,7 @@ pub fn dispatch(matches: &clap::ArgMatches) -> i32 {
             let name = sub.get_one::<String>("name").map(String::as_str);
             cmd_watch(file_of(sub), name, flags, jobs, verbosity)
         }
-        Some(("list", sub)) => cmd_list(file_of(sub), flags),
+        Some(("list", sub)) => cmd_list(file_of(sub), flags, sub.get_flag("describe")),
         Some(("clean", sub)) => cmd_clean(file_of(sub)),
         Some(("parse", sub)) => cmd_parse(file_of(sub)),
         Some(("eval", sub)) => cmd_eval(file_of(sub), flags),
@@ -528,7 +534,7 @@ fn wait_for_change(paths: &[std::path::PathBuf], cancel: &CancelToken) -> bool {
 
 // ── list ────────────────────────────────────────────────────────────────────────
 
-fn cmd_list(file: &str, perms: Permissions) -> i32 {
+fn cmd_list(file: &str, perms: Permissions, describe: bool) -> i32 {
     let Some((program, _, _)) = prepare(file, perms) else {
         return 1;
     };
@@ -560,6 +566,16 @@ fn cmd_list(file: &str, perms: Permissions) -> i32 {
         })
         .collect();
 
+    // Stage descriptions, surfaced under `--describe` so a multi-stage build is navigable.
+    let descriptions: std::collections::HashMap<&str, &str> = program
+        .items
+        .iter()
+        .filter_map(|item| match item {
+            ast::Item::Stage(s) => s.description.as_deref().map(|d| (s.name.as_str(), d)),
+            _ => None,
+        })
+        .collect();
+
     for p in pipelines {
         let marker =
             if p.is_default { format!(" {}", style("(default)").dim()) } else { String::new() };
@@ -576,6 +592,9 @@ fn cmd_list(file: &str, perms: Permissions) -> i32 {
                         println!("  - {s} {after}");
                     }
                     _ => println!("  - {s}"),
+                }
+                if describe && let Some(desc) = descriptions.get(s.as_str()) {
+                    println!("      {}", style(desc).dim());
                 }
             }
         }
@@ -1049,6 +1068,45 @@ impl Reporter for TermReporter {
         }
         let _ =
             writeln!(out, "{} {} {}", style("⊘").yellow(), stage, style("(cancelled)").yellow());
+    }
+
+    fn stage_tests(&self, out: &mut dyn Write, _stage: &str, results: &[AssertionResult]) {
+        let passed = results.iter().filter(|r| r.passed).count();
+        let failed = results.len() - passed;
+
+        // Per-assertion detail. Passing lines are progress (suppressed when quiet); failing
+        // lines — with their reason — are always shown, even in quiet mode.
+        for r in results {
+            if r.passed {
+                if !self.quiet() {
+                    let _ =
+                        writeln!(out, "  {} {}", style("✓").green(), style(&r.description).dim());
+                }
+            } else {
+                let _ = writeln!(out, "  {} {}", style("✗").red(), r.description);
+                if let Some(detail) = &r.detail {
+                    let _ = writeln!(out, "      {}", style(detail).dim());
+                }
+            }
+        }
+
+        // The `--quiet`-aware summary line: always printed on failure; on success only when
+        // not quiet.
+        if failed > 0 {
+            let _ = writeln!(
+                out,
+                "  {} {}",
+                style("✗").red().bold(),
+                style(format!("tests: {failed} failed, {passed} passed")).red()
+            );
+        } else if !self.quiet() {
+            let _ = writeln!(
+                out,
+                "  {} {}",
+                style("✓").green().bold(),
+                style(format!("tests: {passed} passed")).green()
+            );
+        }
     }
 
     fn stage_finished(
