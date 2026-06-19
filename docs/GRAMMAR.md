@@ -743,6 +743,48 @@ stage build {
 
 > **Prefer native steps over `$ sh -c`.** Reach for `copy` / `move` / `mkdir` / `delete` / `write`, `try`, `workdir`, and `with_env` instead of shelling out: they run without a shell (no quoting or `PATH` surprises), are validated at analysis time, and work identically across platforms. For example, `sh -c "rm -rf d && mkdir -p d/sub && cp a d/sub/b"` is better written as `delete "d"` then `mkdir "d/sub"` then `copy a to "d/sub/b"`; `sh -c "cmd || true"` as `try { $ cmd }`; and `sh -c "cd build && VAR=1 make"` as `workdir "build" { with_env { VAR: "1" } { $ make } }`.
 
+### `log` — Print a Progress Message
+
+Prints a message, with the usual `${…}` interpolation. The message is routed through the runner's reporter, so it honors `--quiet` (suppressed) and is captured in the per-stage buffered output — interleaved with the captured output of `$` commands, never tangled with another stage's output under parallel execution. Use it to surface progress instead of `$ echo`, which would spawn a process and stream raw to the terminal.
+
+```text
+log "<message>"
+```
+
+```mainstage
+stage deploy {
+    always_run: true
+
+    steps {
+        log "deploying ${project.name} to ${target}"
+        $ ./deploy.sh
+        log "deploy complete"
+    }
+}
+```
+
+### `fail` — Fail Deliberately
+
+Fails the enclosing stage with the given reason (interpolated), producing a user-facing error pointing at the step. It behaves exactly like any other failed step: a `fail` inside a [`try`](#try--tolerate-a-failing-step) block is swallowed, and a stage's [`on_failure`](#stage-level-on_failure) block fires. Use it to assert an invariant and stop — instead of a sentinel non-zero command like `$ exit 1`.
+
+```text
+fail "<reason>"
+```
+
+```mainstage
+stage release {
+    always_run: true
+
+    steps {
+        if env("VERSION") {
+            $ ./cut-release.sh
+        } else {
+            fail "VERSION must be set to cut a release"
+        }
+    }
+}
+```
+
 ### Test Harness
 
 `expect` and `assert` are *assertion* steps. They are most useful inside a [`test` stage](#stage-block), where a failed assertion is recorded into a pass/fail tally and execution continues, so every assertion runs and is reported. Used in an ordinary stage, a failed assertion fails the step (and therefore the stage) like any other step — a hard guard.
@@ -999,6 +1041,8 @@ step            = exec_step
                 | mkdir_step
                 | delete_step
                 | write_step
+                | log_step
+                | fail_step
                 | if_step
                 | for_step
                 | try_step
@@ -1013,6 +1057,8 @@ move_step       = "move" expr "to" expr ;
 mkdir_step      = "mkdir" expr ;
 delete_step     = "delete" expr ;
 write_step      = "write" expr "content" ":" string ;
+log_step        = "log" string ;
+fail_step       = "fail" string ;
 if_step         = "if" condition "{" step* "}" ( "else" "{" step* "}" )? ;
 for_step        = "for" ident "in" expr "{" step* "}" ;
 try_step        = "try" "{" step* "}" ;

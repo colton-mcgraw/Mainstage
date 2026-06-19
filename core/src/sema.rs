@@ -359,6 +359,8 @@ impl Analyzer {
                 self.resolve_expr(&s.actual, scope, ctx);
                 self.resolve_string_parts(&s.expected.parts, scope, ctx);
             }
+            Step::Log(s) => self.resolve_string_parts(&s.message.parts, scope, ctx),
+            Step::Fail(s) => self.resolve_string_parts(&s.reason.parts, scope, ctx),
         }
     }
 

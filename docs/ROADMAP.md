@@ -641,15 +641,15 @@ common remaining `sh -c "cd … && …"` and `FOO=bar cmd` patterns become nativ
 Make printing a message and failing deliberately first-class. Output: scripts emit progress
 and assert invariants without `$ echo` or a sentinel non-zero command.
 
-- [ ] `log "<msg>"` step (interpolated) routed through a new `Reporter` method (default no-op
+- [x] `log "<msg>"` step (interpolated) routed through a new `Reporter` method (default no-op
       body so `NoopReporter` / test reporters keep compiling), honoring `--quiet` and buffered
       per-stage output
-- [ ] `fail "<reason>"` step that fails the enclosing stage with a user-facing `Error::Eval`
+- [x] `fail "<reason>"` step that fails the enclosing stage with a user-facing `Error::Eval`
       diagnostic carrying the step span; interacts with `try` (swallowed) and `on_failure`
       (fires) exactly like a failed command
-- [ ] Grammar / AST / parser / `sema` (interpolation resolution) / `eval` wiring; `format.rs`
+- [x] Grammar / AST / parser / `sema` (interpolation resolution) / `eval` wiring; `format.rs`
       and LSP `walk_steps` arms
-- [ ] Docs and tests: `log` output under `--quiet` vs default, `fail` inside `if`, and `fail`
+- [x] Docs and tests: `log` output under `--quiet` vs default, `fail` inside `if`, and `fail`
       inside `try` not propagating
 
 ---

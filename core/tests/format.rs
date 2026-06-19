@@ -21,6 +21,7 @@ fn example_scripts() -> Vec<PathBuf> {
         root.join("main.ms"),
         root.join("tests/stdlib.ms"),
         root.join("tests/validation_errors.ms"),
+        root.join("tests/diagnostics.ms"),
         root.join("tests/plugin/main.ms"),
     ]
 }

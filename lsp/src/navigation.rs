@@ -362,6 +362,22 @@ fn walk_steps(steps: &[Step], occ: &mut Vec<Occurrence>) {
                     }
                 }
             }
+            // `log` / `fail` carry an interpolated string whose `${…}` expressions may
+            // reference navigable symbols.
+            Step::Log(s) => {
+                for part in &s.message.parts {
+                    if let StringPart::Interpolation(inner) = part {
+                        walk_expr(inner, occ);
+                    }
+                }
+            }
+            Step::Fail(s) => {
+                for part in &s.reason.parts {
+                    if let StringPart::Interpolation(inner) = part {
+                        walk_expr(inner, occ);
+                    }
+                }
+            }
             Step::Expect(s) => {
                 // The `$` command keeps its argument as a raw string (not walked); only an
                 // `output` check's expected value carries parsed `${…}` expressions.

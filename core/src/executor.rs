@@ -42,6 +42,8 @@ pub fn execute_step(step: &Step, ctx: &EvalContext) -> Result<()> {
         Step::WithEnv(s) => with_env_step(s, ctx),
         Step::Expect(s) => expect_step(s, ctx),
         Step::Assert(s) => assert_step(s, ctx),
+        Step::Log(s) => log_step(s, ctx),
+        Step::Fail(s) => fail_step(s, ctx),
     }
 }
 
@@ -191,6 +193,47 @@ fn with_env_step(s: &WithEnvStep, ctx: &EvalContext) -> Result<()> {
     }
     let child = ctx.with_env_overlay(overlay);
     execute_steps(&s.steps, &child)
+}
+
+// ── Diagnostic & control-flow steps (Phase 43) ───────────────────────────────────
+
+/// `log "<msg>"` — print an interpolated progress message. The message is rendered by the
+/// run's reporter (so `--quiet` and styling are honored centrally) and routed to the same
+/// destination as a `$` exec step's output: the per-stage buffer under the parallel runner,
+/// or straight to the terminal on the sequential path. Without a reporter (library use) it
+/// is a no-op, matching the `NoopReporter` default.
+fn log_step(s: &LogStep, ctx: &EvalContext) -> Result<()> {
+    let message = eval_string_expr(&s.message, ctx)?;
+    let Some(handle) = &ctx.reporter else {
+        return Ok(());
+    };
+    let mut line = Vec::new();
+    handle.0.step_log(&mut line, &message);
+    if line.is_empty() {
+        // The reporter suppressed the line (e.g. `--quiet`).
+        return Ok(());
+    }
+    match &ctx.output {
+        // Buffered (parallel) path: append to the stage's sink so the line interleaves with
+        // `$` output in execution order and is flushed atomically with the rest of the stage.
+        Some(sink) => sink.write(&line),
+        // Sequential path: a single worker streams output live, so write straight to stdout.
+        None => {
+            use std::io::Write as _;
+            let mut out = std::io::stdout().lock();
+            let _ = out.write_all(&line);
+            let _ = out.flush();
+        }
+    }
+    Ok(())
+}
+
+/// `fail "<reason>"` — fail the enclosing stage deliberately. The interpolated reason becomes
+/// a user-facing `Error::Eval` carrying the step span, so it behaves like any other failed
+/// step: a `try` block swallows it and a stage's `on_failure` block fires.
+fn fail_step(s: &FailStep, ctx: &EvalContext) -> Result<()> {
+    let reason = eval_string_expr(&s.reason, ctx)?;
+    Err(step_err(reason, &s.span))
 }
 
 // ── Test-harness steps (Phase 39) ────────────────────────────────────────────────
@@ -732,6 +775,7 @@ mod tests {
             tests: None,
             cwd_override: None,
             env_overlay: HashMap::new(),
+            reporter: None,
         }
     }
 
@@ -852,6 +896,7 @@ mod tests {
             tests: None,
             cwd_override: None,
             env_overlay: HashMap::new(),
+            reporter: None,
         };
         let span = span();
         let path_expr = Expr::Ident(IdentExpr { name: "p".to_string(), span: span.clone() });
@@ -1016,6 +1061,7 @@ mod tests {
             tests: None,
             cwd_override: None,
             env_overlay: HashMap::new(),
+            reporter: None,
         };
         let span = span();
         let path_expr = Expr::Ident(IdentExpr { name: "p".to_string(), span: span.clone() });
@@ -1185,5 +1231,119 @@ mod tests {
         assert!(out.contains("9 2"), "inner overlay wins and outer keys survive; got: {out}");
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // ── log / fail (Phase 43) ──────────────────────────────────────────────────
+
+    /// A reporter that renders `log` messages as `LOG:<msg>` so a test can observe routing.
+    struct EchoReporter;
+    impl crate::runner::Reporter for EchoReporter {
+        fn step_log(&self, out: &mut dyn std::io::Write, message: &str) {
+            let _ = write!(out, "LOG:{message}");
+        }
+    }
+
+    /// A `log "<msg>"` step.
+    fn log(message: &str) -> Step {
+        Step::Log(LogStep {
+            message: StringExpr {
+                parts: vec![StringPart::Literal(message.to_string())],
+                span: span(),
+            },
+            span: span(),
+        })
+    }
+
+    #[test]
+    fn log_routes_through_reporter_into_the_stage_sink() {
+        use crate::eval::{OutputSink, ReporterHandle};
+        let sink = Arc::new(OutputSink::default());
+        let mut ctx = ctx_with(&[("who", "world")]);
+        ctx.output = Some(Arc::clone(&sink));
+        ctx.reporter = Some(ReporterHandle(Arc::new(EchoReporter)));
+
+        // log "hi ${who}" → routed through the reporter, captured in the per-stage buffer.
+        let step = Step::Log(LogStep {
+            message: StringExpr {
+                parts: vec![
+                    StringPart::Literal("hi ".to_string()),
+                    StringPart::Interpolation(Box::new(Expr::Ident(IdentExpr {
+                        name: "who".to_string(),
+                        span: span(),
+                    }))),
+                ],
+                span: span(),
+            },
+            span: span(),
+        });
+        execute_step(&step, &ctx).expect("log step should succeed");
+        assert_eq!(String::from_utf8_lossy(&sink.take()), "LOG:hi world");
+    }
+
+    #[test]
+    fn log_with_no_reporter_is_a_silent_noop() {
+        use crate::eval::OutputSink;
+        let sink = Arc::new(OutputSink::default());
+        let mut ctx = ctx_with(&[]);
+        ctx.output = Some(Arc::clone(&sink));
+        // No reporter installed (library use): the line is suppressed entirely.
+        execute_step(&log("nothing prints"), &ctx).expect("log is a no-op without a reporter");
+        assert!(sink.take().is_empty(), "log writes nothing when no reporter is present");
+    }
+
+    #[test]
+    fn log_suppressed_when_reporter_writes_nothing() {
+        use crate::eval::{OutputSink, ReporterHandle};
+        // A quiet-style reporter renders nothing; the empty render must not reach the sink.
+        struct QuietReporter;
+        impl crate::runner::Reporter for QuietReporter {}
+        let sink = Arc::new(OutputSink::default());
+        let mut ctx = ctx_with(&[]);
+        ctx.output = Some(Arc::clone(&sink));
+        ctx.reporter = Some(ReporterHandle(Arc::new(QuietReporter)));
+        execute_step(&log("hush"), &ctx).expect("log should succeed");
+        assert!(sink.take().is_empty(), "a no-op reporter render produces no output");
+    }
+
+    #[test]
+    fn fail_returns_an_error_with_the_interpolated_reason() {
+        let ctx = ctx_with(&[("kind", "release")]);
+        // fail "bad ${kind}" → an Eval error carrying the interpolated reason.
+        let step = Step::Fail(FailStep {
+            reason: StringExpr {
+                parts: vec![
+                    StringPart::Literal("bad ".to_string()),
+                    StringPart::Interpolation(Box::new(Expr::Ident(IdentExpr {
+                        name: "kind".to_string(),
+                        span: span(),
+                    }))),
+                ],
+                span: span(),
+            },
+            span: span(),
+        });
+        let err = execute_step(&step, &ctx).expect_err("fail must error");
+        match err {
+            Error::Eval(diags) => assert_eq!(diags[0].message, "bad release"),
+            other => panic!("expected an Eval error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn fail_inside_try_does_not_propagate() {
+        let ctx = ctx_with(&[]);
+        let step = Step::Try(TryStep { steps: vec![log_fail("boom")], span: span() });
+        execute_step(&step, &ctx).expect("try swallows a fail step like any other failure");
+    }
+
+    /// A `fail "<reason>"` step.
+    fn log_fail(reason: &str) -> Step {
+        Step::Fail(FailStep {
+            reason: StringExpr {
+                parts: vec![StringPart::Literal(reason.to_string())],
+                span: span(),
+            },
+            span: span(),
+        })
     }
 }

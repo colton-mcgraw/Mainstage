@@ -439,6 +439,10 @@ pub enum Step {
     Expect(ExpectStep),
     /// `assert <expr> equals|contains <string>` — compare a value to an expected one.
     Assert(AssertStep),
+    /// `log "<msg>"` — print an interpolated progress message via the reporter.
+    Log(LogStep),
+    /// `fail "<reason>"` — fail the enclosing stage deliberately with a diagnostic.
+    Fail(FailStep),
 }
 
 impl Step {
@@ -458,6 +462,8 @@ impl Step {
             Step::WithEnv(s) => &s.span,
             Step::Expect(s) => &s.span,
             Step::Assert(s) => &s.span,
+            Step::Log(s) => &s.span,
+            Step::Fail(s) => &s.span,
         }
     }
 }
@@ -603,6 +609,24 @@ pub struct AssertStep {
     pub actual: Expr,
     pub op: MatchOp,
     pub expected: StringExpr,
+    pub span: Span,
+}
+
+/// `log "<msg>"` — print a progress message. The message supports `${…}` interpolation
+/// and is routed through the runner's reporter, so it honors `--quiet` and is captured in
+/// the per-stage buffered output exactly like the captured output of a `$` exec step.
+#[derive(Debug, Clone)]
+pub struct LogStep {
+    pub message: StringExpr,
+    pub span: Span,
+}
+
+/// `fail "<reason>"` — fail the enclosing stage deliberately. The interpolated reason
+/// becomes a user-facing `Error::Eval` diagnostic carrying the step span. It behaves like
+/// any other failed step: a `try` block swallows it, and a stage's `on_failure` block fires.
+#[derive(Debug, Clone)]
+pub struct FailStep {
+    pub reason: StringExpr,
     pub span: Span,
 }
 

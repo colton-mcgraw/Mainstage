@@ -1084,3 +1084,139 @@ fn assert_outside_test_stage_hard_fails() {
 
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+// ── Diagnostic & control-flow steps (Phase 43) ────────────────────────────────────
+
+/// Captures the interpolated messages emitted by `log` steps so a test can inspect them.
+#[derive(Default)]
+struct LogCapture {
+    messages: Mutex<Vec<String>>,
+}
+
+impl Reporter for LogCapture {
+    fn step_log(&self, _out: &mut dyn std::io::Write, message: &str) {
+        // Record only (don't echo to the captured `out`), so the test stays quiet on stdout;
+        // routing the rendered bytes into the per-stage sink is covered by an executor test.
+        self.messages.lock().unwrap().push(message.to_string());
+    }
+}
+
+/// Run the default pipeline with a [`LogCapture`] installed on the context, returning the
+/// run result and the captured `log` messages in emission order.
+fn run_capturing_logs(src: &str, dir: &Path) -> (mainstage_core::Result<()>, Vec<String>) {
+    let program = parse(&Source::from_str("test.ms", src)).expect("parse should succeed");
+    let analysis = analyze(&program).expect("analysis should succeed");
+    let base = eval_program(&program, dir).expect("eval should succeed");
+    let cap = std::sync::Arc::new(LogCapture::default());
+    let ctx = base.with_reporter(mainstage_core::ReporterHandle(cap.clone()));
+    let result = run_pipeline(&program, None, &ctx, &analysis);
+    let messages = cap.messages.lock().unwrap().clone();
+    (result, messages)
+}
+
+#[test]
+fn log_routes_interpolated_messages_through_the_reporter() {
+    let dir = unique_dir("log_route");
+    let src = r#"
+        project { name: "demo" }
+        default pipeline build { stages: [setup] }
+        stage setup {
+            always_run: true
+            steps {
+                log "building ${project.name}"
+                log "platform ${platform}"
+            }
+        }
+    "#;
+
+    let (result, messages) = run_capturing_logs(src, &dir);
+    result.expect("a stage with only log steps should succeed");
+    assert_eq!(messages.first().map(String::as_str), Some("building demo"));
+    assert!(messages.iter().any(|m| m.starts_with("platform ")), "got: {messages:?}");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn fail_fails_the_stage_and_runs_on_failure() {
+    let dir = unique_dir("fail_onfail");
+    let d = dir.display();
+    let src = format!(
+        r#"
+        default pipeline build {{ stages: [check] }}
+        stage check {{
+            always_run: true
+            steps {{
+                fail "deliberate stop"
+            }}
+            on_failure {{ write "{d}/handled" content: "x" }}
+        }}
+        "#
+    );
+
+    let result = run(&src, &dir, None);
+    assert!(result.is_err(), "a `fail` step must fail the stage and pipeline");
+    assert!(exists(&dir, "handled"), "the stage's on_failure block fires on a `fail`");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn fail_inside_try_does_not_propagate() {
+    let dir = unique_dir("fail_try");
+    let d = dir.display();
+    let src = format!(
+        r#"
+        default pipeline build {{ stages: [setup] }}
+        stage setup {{
+            always_run: true
+            steps {{
+                try {{
+                    fail "optional refresh failed"
+                }}
+                write "{d}/after" content: "x"
+            }}
+        }}
+        "#
+    );
+
+    run(&src, &dir, None).expect("a `fail` inside `try` is swallowed, so the stage succeeds");
+    assert!(exists(&dir, "after"), "execution continues after a swallowed `fail`");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn committed_diagnostics_example_runs_green() {
+    // The repo-root `tests/diagnostics.ms` example must parse, analyze, evaluate, and run:
+    // its only `fail` sits inside a `try`, so the pipeline succeeds.
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap().join("tests");
+    let source = Source::from_file(dir.join("diagnostics.ms")).expect("example file should exist");
+    let program = parse(&source).expect("example should parse");
+    let analysis = analyze(&program).expect("example should analyze");
+    let ctx = eval_program(&program, &dir).expect("example should evaluate");
+    run_pipeline(&program, None, &ctx, &analysis)
+        .expect("the committed diagnostics example should run green");
+}
+
+#[test]
+fn fail_inside_if_fails_only_when_the_branch_runs() {
+    let dir = unique_dir("fail_if");
+    // The condition is false (no env var), so the `fail` branch is skipped and the stage
+    // succeeds — proving `fail` participates in conditional control flow.
+    let src = r#"
+        default pipeline build { stages: [gate] }
+        stage gate {
+            always_run: true
+            steps {
+                if env("MS_FORCE_FAIL_PHASE43") {
+                    fail "forced"
+                }
+            }
+        }
+    "#;
+
+    run(src, &dir, None).expect("the unselected `fail` branch does not run, so the stage passes");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}

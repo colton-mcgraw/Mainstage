@@ -614,3 +614,49 @@ fn mixed_inputs_and_depends_on_cycle_errors() {
     );
     assert!(has_msg(&diags, "dependency cycle"));
 }
+
+// ── log / fail steps (Phase 43) ─────────────────────────────────────────────────
+
+#[test]
+fn log_and_fail_resolve_interpolated_names() {
+    // The `${…}` interpolation in a `log` / `fail` message resolves like any expression.
+    analyze_ok(
+        r#"
+        let name = "demo";
+        stage s {
+            steps {
+                log "building ${name}"
+                fail "cannot build ${name}"
+            }
+        }
+        "#,
+    );
+}
+
+#[test]
+fn log_with_undefined_interpolation_errors() {
+    let diags = analyze_err(
+        r#"
+        stage s {
+            steps {
+                log "value is ${missing}"
+            }
+        }
+        "#,
+    );
+    assert!(has_msg(&diags, "undefined name 'missing'"));
+}
+
+#[test]
+fn fail_with_undefined_interpolation_errors() {
+    let diags = analyze_err(
+        r#"
+        stage s {
+            steps {
+                fail "bad ${missing}"
+            }
+        }
+        "#,
+    );
+    assert!(has_msg(&diags, "undefined name 'missing'"));
+}
