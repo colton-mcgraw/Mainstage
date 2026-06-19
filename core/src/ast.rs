@@ -311,6 +311,10 @@ pub struct IdentExpr {
 pub enum Condition {
     Env(EnvCondition),
     Platform(PlatformCondition),
+    /// `<expr> <op> <expr>` — compare two arbitrary expression values (Phase 41).
+    Compare(CompareCondition),
+    /// `empty(<expr>)` — true when the operand is an empty string, list, or fileset.
+    Empty(EmptyCondition),
     /// `!<cond>` — logical negation.
     Not(Box<Condition>, Span),
     /// `<cond> and <cond>` — short-circuit logical conjunction.
@@ -325,6 +329,8 @@ impl Condition {
         match self {
             Condition::Env(c) => &c.span,
             Condition::Platform(c) => &c.span,
+            Condition::Compare(c) => &c.span,
+            Condition::Empty(c) => &c.span,
             Condition::Not(_, s) | Condition::And(_, _, s) | Condition::Or(_, _, s) => s,
         }
     }
@@ -348,6 +354,40 @@ pub struct PlatformCondition {
     pub op: CompareOp,
     pub value: Platform,
     pub span: Span,
+}
+
+/// `<expr> == <expr>`, `<expr> != <expr>`, `<expr> contains <expr>`, or
+/// `<expr> in <expr>` — compares two evaluated values (Phase 41). Unlike
+/// `EnvCondition` / `PlatformCondition`, either operand may be any expression
+/// (a `let`, module-call result, `project.<field>`, list, literal, …).
+#[derive(Debug, Clone)]
+pub struct CompareCondition {
+    pub lhs: Expr,
+    pub op: CondOp,
+    pub rhs: Expr,
+    pub span: Span,
+}
+
+/// `empty(<expr>)` — true when the operand evaluates to an empty string, an empty
+/// list, or an empty fileset.
+#[derive(Debug, Clone)]
+pub struct EmptyCondition {
+    pub expr: Expr,
+    pub span: Span,
+}
+
+/// Operator in a general expression-comparison condition (Phase 41).
+#[derive(Debug, Clone, PartialEq)]
+pub enum CondOp {
+    /// `==` — the two operands are equal.
+    Eq,
+    /// `!=` — the two operands are not equal.
+    Ne,
+    /// `contains` — the left operand (string substring, or list/fileset membership)
+    /// contains the right operand.
+    Contains,
+    /// `in` — the left operand is contained in the right (the mirror of `contains`).
+    In,
 }
 
 /// `==` or `!=` comparison operator used in conditions.

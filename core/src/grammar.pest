@@ -102,10 +102,19 @@ condition    = { or_cond }
 or_cond      = { and_cond ~ ("or" ~ and_cond)* }
 and_cond     = { unary_cond ~ ("and" ~ unary_cond)* }
 unary_cond   = { "!" ~ unary_cond | primary_cond }
-primary_cond = { "(" ~ condition ~ ")" | env_cond | platform_cond }
+// Order matters (PEG): the specific `env(...)` / `platform` forms stay canonical and are
+// tried before the general `expr_cond`, which would otherwise match `env`/`platform` as
+// bare identifiers. `empty(...)` precedes `expr_cond` for the same reason. `expr_cond`
+// is the most general and therefore last.
+primary_cond = { "(" ~ condition ~ ")" | env_cond | platform_cond | empty_cond | expr_cond }
 env_cond     = { "env" ~ "(" ~ string ~ ")" ~ (compare_op ~ string)? }
 platform_cond = { "platform" ~ compare_op ~ string }
+// General expression comparison (Phase 41): compare two evaluated values. `empty(expr)`
+// is the emptiness predicate over strings, lists, and filesets.
+empty_cond   = { "empty" ~ "(" ~ expr ~ ")" }
+expr_cond    = { expr ~ cond_op ~ expr }
 compare_op   = { "==" | "!=" }
+cond_op      = { "==" | "!=" | "contains" | "in" }
 
 // ── Primitives ────────────────────────────────────────────────────────────────
 

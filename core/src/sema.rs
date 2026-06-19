@@ -298,6 +298,7 @@ impl Analyzer {
                 self.resolve_string_parts(&s.content.parts, scope, ctx);
             }
             Step::If(s) => {
+                self.resolve_condition(&s.condition, scope, ctx);
                 for step in &s.then_steps {
                     self.resolve_step(step, scope, for_vars);
                 }
@@ -348,6 +349,7 @@ impl Analyzer {
                 }
             }
             Expr::If(if_expr) => {
+                self.resolve_condition(&if_expr.condition, scope, ctx);
                 self.resolve_expr(&if_expr.then_expr, scope, ctx);
                 self.resolve_expr(&if_expr.else_expr, scope, ctx);
                 self.check_if_type_compat(if_expr, scope);
@@ -468,6 +470,53 @@ impl Analyzer {
             Expr::MemberAccess(_) => Some(ExprType::String),
             // Identifier types require binding lookup — not available statically.
             Expr::Ident(_) => None,
+        }
+    }
+
+    // ── Condition resolution ──────────────────────────────────────────────────
+    //
+    // `env(...)` / `platform` conditions reference no navigable symbols and need no
+    // resolution. The general `<expr> <op> <expr>` and `empty(<expr>)` forms (Phase 41)
+    // carry arbitrary operand expressions, so their names are resolved here exactly as
+    // any other expression — including the forward-reference rule via the `ctx`.
+
+    fn resolve_condition(&mut self, cond: &Condition, scope: &Scope, ctx: ExprCtx<'_>) {
+        match cond {
+            Condition::Env(_) | Condition::Platform(_) => {}
+            Condition::Not(inner, _) => self.resolve_condition(inner, scope, ctx),
+            Condition::And(a, b, _) | Condition::Or(a, b, _) => {
+                self.resolve_condition(a, scope, ctx);
+                self.resolve_condition(b, scope, ctx);
+            }
+            Condition::Compare(c) => {
+                self.resolve_expr(&c.lhs, scope, ctx);
+                self.resolve_expr(&c.rhs, scope, ctx);
+                self.check_compare_type_compat(c, scope);
+            }
+            Condition::Empty(c) => self.resolve_expr(&c.expr, scope, ctx),
+        }
+    }
+
+    /// For `==` / `!=`, the two operands must produce the same type — reusing the
+    /// `if/else` branch-compatibility logic. `contains` / `in` accept mixed operand
+    /// types (e.g. a string in a list), so their compatibility is left to eval time.
+    fn check_compare_type_compat(&mut self, c: &CompareCondition, scope: &Scope) {
+        if !matches!(c.op, CondOp::Eq | CondOp::Ne) {
+            return;
+        }
+        let lt = self.infer_type(&c.lhs, scope);
+        let rt = self.infer_type(&c.rhs, scope);
+        if let (Some(l), Some(r)) = (lt, rt)
+            && l != r
+        {
+            self.error(
+                format!(
+                    "comparison operands have incompatible types: left produces {}, right produces {}",
+                    l.describe(),
+                    r.describe()
+                ),
+                c.span.clone(),
+            );
         }
     }
 

@@ -150,6 +150,64 @@ fn env_condition_drives_if_else() {
     unsafe { std::env::remove_var("_MS_EVAL_FLAG") };
 }
 
+#[test]
+fn general_comparison_conditions_drive_if_else() {
+    // `==` / `!=` against a `let`-bound value.
+    let ctx = eval(
+        r#"
+        let mode = "release";
+        let flags = if mode == "release" { "-O2" } else { "-g" };
+        let other = if mode != "release" { "-g" } else { "-O2" };
+        "#,
+    );
+    assert!(matches!(let_val(&ctx, "flags"), Value::String(s) if s == "-O2"));
+    assert!(matches!(let_val(&ctx, "other"), Value::String(s) if s == "-O2"));
+
+    // `contains` (substring) and `in` (list membership).
+    let ctx = eval(
+        r#"
+        let v = "1.2.0-rc1";
+        let pre = if v contains "-rc" { "prerelease" } else { "stable" };
+        let arch = "aarch64";
+        let known = if arch in ["x86_64", "aarch64"] { "yes" } else { "no" };
+        let missing = if "riscv" in ["x86_64", "aarch64"] { "yes" } else { "no" };
+        "#,
+    );
+    assert!(matches!(let_val(&ctx, "pre"), Value::String(s) if s == "prerelease"));
+    assert!(matches!(let_val(&ctx, "known"), Value::String(s) if s == "yes"));
+    assert!(matches!(let_val(&ctx, "missing"), Value::String(s) if s == "no"));
+}
+
+#[test]
+fn empty_condition_tests_strings_and_lists() {
+    let ctx = eval(
+        r#"
+        let blank = if empty("") { "empty" } else { "filled" };
+        let filled = if empty("x") { "empty" } else { "filled" };
+        let no_items = if empty([]) { "empty" } else { "filled" };
+        let some_items = if !empty(["a"]) { "nonempty" } else { "empty" };
+        "#,
+    );
+    assert!(matches!(let_val(&ctx, "blank"), Value::String(s) if s == "empty"));
+    assert!(matches!(let_val(&ctx, "filled"), Value::String(s) if s == "filled"));
+    assert!(matches!(let_val(&ctx, "no_items"), Value::String(s) if s == "empty"));
+    assert!(matches!(let_val(&ctx, "some_items"), Value::String(s) if s == "nonempty"));
+}
+
+#[test]
+fn empty_condition_over_glob_fileset() {
+    let dir = unique_dir("empty_glob");
+    // No files match, so the fileset is empty.
+    let ctx = eval_in(
+        r#"
+        let srcs = glob("none/**/*.zzz");
+        let state = if empty(srcs) { "no-sources" } else { "have-sources" };
+        "#,
+        &dir,
+    );
+    assert!(matches!(let_val(&ctx, "state"), Value::String(s) if s == "no-sources"));
+}
+
 // ── glob / fileset ──────────────────────────────────────────────────────────────
 
 #[test]

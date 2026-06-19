@@ -603,6 +603,8 @@ impl Builder {
             Rule::condition => self.build_condition(inner),
             Rule::env_cond => self.build_env_cond(inner),
             Rule::platform_cond => self.build_platform_cond(inner),
+            Rule::empty_cond => self.build_empty_cond(inner),
+            Rule::expr_cond => self.build_expr_cond(inner),
             r => unreachable!("unexpected primary_cond rule: {:?}", r),
         }
     }
@@ -647,6 +649,21 @@ impl Builder {
         Condition::Platform(PlatformCondition { op, value: platform, span })
     }
 
+    fn build_expr_cond(&mut self, pair: Pair<Rule>) -> Condition {
+        let span = self.span(&pair);
+        let mut inner = pair.into_inner();
+        let lhs = self.build_expr(inner.next().unwrap());
+        let op = parse_cond_op(inner.next().unwrap().as_str());
+        let rhs = self.build_expr(inner.next().unwrap());
+        Condition::Compare(CompareCondition { lhs, op, rhs, span })
+    }
+
+    fn build_empty_cond(&mut self, pair: Pair<Rule>) -> Condition {
+        let span = self.span(&pair);
+        let expr = self.build_expr(pair.into_inner().next().unwrap());
+        Condition::Empty(EmptyCondition { expr, span })
+    }
+
     // ── Helpers ───────────────────────────────────────────────────────────────
 
     fn merge_spans(&self, a: &Span, b: &Span) -> Span {
@@ -675,6 +692,16 @@ fn parse_compare_op(s: &str) -> CompareOp {
         "==" => CompareOp::Eq,
         "!=" => CompareOp::Ne,
         _ => unreachable!("unexpected compare_op: {}", s),
+    }
+}
+
+fn parse_cond_op(s: &str) -> CondOp {
+    match s {
+        "==" => CondOp::Eq,
+        "!=" => CondOp::Ne,
+        "contains" => CondOp::Contains,
+        "in" => CondOp::In,
+        _ => unreachable!("unexpected cond_op: {}", s),
     }
 }
 

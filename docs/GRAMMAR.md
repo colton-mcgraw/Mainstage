@@ -468,6 +468,11 @@ Conditions appear in `if` expressions and `if` steps.
 | `platform == "linux"`           | True on Linux                                 |
 | `platform == "macos"`           | True on macOS                                 |
 | `platform != "windows"`         | True on any platform except Windows           |
+| `<expr> == <expr>`              | True if the two values are equal              |
+| `<expr> != <expr>`              | True if the two values are not equal          |
+| `<expr> contains <expr>`        | True if the left value contains the right     |
+| `<expr> in <expr>`              | True if the left value is contained in the right |
+| `empty(<expr>)`                 | True if the value is an empty string, list, or fileset |
 | `!<condition>`                  | Logical negation                              |
 | `<condition> and <condition>`   | Logical AND                                   |
 | `<condition> or <condition>`    | Logical OR                                    |
@@ -479,6 +484,38 @@ if env("CI") and (platform == "linux" or platform == "macos") {
     ...
 }
 ```
+
+### General comparisons
+
+Beyond the special `env(...)` and `platform` forms, a condition can compare any two
+expressions — a `let` binding, a module-call result, a `project.<field>`, a list, or a
+literal. This means a value you already hold can drive an `if` directly, instead of being
+routed back through `env(...)`:
+
+```mainstage
+let mode = env.get("MODE", default: "debug");
+let flags = if mode == "release" { "-O2" } else { "-g" };
+
+// `contains` is substring containment for strings and membership for lists/filesets.
+let prerelease = if project.version contains "-rc" { "yes" } else { "no" };
+
+// `in` is the mirror of `contains`: left operand inside the right.
+let supported = if arch in ["x86_64", "aarch64"] { "yes" } else { "no" };
+```
+
+`empty(...)` is true for an empty string, an empty list, or an empty fileset (a `glob`
+that matched nothing); combine it with `!` for the non-empty case:
+
+```mainstage
+let sources = glob("src/**/*.rs");
+let plan = if empty(sources) { "nothing to build" } else { "build" };
+```
+
+For `==` and `!=`, both operands must produce the same type — this is checked during
+semantic analysis, exactly like the two branches of an `if/else` expression. `contains`
+and `in` accept mixed operand types (for example, a string tested against a list), so they
+are checked at evaluation time. The `env(...)` and `platform` spellings remain the
+canonical, preferred form for environment and platform tests.
 
 ---
 
@@ -962,7 +999,10 @@ and_cond        = unary_cond ( "and" unary_cond )* ;
 unary_cond      = "!" unary_cond | primary_cond ;
 primary_cond    = "(" condition ")"
                 | "env" "(" string ")" ( ( "==" | "!=" ) string )?
-                | "platform" ( "==" | "!=" ) platform_val ;
+                | "platform" ( "==" | "!=" ) platform_val
+                | "empty" "(" expr ")"
+                | expr cond_op expr ;
+cond_op         = "==" | "!=" | "contains" | "in" ;
 platform_val    = '"windows"' | '"linux"' | '"macos"' ;
 
 (* Primitives *)

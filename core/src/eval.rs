@@ -386,6 +386,62 @@ pub fn eval_condition(condition: &Condition, ctx: &EvalContext) -> Result<bool> 
     Evaluator { ctx }.eval_condition(condition)
 }
 
+// ── General comparison conditions (Phase 41) ───────────────────────────────────
+
+/// Apply a comparison operator to two evaluated values. Operand type compatibility for
+/// `==` / `!=` is checked statically in `sema`; at runtime, mismatched types simply
+/// compare unequal rather than erroring.
+fn eval_compare(op: &CondOp, lhs: &Value, rhs: &Value) -> bool {
+    match op {
+        CondOp::Eq => values_equal(lhs, rhs),
+        CondOp::Ne => !values_equal(lhs, rhs),
+        CondOp::Contains => value_contains(lhs, rhs),
+        // `a in b` is the mirror of `b contains a`.
+        CondOp::In => value_contains(rhs, lhs),
+    }
+}
+
+/// Structural equality between two runtime values. Different value kinds are never equal.
+fn values_equal(a: &Value, b: &Value) -> bool {
+    match (a, b) {
+        (Value::String(x), Value::String(y)) => x == y,
+        (Value::Int(x), Value::Int(y)) => x == y,
+        (Value::Bool(x), Value::Bool(y)) => x == y,
+        (Value::List(x), Value::List(y)) => {
+            x.len() == y.len() && x.iter().zip(y).all(|(p, q)| values_equal(p, q))
+        }
+        (Value::FileSet(x), Value::FileSet(y)) => {
+            x.len() == y.len() && x.iter().zip(y).all(|(p, q)| p.path == q.path)
+        }
+        _ => false,
+    }
+}
+
+/// Whether `haystack` contains `needle`: substring for strings, membership for lists
+/// and filesets.
+fn value_contains(haystack: &Value, needle: &Value) -> bool {
+    match haystack {
+        Value::String(s) => s.contains(needle.display_string().as_str()),
+        Value::List(items) => items.iter().any(|item| values_equal(item, needle)),
+        Value::FileSet(entries) => {
+            let n = needle.display_string();
+            entries.iter().any(|e| e.path.to_string_lossy() == n)
+        }
+        // Scalars have no notion of containment.
+        Value::Int(_) | Value::Bool(_) => false,
+    }
+}
+
+/// Emptiness is defined for strings, lists, and filesets; scalars are never empty.
+fn value_is_empty(v: &Value) -> bool {
+    match v {
+        Value::String(s) => s.is_empty(),
+        Value::List(items) => items.is_empty(),
+        Value::FileSet(entries) => entries.is_empty(),
+        Value::Int(_) | Value::Bool(_) => false,
+    }
+}
+
 // ── Evaluator ─────────────────────────────────────────────────────────────────
 
 struct Evaluator<'a> {
@@ -525,6 +581,12 @@ impl<'a> Evaluator<'a> {
                     CompareOp::Ne => self.ctx.platform != rhs,
                 })
             }
+            Condition::Compare(c) => {
+                let lhs = self.eval(&c.lhs)?;
+                let rhs = self.eval(&c.rhs)?;
+                Ok(eval_compare(&c.op, &lhs, &rhs))
+            }
+            Condition::Empty(c) => Ok(value_is_empty(&self.eval(&c.expr)?)),
             Condition::Not(inner, _) => Ok(!self.eval_condition(inner)?),
             Condition::And(a, b, _) => Ok(self.eval_condition(a)? && self.eval_condition(b)?),
             Condition::Or(a, b, _) => Ok(self.eval_condition(a)? || self.eval_condition(b)?),

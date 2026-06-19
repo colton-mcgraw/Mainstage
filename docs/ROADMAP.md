@@ -603,16 +603,16 @@ Let conditions compare arbitrary expressions, not just `env()` / `platform`. Out
 `let`, module-call result, or `project.<field>` can drive an `if/else` expression or `if`
 step directly, retiring the "route everything through `env()`" workaround.
 
-- [ ] Extend `primary_cond` in `grammar.pest` with a general comparison form
+- [x] Extend `primary_cond` in `grammar.pest` with a general comparison form
       (`<expr> (== | != | contains | in) <expr>`) and an emptiness predicate, keeping
       `env_cond` / `platform_cond` as-is and ordering alternatives so the specific forms win
-- [ ] Add the AST node(s) and `span` arm; thread through `parser.rs` (`build_condition`)
-- [ ] `sema.rs`: resolve operand sub-expressions and check operand type compatibility (reuse
+- [x] Add the AST node(s) and `span` arm; thread through `parser.rs` (`build_condition`)
+- [x] `sema.rs`: resolve operand sub-expressions and check operand type compatibility (reuse
       the `if/else` branch-compatibility logic) with precise diagnostics carrying operand spans
-- [ ] `eval.rs`: evaluate the general comparison via `Value` equality / list membership;
+- [x] `eval.rs`: evaluate the general comparison via `Value` equality / list membership;
       keep the env/platform fast paths
-- [ ] `format.rs`, `navigation.rs` (`walk_steps`), and the LSP feature files: add the new arm
-- [ ] Docs (`docs/GRAMMAR.md` conditions section + EBNF) and tests: parser, sema (type
+- [x] `format.rs`, `navigation.rs` (`walk_steps`), and the LSP feature files: add the new arm
+- [x] Docs (`docs/GRAMMAR.md` conditions section + EBNF) and tests: parser, sema (type
       mismatch), eval, and an example `.ms` exercising a `let`-driven condition
 
 ---

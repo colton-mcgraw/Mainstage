@@ -415,6 +415,58 @@ fn parses_boolean_condition_operators() {
     ));
 }
 
+#[test]
+fn parses_general_comparison_conditions() {
+    // `==` between an identifier operand and a string literal (name resolution is a
+    // separate pass, so the parser accepts a free `m` here).
+    match if_condition(r#"let x = if m == "x" { "a" } else { "b" };"#) {
+        Condition::Compare(c) => {
+            assert_eq!(c.op, CondOp::Eq);
+            assert!(matches!(c.lhs, Expr::Ident(_)));
+            assert!(matches!(c.rhs, Expr::String(_)));
+        }
+        other => panic!("expected compare condition, got {other:?}"),
+    }
+    // Each operator form is recognized.
+    for (src, want) in [
+        (r#"let x = if "a" != "b" { "y" } else { "n" };"#, CondOp::Ne),
+        (r#"let x = if "rc" contains "r" { "y" } else { "n" };"#, CondOp::Contains),
+        (r#"let x = if "a" in ["a", "b"] { "y" } else { "n" };"#, CondOp::In),
+    ] {
+        match if_condition(src) {
+            Condition::Compare(c) => assert_eq!(c.op, want, "for {src}"),
+            other => panic!("expected compare condition for {src}, got {other:?}"),
+        }
+    }
+}
+
+#[test]
+fn parses_empty_condition() {
+    assert!(matches!(
+        if_condition(r#"let x = if empty("") { "a" } else { "b" };"#),
+        Condition::Empty(_)
+    ));
+    // `!empty(...)` composes with the existing negation operator.
+    assert!(matches!(
+        if_condition(r#"let x = if !empty(["a"]) { "a" } else { "b" };"#),
+        Condition::Not(_, _)
+    ));
+}
+
+#[test]
+fn env_and_platform_forms_still_win_over_general_comparison() {
+    // The specific `env(...)` / `platform` forms must be preferred, not parsed as a
+    // general comparison with `env`/`platform` as a bare identifier.
+    assert!(matches!(
+        if_condition(r#"let x = if env("MODE") == "prod" { "a" } else { "b" };"#),
+        Condition::Env(_)
+    ));
+    assert!(matches!(
+        if_condition(r#"let x = if platform == "linux" { "a" } else { "b" };"#),
+        Condition::Platform(_)
+    ));
+}
+
 // ── Spans, comments, and errors ─────────────────────────────────────────────────
 
 #[test]

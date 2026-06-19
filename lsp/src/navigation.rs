@@ -294,9 +294,23 @@ fn walk_expr(expr: &Expr, occ: &mut Vec<Occurrence>) {
     }
 }
 
-fn walk_condition(_condition: &Condition, _occ: &mut [Occurrence]) {
-    // Conditions reference only `env` variables and the `platform` built-in,
-    // neither of which is a navigable `let`/stage symbol.
+fn walk_condition(condition: &Condition, occ: &mut Vec<Occurrence>) {
+    match condition {
+        // `env` variables and the `platform` built-in are not navigable symbols.
+        Condition::Env(_) | Condition::Platform(_) => {}
+        Condition::Not(inner, _) => walk_condition(inner, occ),
+        Condition::And(a, b, _) | Condition::Or(a, b, _) => {
+            walk_condition(a, occ);
+            walk_condition(b, occ);
+        }
+        // General comparisons (Phase 41) carry arbitrary operand expressions, which may
+        // reference navigable `let` bindings, stages, or `project.<field>`.
+        Condition::Compare(c) => {
+            walk_expr(&c.lhs, occ);
+            walk_expr(&c.rhs, occ);
+        }
+        Condition::Empty(c) => walk_expr(&c.expr, occ),
+    }
 }
 
 fn walk_steps(steps: &[Step], occ: &mut Vec<Occurrence>) {
