@@ -99,16 +99,23 @@ fn symbol_hover(
             ));
         }
         if let Some(stage) = index.stages.iter().find(|s| s.name == word) {
+            let after = if stage.depends_on.is_empty() {
+                String::new()
+            } else {
+                format!(" (after {})", stage.depends_on.join(", "))
+            };
             let outputs = stage
                 .outputs
                 .as_ref()
                 .map(|sp| format!(" → outputs {}", slice_span(text, sp)))
                 .unwrap_or_default();
-            return Some(with_docs(
-                trivia,
-                &stage.span,
-                code_block(&format!("stage {word}{outputs}")),
-            ));
+            let code = code_block(&format!("stage {word}{after}{outputs}"));
+            // Surface the stage's `description:` text alongside its signature.
+            let body = match &stage.description {
+                Some(desc) => format!("{code}\n\n{desc}"),
+                None => code,
+            };
+            return Some(with_docs(trivia, &stage.span, body));
         }
         if word == "project" && !index.project_fields.is_empty() {
             return Some(format!("the `project` block — {} fields", index.project_fields.len()));
@@ -207,6 +214,21 @@ mod tests {
         let md = markup(&hover);
         assert!(md.contains("the build output directory"));
         assert!(md.contains("let out = \"dist\""));
+    }
+
+    #[test]
+    fn hovers_stage_description_and_ordering() {
+        let registry = ModuleRegistry::standard();
+        let text = "stage setup {\n  steps {\n    $ echo hi\n  }\n}\n\
+            stage build {\n  description: \"Compile it\"\n  depends_on: [setup]\n  steps {\n    $ echo hi\n  }\n}\n\
+            pipeline ci {\n  stages: [build]\n}";
+        let program = parse(text);
+        // The `build` reference in the pipeline `stages:` list.
+        let pos = position_at(text, text.find("[build]").unwrap() + 1);
+        let hover = hover(text, pos, &registry, Some(&program)).expect("hover");
+        let md = markup(&hover);
+        assert!(md.contains("after setup"), "ordering shown: {md}");
+        assert!(md.contains("Compile it"), "description shown: {md}");
     }
 
     #[test]

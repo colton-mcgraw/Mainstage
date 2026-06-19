@@ -76,6 +76,10 @@ pub struct ProjectField {
 #[derive(Debug, Clone)]
 pub struct StageBlock {
     pub name: String,
+    /// Optional human-readable summary of what the stage does, from `description: "…"`.
+    /// Surfaced by `mainstage list --describe` and in the editor (LSP symbols / hover);
+    /// it has no effect on execution. A static string — interpolation is not allowed.
+    pub description: Option<String>,
     /// File set expression describing the stage's input dependencies; drives change detection.
     pub inputs: Option<Expr>,
     /// Expression describing the paths this stage is expected to produce.

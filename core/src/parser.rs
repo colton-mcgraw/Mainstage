@@ -114,6 +114,7 @@ impl Builder {
         let mut inner = pair.into_inner();
         let name = inner.next().unwrap().as_str().to_string();
 
+        let mut description = None;
         let mut inputs = None;
         let mut outputs = None;
         let mut depends_on = Vec::new();
@@ -127,6 +128,10 @@ impl Builder {
 
         for field in inner {
             match field.as_rule() {
+                Rule::stage_description => {
+                    // Static text (no interpolation), like import paths and matrix values.
+                    description = Some(self.extract_raw_string(field.into_inner().next().unwrap()));
+                }
                 Rule::stage_inputs => {
                     inputs = Some(self.build_expr(field.into_inner().next().unwrap()));
                 }
@@ -170,6 +175,7 @@ impl Builder {
 
         StageBlock {
             name,
+            description,
             inputs,
             outputs,
             depends_on,

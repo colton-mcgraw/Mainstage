@@ -179,6 +179,11 @@ impl Printer<'_> {
         self.indent += 1;
 
         let mut wrote = false;
+        // The description documents the stage, so it leads the block.
+        if let Some(desc) = &s.description {
+            self.push_line(&format!("description: \"{desc}\""));
+            wrote = true;
+        }
         // `matrix` defines the stage's variants, so it leads the block.
         if !s.matrix.is_empty() {
             self.matrix_block(&s.matrix);
@@ -611,6 +616,14 @@ mod tests {
     fn formats_stage_matrix_block() {
         let src = "stage b{matrix{arch:[\"x64\",\"arm64\"]}inputs:src steps{$ go\n}}";
         let expected = "stage b {\n    matrix {\n        arch: [\"x64\", \"arm64\"]\n    }\n    inputs: src\n\n    steps {\n        $ go\n    }\n}\n";
+        assert_eq!(fmt(src), expected);
+        assert_idempotent(src);
+    }
+
+    #[test]
+    fn formats_stage_description() {
+        let src = "stage build{steps{$ make\n}description:\"Compile the app\"}";
+        let expected = "stage build {\n    description: \"Compile the app\"\n\n    steps {\n        $ make\n    }\n}\n";
         assert_eq!(fmt(src), expected);
         assert_idempotent(src);
     }

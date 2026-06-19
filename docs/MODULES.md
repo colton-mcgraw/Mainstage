@@ -162,6 +162,20 @@ directory.
 | `is_file` | `is_file(path: string) -> bool` | Whether the path is a regular file. |
 | `size` | `size(path: string) -> string` | Size in bytes (as a string). |
 | `list` | `list(path: string) -> list` | Directory entries, sorted, joined onto `path`. |
+| `find_first` | `find_first(paths: list, default?: string) -> string` | First path in the list that exists; falls back to `default:`, or errors if none exist and no default. |
+
+`find_first` resolves a file whose location varies across systems without hardcoding a
+single name — for example, OVMF firmware that is `OVMF_CODE_4M.fd` on some distros and
+`OVMF_CODE.fd` on others:
+
+```mainstage
+import "fs" as fs;
+
+let firmware = fs.find_first([
+    "/usr/share/OVMF/OVMF_CODE_4M.fd",
+    "/usr/share/OVMF/OVMF_CODE.fd",
+]);
+```
 
 ### `json`
 

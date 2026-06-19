@@ -156,6 +156,7 @@ stage <name> {
 
 | Field           | Type              | Required | Description                                               |
 |-----------------|-------------------|----------|-----------------------------------------------------------|
+| `description`   | `string`          | No       | Human-readable summary, shown by `mainstage list --describe` and the editor. |
 | `inputs`        | `fileset` / `list`| No       | Files this stage consumes. Used for change detection.     |
 | `outputs`       | `list`            | No       | Paths this stage produces. Used for change detection.     |
 | `depends_on`    | stage-name list   | No       | Explicit ordering edges to other stages (see below).      |
@@ -207,6 +208,16 @@ stage unit {
 ```
 
 `test` and `run_once` are mutually exclusive (a test stage is never cached) — setting both is a semantic error.
+
+**`description`:** An optional one-line summary of what the stage does. It is static text (no interpolation) and has no effect on execution; it makes a multi-stage build navigable from the CLI (`mainstage list --describe`) and from the editor (LSP document symbols and hover).
+
+```mainstage
+stage compile {
+    description: "Build the release binary for the host target"
+    inputs: sources
+    steps { $ cargo build --release }
+}
+```
 
 **Dependency resolution:** If a stage's `inputs` references another stage's `outputs` (e.g. `compile.outputs`), the runtime automatically runs that stage first. No explicit `depends_on` is needed for file-based dependencies.
 
@@ -875,7 +886,8 @@ project_block   = "project" "{" project_field* "}" ;
 project_field   = ident ":" expr ","? ;
 
 stage_block     = "stage" ident "{" stage_field* "}" ;
-stage_field     = "inputs"        ":" expr                              ","?
+stage_field     = "description"   ":" string                            ","?
+                | "inputs"        ":" expr                              ","?
                 | "outputs"       ":" expr                              ","?
                 | "depends_on"    ":" "[" ( ident ( "," ident )* ","? )? "]" ","?
                 | "matrix"        "{" matrix_dim*                       "}"

@@ -103,17 +103,33 @@ pub fn document_symbols(text: &str, program: Option<&Program>) -> Vec<Symbol> {
     let Some(program) = program else { return Vec::new() };
     let mut symbols = Vec::new();
     for item in &program.items {
-        let (name, kind, span) = match item {
-            Item::Let(d) => (d.name.clone(), SymbolKind::Let, &d.span),
-            Item::Stage(s) => (s.name.clone(), SymbolKind::Stage, &s.span),
-            Item::Pipeline(p) => (p.name.clone(), SymbolKind::Pipeline, &p.span),
+        let (name, kind, span, detail) = match item {
+            Item::Let(d) => (d.name.clone(), SymbolKind::Let, &d.span, None),
+            // A stage carries its description and ordering as the outline detail, so a
+            // multi-stage build is navigable from the editor's symbol list.
+            Item::Stage(s) => (s.name.clone(), SymbolKind::Stage, &s.span, stage_detail(s)),
+            Item::Pipeline(p) => (p.name.clone(), SymbolKind::Pipeline, &p.span, None),
             Item::Import(_) | Item::Project(_) => continue,
         };
         let full = span_to_range(text, span);
         let selection = name_range(text, span, &name).unwrap_or(full);
-        symbols.push(Symbol { name, kind, range: full, selection });
+        symbols.push(Symbol { name, kind, range: full, selection, detail });
     }
     symbols
+}
+
+/// The outline detail for a stage: its description and any `depends_on` ordering, e.g.
+/// `"Compile the kernel · after build"`. `None` when it has neither.
+fn stage_detail(stage: &mainstage_core::ast::StageBlock) -> Option<String> {
+    let mut parts = Vec::new();
+    if let Some(desc) = &stage.description {
+        parts.push(desc.clone());
+    }
+    if !stage.depends_on.is_empty() {
+        let names = stage.depends_on.iter().map(|d| d.name.as_str()).collect::<Vec<_>>().join(", ");
+        parts.push(format!("after {names}"));
+    }
+    (!parts.is_empty()).then(|| parts.join(" · "))
 }
 
 /// A single entry in the document outline.
@@ -124,6 +140,8 @@ pub struct Symbol {
     pub range: Range,
     /// The range of just the declared name, for the editor to highlight.
     pub selection: Range,
+    /// Optional detail shown beside the name (e.g. a stage's description and ordering).
+    pub detail: Option<String>,
 }
 
 /// The category of an outline [`Symbol`].
@@ -554,6 +572,18 @@ mod tests {
         let name_sym = &symbols[0];
         assert!(matches!(name_sym.kind, SymbolKind::Let));
         assert_eq!(name_sym.selection.start, at(text, "name"));
+    }
+
+    #[test]
+    fn document_symbols_carry_stage_description_and_ordering() {
+        let text = "stage setup {\n    steps {\n        $ echo hi\n    }\n}\n\
+            stage build {\n    description: \"Compile it\"\n    depends_on: [setup]\n    steps {\n        $ echo hi\n    }\n}";
+        let program = parse(text);
+        let symbols = document_symbols(text, Some(&program));
+        let build = symbols.iter().find(|s| s.name == "build").expect("build symbol");
+        assert_eq!(build.detail.as_deref(), Some("Compile it · after setup"));
+        let setup = symbols.iter().find(|s| s.name == "setup").expect("setup symbol");
+        assert_eq!(setup.detail, None, "a stage with no description or ordering has no detail");
     }
 
     #[test]

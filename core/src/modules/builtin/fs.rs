@@ -10,11 +10,11 @@ use std::sync::LazyLock;
 use crate::error::Result;
 use crate::eval::Value;
 use crate::modules::{
-    MethodSig, Module, ModuleCx, Param, ResolvedArg, ValueTy, path_to_slash_string,
-    require_positional_string, resolve_path,
+    MethodSig, Module, ModuleCx, NamedParam, Param, ResolvedArg, ValueTy, named_string,
+    path_to_slash_string, require_positional_list, require_positional_string, resolve_path,
 };
 
-/// `fs.exists`, `fs.read`, `fs.is_dir`, `fs.is_file`, `fs.size`, `fs.list`.
+/// `fs.exists`, `fs.read`, `fs.is_dir`, `fs.is_file`, `fs.size`, `fs.list`, `fs.find_first`.
 pub struct FsModule;
 
 /// A method taking a single path string and returning `returns`.
@@ -35,6 +35,17 @@ static METHODS: LazyLock<Vec<MethodSig>> = LazyLock::new(|| {
         unary("is_file", ValueTy::Bool),
         unary("size", ValueTy::String),
         unary("list", ValueTy::List),
+        // Return the first path in `paths` that exists; falls back to `default:` or errors.
+        MethodSig {
+            name: "find_first".to_string(),
+            params: vec![Param { name: "paths".to_string(), ty: ValueTy::List, required: true }],
+            named: vec![NamedParam {
+                name: "default".to_string(),
+                ty: ValueTy::String,
+                required: false,
+            }],
+            returns: ValueTy::String,
+        },
     ]
 });
 
@@ -48,7 +59,12 @@ impl Module for FsModule {
     }
 
     fn call(&self, method: &str, args: &[ResolvedArg], cx: &ModuleCx) -> Result<Value> {
-        // Every method takes a single path argument; resolve it up front.
+        // `find_first` takes a *list* of candidates rather than a single path.
+        if method == "find_first" {
+            return find_first(args, cx);
+        }
+
+        // Every other method takes a single path argument; resolve it up front.
         let raw = require_positional_string(args, 0, &format!("fs.{method}"), cx)?;
         let path = resolve_path(cx.script_dir, &raw);
 
@@ -71,6 +87,30 @@ impl Module for FsModule {
             "list" => list_dir(&raw, &path, cx),
             _ => Err(cx.error(format!("fs has no method '{}'", method))),
         }
+    }
+}
+
+/// Return the first candidate in `paths` that exists on disk (resolved against the script
+/// directory), preserving the caller's string form. When none exist, return the `default:`
+/// keyword argument if given, otherwise error. Lets a script resolve a file whose location
+/// varies across systems — e.g. `OVMF_CODE_4M.fd` vs `OVMF_CODE.fd` — portably.
+fn find_first(args: &[ResolvedArg], cx: &ModuleCx) -> Result<Value> {
+    let candidates = require_positional_list(args, 0, "fs.find_first", cx)?;
+    for candidate in &candidates {
+        let s = match candidate {
+            Value::String(s) => s,
+            _ => return Err(cx.error("fs.find_first: every candidate path must be a string")),
+        };
+        if resolve_path(cx.script_dir, s).exists() {
+            return Ok(Value::String(s.clone()));
+        }
+    }
+    match named_string(args, "default") {
+        Some(default) => Ok(Value::String(default)),
+        None => Err(cx.error(format!(
+            "fs.find_first: none of the {} candidate path(s) exist",
+            candidates.len()
+        ))),
     }
 }
 
@@ -204,6 +244,57 @@ mod tests {
         let dir = unique_dir("missing3");
         assert!(matches!(call_in("is_file", "nope", &dir).unwrap(), Value::Bool(false)));
         assert!(matches!(call_in("is_dir", "nope", &dir).unwrap(), Value::Bool(false)));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Call a method with arbitrary resolved arguments (for the list-taking `find_first`).
+    fn call_args(method: &str, args: &[ResolvedArg], dir: &Path) -> Result<Value> {
+        let span = span();
+        let cx = ModuleCx {
+            span: &span,
+            script_dir: dir,
+            permissions: crate::modules::Permissions::all(),
+        };
+        FsModule.call(method, args, &cx)
+    }
+
+    fn list_arg(items: &[&str]) -> ResolvedArg {
+        ResolvedArg {
+            name: None,
+            value: Value::List(items.iter().map(|s| Value::String(s.to_string())).collect()),
+        }
+    }
+
+    #[test]
+    fn find_first_returns_first_existing_candidate() {
+        let dir = unique_dir("find_first");
+        std::fs::write(dir.join("b.fd"), "").unwrap();
+        std::fs::write(dir.join("c.fd"), "").unwrap();
+
+        // `a.fd` is missing; `b.fd` is the first that exists and its original form is kept.
+        let result = call_args("find_first", &[list_arg(&["a.fd", "b.fd", "c.fd"])], &dir).unwrap();
+        assert!(matches!(result, Value::String(s) if s == "b.fd"));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn find_first_falls_back_to_default() {
+        let dir = unique_dir("find_first_default");
+        let args = vec![
+            list_arg(&["nope1", "nope2"]),
+            ResolvedArg { name: Some("default".to_string()), value: Value::String("fb".into()) },
+        ];
+        let result = call_args("find_first", &args, &dir).unwrap();
+        assert!(matches!(result, Value::String(s) if s == "fb"));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn find_first_errors_when_none_exist_and_no_default() {
+        let dir = unique_dir("find_first_err");
+        assert!(call_args("find_first", &[list_arg(&["nope1", "nope2"])], &dir).is_err());
         let _ = std::fs::remove_dir_all(&dir);
     }
 
