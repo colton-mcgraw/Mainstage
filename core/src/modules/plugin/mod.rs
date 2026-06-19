@@ -135,13 +135,14 @@ impl PluginProcess {
         } else {
             std::env::current_dir().map(|cwd| cwd.join(exe)).unwrap_or_else(|_| exe.to_path_buf())
         };
-        let mut child = Command::new(&exe)
+        let mut command = Command::new(&exe);
+        command
             .current_dir(script_dir)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             // Leave stderr inherited so plugin diagnostics surface to the user.
-            .stderr(Stdio::inherit())
-            .spawn()
+            .stderr(Stdio::inherit());
+        let mut child = spawn_retrying_etxtbsy(&mut command)
             .map_err(|e| format!("failed to start '{}': {}", exe.display(), e))?;
 
         let stdin = child.stdin.take().ok_or("could not open plugin stdin")?;
@@ -185,6 +186,38 @@ impl PluginProcess {
             _ => "plugin closed its output unexpectedly".to_string(),
         }
     }
+}
+
+/// `ETXTBSY` (errno 26 on Unix): the executable is open for writing by some process.
+#[cfg(unix)]
+const ETXTBSY: i32 = 26;
+
+/// Spawn `command`, retrying briefly on `ETXTBSY` ("text file busy").
+///
+/// On Unix, executing a file that another process holds open for writing fails with
+/// `ETXTBSY`. This is a transient, well-known race in multithreaded programs that *both*
+/// write executables and spawn subprocesses: between one thread's `fork` and its `exec`,
+/// the child momentarily inherits a writable descriptor to a file a second thread just
+/// produced (a freshly built or discovered plugin), so the second thread's `exec` of that
+/// plugin sees it as busy. The condition clears within milliseconds once the other child
+/// `exec`s (its `O_CLOEXEC` descriptors close) or the writer's handle is dropped, so a few
+/// short retries make plugin startup robust without masking a genuine failure.
+fn spawn_retrying_etxtbsy(command: &mut Command) -> std::io::Result<Child> {
+    #[cfg(unix)]
+    {
+        // Total worst-case wait ≈ 1+2+4+8+16+32+64 ≈ 127 ms across 7 retries.
+        let mut delay = std::time::Duration::from_millis(1);
+        for _ in 0..7 {
+            match command.spawn() {
+                Err(e) if e.raw_os_error() == Some(ETXTBSY) => {
+                    std::thread::sleep(delay);
+                    delay *= 2;
+                }
+                other => return other,
+            }
+        }
+    }
+    command.spawn()
 }
 
 impl Drop for PluginProcess {
