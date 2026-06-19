@@ -179,6 +179,11 @@ impl Printer<'_> {
         self.indent += 1;
 
         let mut wrote = false;
+        // `matrix` defines the stage's variants, so it leads the block.
+        if !s.matrix.is_empty() {
+            self.matrix_block(&s.matrix);
+            wrote = true;
+        }
         if let Some(inputs) = &s.inputs {
             self.push_line(&format!("inputs: {}", render_expr(inputs)));
             wrote = true;
@@ -220,6 +225,22 @@ impl Printer<'_> {
 
         self.indent -= 1;
         self.close_block(&s.span);
+    }
+
+    fn matrix_block(&mut self, dims: &[MatrixDim]) {
+        self.push_line("matrix {");
+        self.indent += 1;
+        for dim in dims {
+            let values = dim
+                .values
+                .iter()
+                .map(|v| format!("\"{}\"", v.value))
+                .collect::<Vec<_>>()
+                .join(", ");
+            self.push_line(&format!("{}: [{}]", dim.name, values));
+        }
+        self.indent -= 1;
+        self.push_line("}");
     }
 
     fn pipeline(&mut self, p: &PipelineBlock) {
@@ -537,6 +558,14 @@ mod tests {
             fmt(src),
             "stage setup {\n    run_once: true\n\n    steps {\n        $ install\n    }\n}\n"
         );
+    }
+
+    #[test]
+    fn formats_stage_matrix_block() {
+        let src = "stage b{matrix{arch:[\"x64\",\"arm64\"]}inputs:src steps{$ go\n}}";
+        let expected = "stage b {\n    matrix {\n        arch: [\"x64\", \"arm64\"]\n    }\n    inputs: src\n\n    steps {\n        $ go\n    }\n}\n";
+        assert_eq!(fmt(src), expected);
+        assert_idempotent(src);
     }
 
     #[test]

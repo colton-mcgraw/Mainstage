@@ -139,6 +139,13 @@ fn if_step(s: &IfStep, ctx: &EvalContext) -> Result<()> {
 fn for_step(s: &ForStep, ctx: &EvalContext) -> Result<()> {
     let entries = eval_as_fileset(&s.iterable, ctx, &s.span)?;
     for entry in entries {
+        // Per-file incremental change detection (Phase 38): when the runner has marked an
+        // input file unchanged since the last successful run — and the stage's declared
+        // outputs are all present — its output is already up to date, so this iteration's
+        // body is skipped. `skip_inputs` is empty on a full run, so this is a no-op then.
+        if ctx.skip_inputs.contains(&entry.path) {
+            continue;
+        }
         let iter_ctx = ctx.with_for_var(s.var.clone(), entry);
         execute_steps(&s.steps, &iter_ctx)?;
     }
@@ -351,6 +358,8 @@ mod tests {
                 .collect(),
             project_fields: HashMap::new(),
             for_vars: HashMap::new(),
+            matrix_vars: HashMap::new(),
+            skip_inputs: std::collections::HashSet::new(),
             import_aliases: HashMap::new(),
             stage_inputs: None,
             stage_outputs: None,
@@ -466,6 +475,8 @@ mod tests {
             let_values: vec![("p".to_string(), Value::String(tmp.display().to_string()))],
             project_fields: HashMap::new(),
             for_vars: HashMap::new(),
+            matrix_vars: HashMap::new(),
+            skip_inputs: std::collections::HashSet::new(),
             import_aliases: HashMap::new(),
             stage_inputs: None,
             stage_outputs: None,
@@ -560,6 +571,61 @@ mod tests {
     }
 
     #[test]
+    fn for_loop_skips_inputs_marked_unchanged() {
+        // Phase 38: a file listed in `skip_inputs` has its loop iteration skipped, while
+        // others run normally.
+        let dir = std::env::temp_dir().join(format!("ms_incr_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let a = dir.join("a.txt");
+        let b = dir.join("b.txt");
+        std::fs::write(&a, "a").unwrap();
+        std::fs::write(&b, "b").unwrap();
+
+        let mut ctx = ctx_with(&[]);
+        ctx.script_dir = dir.clone();
+        // `b` is unchanged → skip its iteration.
+        ctx.skip_inputs.insert(b.clone());
+
+        let sp = span();
+        // for f in inputs { write "<dir>/${f.stem}.out" content: "ran" }
+        let for_step = Step::For(ForStep {
+            var: "f".to_string(),
+            iterable: Expr::Ident(IdentExpr { name: "inputs".to_string(), span: sp.clone() }),
+            steps: vec![Step::Write(WriteStep {
+                path: Expr::String(StringExpr {
+                    parts: vec![
+                        StringPart::Literal(format!("{}/", dir.display())),
+                        StringPart::Interpolation(Box::new(Expr::MemberAccess(MemberAccessExpr {
+                            object: "f".to_string(),
+                            field: "stem".to_string(),
+                            span: sp.clone(),
+                        }))),
+                        StringPart::Literal(".out".to_string()),
+                    ],
+                    span: sp.clone(),
+                }),
+                content: StringExpr {
+                    parts: vec![StringPart::Literal("ran".to_string())],
+                    span: sp.clone(),
+                },
+                span: sp.clone(),
+            })],
+            span: sp.clone(),
+        });
+
+        ctx.stage_inputs = Some(Value::FileSet(vec![
+            FileEntry::from_path(a.clone()),
+            FileEntry::from_path(b.clone()),
+        ]));
+
+        execute_step(&for_step, &ctx).expect("for loop should succeed");
+        assert!(dir.join("a.out").exists(), "changed input's iteration ran");
+        assert!(!dir.join("b.out").exists(), "unchanged input's iteration was skipped");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn write_creates_file() {
         let tmp = std::env::temp_dir().join("ms_test_write.txt");
         let _ = std::fs::remove_file(&tmp);
@@ -570,6 +636,8 @@ mod tests {
             let_values: vec![("p".to_string(), Value::String(tmp.display().to_string()))],
             project_fields: HashMap::new(),
             for_vars: HashMap::new(),
+            matrix_vars: HashMap::new(),
+            skip_inputs: std::collections::HashSet::new(),
             import_aliases: HashMap::new(),
             stage_inputs: None,
             stage_outputs: None,

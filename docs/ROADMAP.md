@@ -508,11 +508,11 @@ Bring the `sh -c` escape hatches back into native, checkable steps. Output: `mai
 
 Stop copy-pasting per-architecture stages. Output: one authored bootloader stage and one kernel stage expand to their x64 and arm64 variants.
 
-- [ ] `matrix { <dim>: [<values>] }` on a stage, lowered to N concrete stages before semantic analysis so the graph, change detection, and scheduler are unchanged
-- [ ] Expose the active matrix value as a built-in (alongside `platform`) for use in flags, paths, and tool-name selection
-- [ ] Deterministic generated stage names (e.g. `bootloader[x64]`) usable in `pipeline` stage lists, `depends_on`, and `<stage>.outputs` references
-- [ ] Validate matrix dimensions/values and report conflicts (duplicate expansion names, empty dimensions) with spans
-- [ ] Collapse the duplicated `bootloader_*` / `kernel_*` stages in `main.ms` to a single matrixed definition each
+- [x] `matrix { <dim>: [<values>] }` on a stage, lowered to N concrete stages before semantic analysis so the graph, change detection, and scheduler are unchanged
+- [x] Expose the active matrix value as a built-in (alongside `platform`) for use in flags, paths, and tool-name selection
+- [x] Deterministic generated stage names (e.g. `bootloader[x64]`) usable in `pipeline` stage lists, `depends_on`, and `<stage>.outputs` references
+- [x] Validate matrix dimensions/values and report conflicts (duplicate expansion names, empty dimensions) with spans
+- [x] Collapse the duplicated `bootloader_*` / `kernel_*` stages in `main.ms` to a single matrixed definition each
 
 ---
 
@@ -520,10 +520,10 @@ Stop copy-pasting per-architecture stages. Output: one authored bootloader stage
 
 Refine change detection below whole-stage granularity so editing one source recompiles one object. Output: tight edit/rebuild loops for large stages like the eight-file kernel build.
 
-- [ ] Map each declared output to the subset of inputs that produced it (pattern-rule or per-output input association) so unaffected outputs are skipped
-- [ ] Reuse the Phase 25 mtime+size fast path and parallel hashing per output; keep the `.mainstage/cache.json` format backward-compatible
-- [ ] Combine with `for file in inputs { ... }` so per-file compile loops gain per-object caching instead of re-running the whole stage
-- [ ] Benchmark incremental single-file edits against the Phase 23 baselines and the current whole-stage behavior
+- [x] Map each declared output to the subset of inputs that produced it (pattern-rule or per-output input association) so unaffected outputs are skipped
+- [x] Reuse the Phase 25 mtime+size fast path and parallel hashing per output; keep the `.mainstage/cache.json` format backward-compatible
+- [x] Combine with `for file in inputs { ... }` so per-file compile loops gain per-object caching instead of re-running the whole stage
+- [x] Benchmark incremental single-file edits against the Phase 23 baselines and the current whole-stage behavior
 
 ---
 

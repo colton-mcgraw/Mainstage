@@ -15,7 +15,7 @@ default pipeline dev {
 }
 
 pipeline release {
-    stages: [compile, lint, test, package]
+    stages: [compile, lint, test, package, bundle]
 
     on_success {
         $ slack-notify "Released ${project.version}"
@@ -68,5 +68,24 @@ stage package {
         mkdir "${out}/"
         write "${out}/VERSION" content: "${project.version}"
         $ tar -czf "${outputs[0]}" "${out}/"
+    }
+}
+
+// One authored stage, two architectures. `matrix` expands `bundle` into
+// `bundle[x86_64]` and `bundle[aarch64]` before the build graph is built, and the
+// active `${arch}` is exposed as a built-in — so per-target flags and paths stay in a
+// single definition instead of copy-pasted stages. Listing the base name `bundle` in
+// the `release` pipeline runs every variant.
+stage bundle {
+    matrix {
+        arch: ["x86_64", "aarch64"]
+    }
+    inputs: [compile.outputs]
+    outputs: ["${out}/${project.name}-${arch}.tar.gz"]
+
+    steps {
+        mkdir "${out}/"
+        $ cargo build --release --target ${arch}-unknown-linux-gnu
+        $ tar -czf "${out}/${project.name}-${arch}.tar.gz" "${out}/"
     }
 }

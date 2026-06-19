@@ -93,10 +93,48 @@ pub struct StageBlock {
     /// `outputs`, so a side-effecting setup stage (e.g. `initialize`) runs once and is
     /// skipped thereafter until its inputs change or the cache is cleared.
     pub run_once: bool,
+    /// Declared build-matrix dimensions, from `matrix { <dim>: [<values>] }`. Empty for
+    /// an ordinary stage. Present only on the *authored* stage: the matrix lowering pass
+    /// ([`crate::matrix::expand`]) replaces a matrixed stage with one concrete variant per
+    /// combination of values, each carrying its bindings in `matrix_bindings` and an empty
+    /// `matrix`, so semantic analysis, change detection, and the scheduler only ever see
+    /// ordinary stages.
+    pub matrix: Vec<MatrixDim>,
+    /// Resolved `dimension → value` bindings for a generated matrix variant (e.g.
+    /// `[("arch", "x64")]`). Empty for authored and non-matrix stages. Each binding is
+    /// exposed as a built-in string variable inside the stage, alongside `platform`.
+    pub matrix_bindings: Vec<MatrixBinding>,
     pub steps: Vec<Step>,
     /// Steps executed when the main `steps` block fails, before failure propagates.
     pub on_failure: Vec<Step>,
     pub span: Span,
+}
+
+/// One dimension of a stage's build matrix: a dimension name and the values it ranges
+/// over (e.g. `arch: ["x64", "arm64"]`). The cartesian product of every dimension's
+/// values determines how many concrete stages the authored stage expands into.
+#[derive(Debug, Clone)]
+pub struct MatrixDim {
+    pub name: String,
+    pub values: Vec<MatrixValue>,
+    pub span: Span,
+}
+
+/// A single value within a matrix dimension — a static string literal — and its span,
+/// so duplicate-value and empty-dimension diagnostics can point at the offending entry.
+#[derive(Debug, Clone)]
+pub struct MatrixValue {
+    pub value: String,
+    pub span: Span,
+}
+
+/// A resolved `dimension = value` binding carried by a generated matrix variant. The
+/// lowering pass produces one binding per dimension for each variant; the runtime
+/// exposes them as built-in string variables while the variant's steps execute.
+#[derive(Debug, Clone)]
+pub struct MatrixBinding {
+    pub name: String,
+    pub value: String,
 }
 
 /// A single entry in a stage's `depends_on` list: the referenced stage name plus the

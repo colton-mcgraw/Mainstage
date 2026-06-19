@@ -822,6 +822,15 @@ fn prepare(file: &str, flag_perms: Permissions) -> Option<(Program, AnalysisResu
             return None;
         }
     };
+    // Lower `matrix` stages into their concrete variants before analysis, evaluation, and
+    // scheduling, so every later stage sees ordinary stages (Phase 37).
+    let program = match mainstage_core::expand_matrix(&program) {
+        Ok(p) => p,
+        Err(e) => {
+            fail(e);
+            return None;
+        }
+    };
     let manifest_perms = match Permissions::from_manifest(script_dir(file)) {
         Ok(p) => p,
         Err(e) => {

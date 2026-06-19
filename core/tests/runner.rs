@@ -688,3 +688,167 @@ fn pipeline_input_paths_collects_and_dedups() {
 
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+// ── Build matrix (Phase 37) ───────────────────────────────────────────────────────
+
+/// Parse, lower the `matrix` blocks, analyze, evaluate, and run the named pipeline —
+/// mirroring the CLI's `prepare`, which expands matrices before everything else.
+fn run_lowered(src: &str, dir: &Path, pipeline: Option<&str>) -> mainstage_core::Result<()> {
+    let parsed = parse(&Source::from_str("test.ms", src)).expect("parse should succeed");
+    let program = mainstage_core::expand_matrix(&parsed).expect("matrix lowering should succeed");
+    let analysis = analyze(&program).expect("analysis should succeed");
+    let ctx = eval_program(&program, dir).expect("eval should succeed");
+    run_pipeline(&program, pipeline, &ctx, &analysis)
+}
+
+#[test]
+fn matrix_stage_runs_each_variant_with_its_binding() {
+    let dir = unique_dir("matrix");
+    let d = dir.display();
+    // One authored stage expands to two; the `${arch}` matrix variable selects the
+    // output path per variant. Listing the base name in the pipeline runs both.
+    let src = format!(
+        r#"
+        default pipeline build {{
+            stages: [bootloader]
+        }}
+        stage bootloader {{
+            matrix {{ arch: ["x64", "arm64"] }}
+            steps {{ write "{d}/boot-${{arch}}.efi" content: "${{arch}}" }}
+        }}
+        "#
+    );
+
+    run_lowered(&src, &dir, None).expect("matrixed pipeline should succeed");
+
+    assert!(exists(&dir, "boot-x64.efi"), "the x64 variant should have run");
+    assert!(exists(&dir, "boot-arm64.efi"), "the arm64 variant should have run");
+    // The matrix value is bound, not literal — the file content is the resolved value.
+    assert_eq!(std::fs::read_to_string(dir.join("boot-x64.efi")).unwrap(), "x64");
+    assert_eq!(std::fs::read_to_string(dir.join("boot-arm64.efi")).unwrap(), "arm64");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn matrix_variant_outputs_feed_a_downstream_stage() {
+    let dir = unique_dir("matrix_deps");
+    let d = dir.display();
+    // `package` depends on the matrixed `bootloader` by its base name, so it runs after
+    // every variant. The variants write their outputs; `package` records that it ran.
+    let src = format!(
+        r#"
+        default pipeline build {{
+            stages: [bootloader, package]
+        }}
+        stage bootloader {{
+            matrix {{ arch: ["x64", "arm64"] }}
+            outputs: ["{d}/boot-${{arch}}.efi"]
+            steps {{ write "{d}/boot-${{arch}}.efi" content: "ok" }}
+        }}
+        stage package {{
+            depends_on: [bootloader]
+            steps {{ write "{d}/packaged" content: "done" }}
+        }}
+        "#
+    );
+
+    run_lowered(&src, &dir, None).expect("matrixed pipeline should succeed");
+
+    assert!(exists(&dir, "boot-x64.efi"));
+    assert!(exists(&dir, "boot-arm64.efi"));
+    assert!(exists(&dir, "packaged"), "the downstream stage should have run after the variants");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+// ── Per-file incremental change detection (Phase 38) ──────────────────────────────
+
+#[test]
+fn for_loop_reruns_only_changed_input_files() {
+    let dir = unique_dir("incremental");
+    let d = dir.display();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(dir.join("src/a.txt"), "1").unwrap();
+    std::fs::write(dir.join("src/b.txt"), "2").unwrap();
+
+    // A per-file compile loop: each input writes a corresponding object file. The output
+    // directory is the declared output, so the incremental gate (outputs present) holds.
+    let src = format!(
+        r#"
+        default pipeline build {{ stages: [compile] }}
+        stage compile {{
+            inputs: glob("{d}/src/*.txt")
+            outputs: ["{d}/obj"]
+            steps {{
+                for f in inputs {{
+                    write "{d}/obj/${{f.stem}}.o" content: "built"
+                }}
+            }}
+        }}
+        "#
+    );
+
+    // First run builds both objects.
+    run(&src, &dir, None).expect("first run should succeed");
+    assert!(exists(&dir, "obj/a.o"));
+    assert!(exists(&dir, "obj/b.o"));
+
+    // Overwrite both objects with sentinels, then change only a.txt. A second run should
+    // re-run a's iteration (overwriting its sentinel) but skip b's (sentinel survives).
+    std::fs::write(dir.join("obj/a.o"), "SENTINEL-A").unwrap();
+    std::fs::write(dir.join("obj/b.o"), "SENTINEL-B").unwrap();
+    std::fs::write(dir.join("src/a.txt"), "1-changed").unwrap();
+
+    run(&src, &dir, None).expect("second run should succeed");
+
+    assert_eq!(
+        std::fs::read_to_string(dir.join("obj/a.o")).unwrap(),
+        "built",
+        "the changed input's iteration must re-run"
+    );
+    assert_eq!(
+        std::fs::read_to_string(dir.join("obj/b.o")).unwrap(),
+        "SENTINEL-B",
+        "the unchanged input's iteration must be skipped"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn incremental_skip_disabled_when_outputs_missing() {
+    let dir = unique_dir("incremental_no_out");
+    let d = dir.display();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(dir.join("src/a.txt"), "1").unwrap();
+    std::fs::write(dir.join("src/b.txt"), "2").unwrap();
+
+    let src = format!(
+        r#"
+        default pipeline build {{ stages: [compile] }}
+        stage compile {{
+            inputs: glob("{d}/src/*.txt")
+            outputs: ["{d}/obj"]
+            steps {{
+                for f in inputs {{
+                    write "{d}/obj/${{f.stem}}.o" content: "built"
+                }}
+            }}
+        }}
+        "#
+    );
+
+    run(&src, &dir, None).expect("first run should succeed");
+
+    // Remove the whole output directory: the incremental gate fails, so a changed-input
+    // run rebuilds every object, restoring b.o too.
+    std::fs::remove_dir_all(dir.join("obj")).unwrap();
+    std::fs::write(dir.join("src/a.txt"), "1-changed").unwrap();
+
+    run(&src, &dir, None).expect("second run should succeed");
+    assert!(exists(&dir, "obj/a.o"), "changed input rebuilt");
+    assert!(exists(&dir, "obj/b.o"), "missing outputs force a full rebuild of unchanged inputs");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}

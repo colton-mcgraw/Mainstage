@@ -51,6 +51,12 @@ covered sizes are:
 | `run_pipeline`      | cold end-to-end run, every stage executes (cache cleared)       | Phase 24    |
 | `run_pipeline_warm` | warm run, every stage hits the skip-check (cache populated)     | Phase 25    |
 | `run_pipeline_warm_large` | warm run over large input files — exposes the fast path   | Phase 25    |
+| `run_pipeline_incremental_edit` | one input edited, `for`-loop re-runs only that file | Phase 38    |
+| `run_pipeline_incremental_full` | same fixture, cache cleared — every iteration re-runs | Phase 38    |
+
+The Phase 38 pair shares a single-stage `for file in inputs { copy … }` fixture
+(`f<N>_k<KiB>`: N input files of KiB each), so the only difference is whether the
+cache lets unchanged files' iterations be skipped.
 
 ## Baseline
 
@@ -97,3 +103,33 @@ the quick settings, atop the Phase 24 parallel runner. Re-record locally to comp
 The gap widens with input size, confirming the cost moved off the file-read path.
 On unchanged inputs the warm run now scales with the number of files (one `stat`
 each) rather than their total bytes.
+
+## Phase 38 result: per-file incremental change detection
+
+When a stage is not whole-stage fresh — some input changed — but it ran
+successfully before and its declared outputs are all present, each `for file in
+inputs { … }` iteration whose input file is byte-for-byte unchanged is skipped:
+its output is already current. Editing one source therefore re-runs one iteration
+instead of the whole stage.
+
+Measured on the **same machine** with the default settings (`run_pipeline_incremental_*`
+share one `for`-loop fixture; `_edit` changes a single file per run, `_full` clears
+the cache so every iteration runs — the pre-Phase-38 whole-stage cost).
+
+| Fixture (files × KiB) | Whole-stage (`_full`) | Single-file edit (`_edit`) | Speedup |
+| --------------------- | --------------------- | -------------------------- | ------- |
+| `f40_k64`  (40 × 64 KiB) | 19.3 ms | 1.39 ms | ~14× |
+| `f80_k64`  (80 × 64 KiB) | 31.0 ms | 1.63 ms | ~19× |
+
+The incremental run's cost is dominated by fingerprinting all inputs (one `stat`
+each, via the Phase 25 fast path) plus the single changed file's work, so the win
+grows with the number of unchanged files. The cache format is unchanged — per-file
+metadata recorded since Phase 25 is exactly what the skip needs.
+
+**Scope.** Incremental skipping associates each output with the single input file
+that produced it (the `for file in inputs` iteration), so it assumes an output
+depends only on its corresponding input — it does not track cross-file
+dependencies (e.g. a shared header). Editing such a shared input changes the
+stage's digest but not the per-file hash of the other sources, so their iterations
+are still skipped; model genuinely shared inputs as their own stage, or run
+`mainstage clean` to force a full rebuild.

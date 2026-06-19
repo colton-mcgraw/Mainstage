@@ -793,10 +793,12 @@ fn run_one_stage(
     // snapshotted under the lock so hashing itself happens lock-free.
     let start = std::time::Instant::now();
     let detect_inputs = change_detection_inputs(stage, &stage_ctx.stage_inputs);
-    let fingerprint = detect_inputs.as_ref().map(|inputs| {
-        let prior = cache.lock().unwrap().input_meta(name);
-        cache::fingerprint_inputs(inputs, &prior, run_cache)
-    });
+    // Snapshot the prior run's per-file metadata once: the fingerprint reuses it for the
+    // fast path, and per-file incremental detection (Phase 38) diffs against it below.
+    let prior_meta = detect_inputs.as_ref().map(|_| cache.lock().unwrap().input_meta(name));
+    let fingerprint = detect_inputs
+        .as_ref()
+        .map(|inputs| cache::fingerprint_inputs(inputs, prior_meta.as_ref().unwrap(), run_cache));
     let output_paths = stage_outputs_value.as_ref().map(cache::output_paths).unwrap_or_default();
 
     if let Some(fp) = &fingerprint {
@@ -810,14 +812,29 @@ fn run_one_stage(
         }
     }
 
+    // Per-file incremental change detection (Phase 38): the stage is not whole-stage
+    // fresh, but if it ran successfully before (a prior fingerprint exists) and all of its
+    // declared outputs are still present, the `for`-loop iterations whose input file is
+    // byte-for-byte unchanged need not re-run — their outputs are already current. The
+    // executor consults this set; it is empty (a full run) when the gate does not hold.
+    let skip_inputs = match (&fingerprint, &prior_meta) {
+        (Some(fp), Some(prior))
+            if !output_paths.is_empty() && cache::all_outputs_exist(&output_paths, project_dir) =>
+        {
+            fp.unchanged_since(prior)
+        }
+        _ => HashSet::new(),
+    };
+
     // When buffered, capture step output into a per-stage sink and assemble one block:
     // start marker, captured output, end marker. When not, stream output live and flush
     // each marker immediately.
     let sink = if buffered { Some(Arc::new(OutputSink::default())) } else { None };
-    let exec_ctx = match &sink {
+    let mut exec_ctx = match &sink {
         Some(s) => stage_ctx.with_output(s.clone()),
         None => stage_ctx,
     };
+    exec_ctx.skip_inputs = skip_inputs;
 
     let mut buf = Vec::new();
     write_event(reporter, buffered, &mut buf, |r, out| r.stage_start(out, name));
@@ -973,8 +990,15 @@ fn build_stage_ctx(
     resolved_outputs: &HashMap<String, Value>,
 ) -> Result<EvalContext> {
     // A context in which `<stage>.outputs` references resolve to the outputs of
-    // stages that have already run this pipeline.
+    // stages that have already run this pipeline. A generated matrix variant also binds
+    // its dimension values as built-ins, so `inputs` / `outputs` and the steps can use
+    // them just like `platform`.
     let with_refs = base.with_stage_outputs(resolved_outputs.clone());
+    let with_refs = if stage.matrix_bindings.is_empty() {
+        with_refs
+    } else {
+        with_refs.with_matrix_vars(&stage.matrix_bindings)
+    };
     let inputs = stage.inputs.as_ref().map(|e| eval_expr(e, &with_refs)).transpose()?;
     let outputs = stage.outputs.as_ref().map(|e| eval_expr(e, &with_refs)).transpose()?;
     Ok(with_refs.with_stage(inputs, outputs))

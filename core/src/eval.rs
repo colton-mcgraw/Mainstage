@@ -127,9 +127,18 @@ pub struct EvalContext {
     pub project_fields: HashMap<String, Value>,
     /// Active `for`-loop variable bindings set by the step executor (Phase 5).
     pub for_vars: HashMap<String, FileEntry>,
+    /// Matrix dimension bindings for the currently executing stage (Phase 37). A stage
+    /// generated from a `matrix { dim: [...] }` block resolves each `dim` to its value
+    /// as a built-in string variable, alongside `platform`. Empty outside a matrix stage.
+    pub matrix_vars: HashMap<String, String>,
     /// Maps each import alias to the raw module name from the `import` declaration.
     /// e.g. `import "git" as vcs` → `"vcs" → "git"`.
     pub import_aliases: HashMap<String, String>,
+    /// Input file paths whose `for`-loop iterations the executor should skip because
+    /// their content is unchanged since the last successful run and the stage's declared
+    /// outputs are all present (Phase 38 per-file incremental change detection). Empty
+    /// except inside a stage the runner is rebuilding incrementally.
+    pub skip_inputs: std::collections::HashSet<PathBuf>,
     /// Resolved `inputs` fileset for the currently executing stage (set by Phase 6 runner).
     pub stage_inputs: Option<Value>,
     /// Resolved `outputs` value for the currently executing stage (set by Phase 6 runner).
@@ -190,6 +199,17 @@ impl EvalContext {
         child
     }
 
+    /// Return a context with `bindings` installed as matrix variables, so a generated
+    /// matrix-variant stage resolves each dimension name to its value. Preserves the
+    /// stage inputs/outputs already set on `self`.
+    pub fn with_matrix_vars(&self, bindings: &[crate::ast::MatrixBinding]) -> Self {
+        let mut child = self.clone_base();
+        child.stage_inputs = self.stage_inputs.clone();
+        child.stage_outputs = self.stage_outputs.clone();
+        child.matrix_vars = bindings.iter().map(|b| (b.name.clone(), b.value.clone())).collect();
+        child
+    }
+
     /// Return a context where `failed_stage` resolves to `stage_name` (for pipeline on_failure).
     pub fn with_failed_stage(&self, stage_name: String) -> Self {
         let mut child = self.clone_base();
@@ -206,6 +226,12 @@ impl EvalContext {
             let_values: self.let_values.clone(),
             project_fields: self.project_fields.clone(),
             for_vars: HashMap::new(),
+            // Matrix bindings belong to a stage, so they carry across the per-iteration
+            // and per-stage context clones (like `platform`), unlike `for_vars`.
+            matrix_vars: self.matrix_vars.clone(),
+            // The incremental skip set is stage-scoped; preserve it so the `for`-loop's
+            // per-iteration context clones still see which inputs to skip.
+            skip_inputs: self.skip_inputs.clone(),
             import_aliases: self.import_aliases.clone(),
             stage_inputs: None,
             stage_outputs: None,
@@ -254,6 +280,8 @@ pub fn eval_program_with(
         let_values: Vec::new(),
         project_fields: HashMap::new(),
         for_vars: HashMap::new(),
+        matrix_vars: HashMap::new(),
+        skip_inputs: HashSet::new(),
         import_aliases: HashMap::new(),
         stage_inputs: None,
         stage_outputs: None,
@@ -493,6 +521,12 @@ impl<'a> Evaluator<'a> {
                 )
             });
         }
+        // Matrix dimension bindings of the executing stage resolve as built-in strings.
+        // They take precedence over `let` bindings so a dimension shadows an outer name
+        // only within its own stage.
+        if let Some(val) = self.ctx.matrix_vars.get(&ident.name) {
+            return Ok(Value::String(val.clone()));
+        }
         // User let-bindings (take precedence over stage names to respect shadowing)
         if let Some(val) = self.ctx.lookup_let(&ident.name) {
             return Ok(val.clone());
@@ -545,6 +579,8 @@ mod tests {
             let_values: Vec::new(),
             project_fields: HashMap::new(),
             for_vars: HashMap::new(),
+            matrix_vars: HashMap::new(),
+            skip_inputs: HashSet::new(),
             import_aliases: HashMap::new(),
             stage_inputs: None,
             stage_outputs: None,

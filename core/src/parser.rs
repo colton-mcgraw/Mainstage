@@ -117,6 +117,7 @@ impl Builder {
         let mut inputs = None;
         let mut outputs = None;
         let mut depends_on = Vec::new();
+        let mut matrix = Vec::new();
         let mut allow_failure = false;
         let mut always_run = false;
         let mut run_once = false;
@@ -136,6 +137,9 @@ impl Builder {
                         .into_inner()
                         .map(|p| StageDep { name: p.as_str().to_string(), span: self.span(&p) })
                         .collect();
+                }
+                Rule::stage_matrix => {
+                    matrix = field.into_inner().map(|p| self.build_matrix_dim(p)).collect();
                 }
                 Rule::stage_allow_failure => {
                     let val = field.into_inner().next().unwrap().as_str();
@@ -164,6 +168,8 @@ impl Builder {
             inputs,
             outputs,
             depends_on,
+            matrix,
+            matrix_bindings: Vec::new(),
             allow_failure,
             always_run,
             run_once,
@@ -171,6 +177,22 @@ impl Builder {
             on_failure,
             span,
         }
+    }
+
+    /// Build one `matrix` dimension: an identifier name followed by a bracketed list of
+    /// static string values. Interpolation in a value is rejected (it must be static so
+    /// it can form part of a generated stage name).
+    fn build_matrix_dim(&mut self, pair: Pair<Rule>) -> MatrixDim {
+        let span = self.span(&pair);
+        let mut inner = pair.into_inner();
+        let name = inner.next().unwrap().as_str().to_string();
+        let values = inner
+            .map(|p| {
+                let span = self.span(&p);
+                MatrixValue { value: self.extract_raw_string(p), span }
+            })
+            .collect();
+        MatrixDim { name, values, span }
     }
 
     // ── Pipeline ──────────────────────────────────────────────────────────────
