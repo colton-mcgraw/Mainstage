@@ -39,11 +39,16 @@ struct Analyzer {
     /// The module registry — the source of truth for which modules exist and the
     /// signatures of their methods. Used to validate `import`s and module calls.
     registry: ModuleRegistry,
+    /// Matrix dimension names bound by the stage currently being resolved (Phase 37).
+    /// These resolve as built-in identifiers anywhere inside the stage. Empty outside a
+    /// matrix variant; the lowering pass runs before analysis, so a variant arrives here
+    /// with its bindings already attached.
+    matrix_vars: Vec<String>,
 }
 
 impl Analyzer {
     fn new(registry: ModuleRegistry) -> Self {
-        Self { errors: Vec::new(), registry }
+        Self { errors: Vec::new(), registry, matrix_vars: Vec::new() }
     }
 
     fn error(&mut self, msg: impl Into<String>, span: Span) {
@@ -185,6 +190,9 @@ impl Analyzer {
     }
 
     fn resolve_stage(&mut self, stage: &StageBlock, scope: &Scope) {
+        // Bind this stage's matrix dimensions as valid built-in identifiers for the
+        // duration of its resolution, then clear them so they don't leak to later items.
+        self.matrix_vars = stage.matrix_bindings.iter().map(|b| b.name.clone()).collect();
         let ctx = ExprCtx::top_level();
         if let Some(expr) = &stage.inputs {
             self.resolve_expr(expr, scope, ctx);
@@ -217,6 +225,7 @@ impl Analyzer {
         for step in &stage.on_failure {
             self.resolve_step(step, scope, &[]);
         }
+        self.matrix_vars.clear();
     }
 
     fn resolve_pipeline(&mut self, pipeline: &PipelineBlock, scope: &Scope) {
@@ -378,6 +387,10 @@ impl Analyzer {
         }
         // for-loop iteration variable
         if ctx.for_vars.contains(&ident.name) {
+            return;
+        }
+        // Matrix dimension bound by the enclosing stage (Phase 37).
+        if self.matrix_vars.contains(&ident.name) {
             return;
         }
         // let binding — also enforce forward-reference rule

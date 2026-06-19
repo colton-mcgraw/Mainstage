@@ -508,11 +508,11 @@ Bring the `sh -c` escape hatches back into native, checkable steps. Output: `mai
 
 Stop copy-pasting per-architecture stages. Output: one authored bootloader stage and one kernel stage expand to their x64 and arm64 variants.
 
-- [ ] `matrix { <dim>: [<values>] }` on a stage, lowered to N concrete stages before semantic analysis so the graph, change detection, and scheduler are unchanged
-- [ ] Expose the active matrix value as a built-in (alongside `platform`) for use in flags, paths, and tool-name selection
-- [ ] Deterministic generated stage names (e.g. `bootloader[x64]`) usable in `pipeline` stage lists, `depends_on`, and `<stage>.outputs` references
-- [ ] Validate matrix dimensions/values and report conflicts (duplicate expansion names, empty dimensions) with spans
-- [ ] Collapse the duplicated `bootloader_*` / `kernel_*` stages in `main.ms` to a single matrixed definition each
+- [x] `matrix { <dim>: [<values>] }` on a stage, lowered to N concrete stages before semantic analysis so the graph, change detection, and scheduler are unchanged
+- [x] Expose the active matrix value as a built-in (alongside `platform`) for use in flags, paths, and tool-name selection
+- [x] Deterministic generated stage names (e.g. `bootloader[x64]`) usable in `pipeline` stage lists, `depends_on`, and `<stage>.outputs` references
+- [x] Validate matrix dimensions/values and report conflicts (duplicate expansion names, empty dimensions) with spans
+- [x] Collapse the duplicated `bootloader_*` / `kernel_*` stages in `main.ms` to a single matrixed definition each
 
 ---
 

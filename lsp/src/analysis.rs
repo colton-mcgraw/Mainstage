@@ -8,7 +8,7 @@
 use std::path::Path;
 
 use mainstage_core::{
-    Diagnostic, Error, ModuleRegistry, Source, analyze_with, ast::Program, parse,
+    Diagnostic, Error, ModuleRegistry, Source, analyze_with, ast::Program, expand_matrix, parse,
 };
 
 /// The outcome of analyzing one document.
@@ -37,8 +37,13 @@ pub fn analyze(text: &str, path: &Path, registry: &ModuleRegistry) -> Analysis {
         }
     };
 
-    let diagnostics = match analyze_with(&program, registry) {
-        Ok(_) => Vec::new(),
+    // Lower `matrix` stages before analysis so matrix validation and matrix-variable
+    // references surface in the editor exactly as they do in the CLI. The authored
+    // `program` is still returned for navigation/completion, which read the source tree.
+    let diagnostics = match expand_matrix(&program) {
+        Ok(lowered) => {
+            analyze_with(&lowered, registry).err().map(diagnostics_of).unwrap_or_default()
+        }
         Err(err) => diagnostics_of(err),
     };
 

@@ -159,6 +159,7 @@ stage <name> {
 | `inputs`        | `fileset` / `list`| No       | Files this stage consumes. Used for change detection.     |
 | `outputs`       | `list`            | No       | Paths this stage produces. Used for change detection.     |
 | `depends_on`    | stage-name list   | No       | Explicit ordering edges to other stages (see below).      |
+| `matrix`        | block             | No       | Expand the stage into one variant per combination of values (see below). |
 | `allow_failure` | `bool`            | No       | If `true`, pipeline does not stop on stage failure.       |
 | `always_run`    | `bool`            | No       | If `true`, the stage runs every invocation (see below).   |
 | `run_once`      | `bool`            | No       | If `true`, the stage's success is cached without `outputs` (see below). |
@@ -207,6 +208,36 @@ stage build {
 ```
 
 These edges are merged with the inferred `<stage>.outputs` edges into a single dependency graph, so they participate identically in ordering, parallel scheduling, and failure propagation. A `depends_on` edge only orders stages **within the same pipeline** — like inferred edges, a reference to a stage not listed in the running pipeline is ignored, not auto-added. Referencing an unknown stage, depending on yourself, or forming a dependency cycle (across the combined `inputs`/`outputs` + `depends_on` graph) is a semantic error reported with a source span.
+
+**Build matrix (`matrix`):** A `matrix` block expands one authored stage into several concrete stages — one per combination of dimension values — so a multi-target build (e.g. per-architecture) lives in a single definition instead of copy-pasted stages. Each dimension is a name and a list of string values:
+
+```text
+matrix {
+    <dim>: [<value>, ...]
+    ...
+}
+```
+
+```mainstage
+stage bundle {
+    matrix {
+        arch: ["x86_64", "aarch64"]
+    }
+    outputs: ["dist/app-${arch}.tar.gz"]
+
+    steps {
+        $ cargo build --release --target ${arch}-unknown-linux-gnu
+        $ tar -czf "dist/app-${arch}.tar.gz" dist/
+    }
+}
+```
+
+The expansion happens **before** semantic analysis, so the dependency graph, change detection, and the parallel scheduler only ever see ordinary stages.
+
+- **Generated names.** Each variant is named `<stage>[<value>]`, e.g. `bundle[x86_64]` and `bundle[aarch64]`. With multiple dimensions the suffix joins the values in declaration order: `kernel { matrix { arch: ["x64"], mode: ["debug", "release"] } }` produces `kernel[x64,debug]` and `kernel[x64,release]` (the cartesian product).
+- **The active value is a built-in.** Inside the stage, each dimension name resolves to its value as a built-in string variable, alongside `platform` — usable in `inputs`, `outputs`, interpolations (`${arch}`), and `$` command lines.
+- **Referencing variants.** The bracketed names are never written by hand. Instead, reference the **base** name and it fans out to every variant: a base name in a pipeline's `stages:` list or another stage's `depends_on:` runs (or waits on) all variants, and `<base>.outputs` resolves to the combined outputs of every variant. The generated names appear in `mainstage list` and `--dry-run` output.
+- **Validation.** An empty dimension (`arch: []`), a repeated dimension or value, a dimension that shadows a built-in (`platform`, `inputs`, `outputs`, `failed_stage`), or two variants resolving to the same generated name are semantic errors reported with a source span.
 
 ```mainstage
 stage compile {
@@ -755,6 +786,8 @@ Inside `steps`, `on_failure`, and `on_success` blocks, the following context var
 | `outputs`       | stage steps        | The declared output paths for the stage          |
 | `failed_stage`  | pipeline on_failure| Name of the stage that caused the failure        |
 
+Inside a stage declared with a `matrix` block, each matrix dimension name (e.g. `arch`) is also available as a built-in string variable resolving to that variant's value. See [`stage`](#stage).
+
 ---
 
 ## Formal Grammar (EBNF)
@@ -777,11 +810,13 @@ stage_block     = "stage" ident "{" stage_field* "}" ;
 stage_field     = "inputs"        ":" expr                              ","?
                 | "outputs"       ":" expr                              ","?
                 | "depends_on"    ":" "[" ( ident ( "," ident )* ","? )? "]" ","?
+                | "matrix"        "{" matrix_dim*                       "}"
                 | "allow_failure" ":" bool                              ","?
                 | "always_run"    ":" bool                              ","?
                 | "run_once"      ":" bool                              ","?
                 | "steps"         "{" step*                             "}"
                 | "on_failure"    "{" step*                             "}" ;
+matrix_dim      = ident ":" "[" ( string ( "," string )* ","? )? "]" ","? ;
 
 pipeline_block  = "default"? "pipeline" ident "{" pipeline_field* "}" ;
 pipeline_field  = "input"      ":" expr         ","?

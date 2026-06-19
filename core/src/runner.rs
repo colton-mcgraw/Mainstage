@@ -973,8 +973,15 @@ fn build_stage_ctx(
     resolved_outputs: &HashMap<String, Value>,
 ) -> Result<EvalContext> {
     // A context in which `<stage>.outputs` references resolve to the outputs of
-    // stages that have already run this pipeline.
+    // stages that have already run this pipeline. A generated matrix variant also binds
+    // its dimension values as built-ins, so `inputs` / `outputs` and the steps can use
+    // them just like `platform`.
     let with_refs = base.with_stage_outputs(resolved_outputs.clone());
+    let with_refs = if stage.matrix_bindings.is_empty() {
+        with_refs
+    } else {
+        with_refs.with_matrix_vars(&stage.matrix_bindings)
+    };
     let inputs = stage.inputs.as_ref().map(|e| eval_expr(e, &with_refs)).transpose()?;
     let outputs = stage.outputs.as_ref().map(|e| eval_expr(e, &with_refs)).transpose()?;
     Ok(with_refs.with_stage(inputs, outputs))
