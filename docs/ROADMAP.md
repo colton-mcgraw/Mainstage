@@ -549,3 +549,154 @@ Polish the long-tail papercuts a large multi-stage script exposes. Output: porta
 - [x] Update `main.ms` to use path discovery and stage descriptions
 
 ---
+
+## Goal 7: Leaf Expressiveness — Conditions, Step Context, Locals & Reuse
+
+Closes the expressiveness gaps that surface at the *leaves* of the language — the places
+where an author has a value in hand but no way to act on it. The architecture from Goals
+1–6 is sound (everything funnels through `prepare()`; exhaustive matches turn new
+constructs into compile errors until fully wired; modules are validated at analysis time);
+this goal is deliberately **not** a refactor. It adds expressiveness to conditions, steps,
+and bindings without changing the pass pipeline, the dependency graph, or the cache format.
+
+The motivating observations: a `condition` can only test `env()` and `platform`, so a value
+held in a `let` cannot be compared (`grammar.pest` `primary_cond`); `$` steps always run in
+`script_dir` with the inherited environment (`executor.rs`), so `cd` and per-command env
+still force a drop to `sh -c` — the exact escape hatch Goal 6 set out to retire; there is no
+native way to print a message or fail deliberately; `let` is top-level only, so derived paths
+are repeated or hoisted; and the Phase 39 assertion matchers are limited to `contains` /
+`equals`. Each phase below targets one of these, ordered by impact-to-effort.
+
+**Design decisions:**
+
+- **Conditions become expression-operand comparisons, additively:** the existing `env_cond`
+  / `platform_cond` forms stay (and stay the canonical spelling for env/platform); a new
+  general form compares two arbitrary expressions with `==` / `!=` plus a `contains` / `in`
+  membership test and an emptiness predicate. Reuses eval-time `Value` equality — no new
+  runtime machinery. Type compatibility of the two operands is checked in `sema` exactly as
+  `if/else` branch compatibility already is.
+- **Step context is a block, not per-token soup:** `workdir "<path>" { … }` and
+  `with_env { KEY: <expr> … } { … }` blocks set the working directory and environment for
+  the steps they enclose, nesting and composing with `if` / `for` / `try`. This keeps the
+  `$` line greedy-parsed (no modifier tokens after the command) and gives copy/move/write
+  the same context for free.
+- **Diagnostics and explicit failure are first-class steps:** `log "<msg>"` routes through
+  the `Reporter` (so it respects `--quiet` and buffered/atomic per-stage output) rather than
+  shelling out to `echo`; `fail "<reason>"` fails the stage deliberately with a user-facing
+  diagnostic, composing with `if` to assert invariants.
+- **Locals are block-scoped and immutable:** a `let` permitted inside any step block binds a
+  name for the remainder of that block (including per-iteration inside `for`), shadowing is a
+  semantic error, and forward-reference rules mirror the top-level `let` pass.
+- **Assertions round out the matcher set without a regex engine in core:** add
+  `not_contains`, `starts_with`, `ends_with`, and `matches` (anchored glob-style, reusing the
+  existing matcher rather than pulling in a regex dependency unless one already exists).
+- **Reuse is a pre-analysis expansion, like `matrix`:** a `template` of steps is inlined into
+  each referencing stage *before* semantic analysis, so the graph, change detection, and
+  scheduler see ordinary stages and need no changes — the same lowering discipline Phase 37
+  established.
+
+---
+
+### Phase 41: Expression-Based Conditions
+
+Let conditions compare arbitrary expressions, not just `env()` / `platform`. Output: a
+`let`, module-call result, or `project.<field>` can drive an `if/else` expression or `if`
+step directly, retiring the "route everything through `env()`" workaround.
+
+- [ ] Extend `primary_cond` in `grammar.pest` with a general comparison form
+      (`<expr> (== | != | contains | in) <expr>`) and an emptiness predicate, keeping
+      `env_cond` / `platform_cond` as-is and ordering alternatives so the specific forms win
+- [ ] Add the AST node(s) and `span` arm; thread through `parser.rs` (`build_condition`)
+- [ ] `sema.rs`: resolve operand sub-expressions and check operand type compatibility (reuse
+      the `if/else` branch-compatibility logic) with precise diagnostics carrying operand spans
+- [ ] `eval.rs`: evaluate the general comparison via `Value` equality / list membership;
+      keep the env/platform fast paths
+- [ ] `format.rs`, `navigation.rs` (`walk_steps`), and the LSP feature files: add the new arm
+- [ ] Docs (`docs/GRAMMAR.md` conditions section + EBNF) and tests: parser, sema (type
+      mismatch), eval, and an example `.ms` exercising a `let`-driven condition
+
+---
+
+### Phase 42: Step Execution Context (`workdir` / `with_env`)
+
+Give steps a working directory and environment without dropping to a shell. Output: the most
+common remaining `sh -c "cd … && …"` and `FOO=bar cmd` patterns become native, checkable steps.
+
+- [ ] `workdir "<path>" { <step>* }` and `with_env { <key>: <expr>, … } { <step>* }` block
+      steps in the grammar, AST, and parser; both nest and compose with `if` / `for` / `try`
+- [ ] Thread an execution context (cwd + env overlay) through `executor.rs::execute_step`,
+      replacing the hardcoded `current_dir(&ctx.script_dir)` with the active context; apply to
+      `$`, `copy`, `move`, `write`, `mkdir`, `delete` uniformly
+- [ ] `sema.rs`: resolve `with_env` value expressions and the `workdir` path; validate the
+      path is a string-typed expression
+- [ ] Confirm `workdir` + `with_env` compose to replace the `sh -c "cd … && VAR=… cmd"`
+      escape hatch; document when to prefer them over `$ sh -c` (`docs/GRAMMAR.md`)
+- [ ] `format.rs` / LSP exhaustive-match arms; tests for nesting, env overlay precedence, and
+      a relative `workdir` resolved against `script_dir`
+
+---
+
+### Phase 43: Diagnostic & Control-Flow Steps (`log` / `fail`)
+
+Make printing a message and failing deliberately first-class. Output: scripts emit progress
+and assert invariants without `$ echo` or a sentinel non-zero command.
+
+- [ ] `log "<msg>"` step (interpolated) routed through a new `Reporter` method (default no-op
+      body so `NoopReporter` / test reporters keep compiling), honoring `--quiet` and buffered
+      per-stage output
+- [ ] `fail "<reason>"` step that fails the enclosing stage with a user-facing `Error::Eval`
+      diagnostic carrying the step span; interacts with `try` (swallowed) and `on_failure`
+      (fires) exactly like a failed command
+- [ ] Grammar / AST / parser / `sema` (interpolation resolution) / `eval` wiring; `format.rs`
+      and LSP `walk_steps` arms
+- [ ] Docs and tests: `log` output under `--quiet` vs default, `fail` inside `if`, and `fail`
+      inside `try` not propagating
+
+---
+
+### Phase 44: Block-Scoped Bindings (local `let`)
+
+Allow `let` inside step blocks so derived values are named once. Output: multi-path stages and
+`for` loop bodies stop repeating interpolated expressions.
+
+- [ ] Permit `let <ident> = <expr>;` as a step; scope the binding to the remainder of its
+      enclosing block (including per-iteration inside `for`)
+- [ ] `sema.rs`: extend name resolution into step scopes with the top-level forward-reference
+      rule; report shadowing of an outer binding as a semantic error with both spans
+- [ ] `eval.rs` / `executor.rs`: maintain a scoped binding environment while executing a block;
+      ensure `EvalContext` field additions update `eval_program_with`, `clone_base`, and the
+      test helpers
+- [ ] `format.rs` / LSP (completion of locals in scope, go-to-definition) arms; tests for
+      scoping, shadowing errors, and a `for`-loop-local binding
+
+---
+
+### Phase 45: Richer Assertion Matchers
+
+Round out the Phase 39 test harness. Output: smoke tests can assert the *absence* of a marker
+and match on prefixes/suffixes/patterns.
+
+- [ ] Extend `match_op` with `not_contains`, `starts_with`, `ends_with`, and `matches`
+      (anchored glob-style; reuse an existing matcher rather than adding a regex dependency)
+- [ ] Wire through `expect_output` and `assert_step` in AST / parser / `sema` / `executor`
+- [ ] `format.rs` / LSP arms; docs in `docs/GRAMMAR.md` / `docs/MODULES.md`
+- [ ] Tests: each matcher passing and failing, plus a boot-smoke example asserting an error
+      marker is absent from captured output
+
+---
+
+### Phase 46: Reusable Step Templates
+
+Factor a shared sequence of steps out of unrelated stages. Output: common setup/teardown step
+runs are authored once and inlined, complementing `matrix` (which parameterizes over values).
+
+- [ ] A top-level `template <ident> { <step>* }` item and a `use <ident>;` step that inlines
+      it, lowered *before* semantic analysis so the graph, change detection, and scheduler are
+      unchanged (mirrors the Phase 37 `matrix` expansion discipline)
+- [ ] Validate template names (uniqueness, referenced template exists, no recursive `use`
+      cycles) with source spans
+- [ ] Surface templates in `format.rs`, LSP document symbols, and go-to-definition for `use`
+- [ ] Docs (`docs/GRAMMAR.md`) and tests: inlining, a cycle error, and an example `.ms`
+      sharing a template across two stages
+
+---
