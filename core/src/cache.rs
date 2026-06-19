@@ -205,6 +205,18 @@ impl InputFingerprint {
     pub fn digest(&self) -> &str {
         &self.digest
     }
+
+    /// The input paths whose content is unchanged versus `prior` — same recorded content
+    /// hash. Drives per-file incremental change detection (Phase 38): an unchanged input
+    /// file's `for`-loop iteration can be skipped because its output is already present
+    /// and current. A path absent from `prior` (newly added) is treated as changed.
+    pub fn unchanged_since(&self, prior: &InputMeta) -> std::collections::HashSet<PathBuf> {
+        self.files
+            .iter()
+            .filter(|(path, meta)| prior.0.get(*path).is_some_and(|p| p.hash == meta.hash))
+            .map(|(path, _)| PathBuf::from(path))
+            .collect()
+    }
 }
 
 /// Fingerprint a stage's resolved `inputs`, producing the same combined digest as
@@ -373,6 +385,13 @@ fn collect_paths(value: &Value, out: &mut Vec<PathBuf>) {
         // Ints and bools are not paths — they never appear in an `outputs` position.
         Value::Int(_) | Value::Bool(_) => {}
     }
+}
+
+/// Whether every declared output path in `outputs` currently exists on disk. Used to gate
+/// per-file incremental change detection: an unchanged input's output is only safe to
+/// reuse when the stage's declared outputs are all still present.
+pub fn all_outputs_exist(outputs: &[String], project_dir: &Path) -> bool {
+    outputs.iter().all(|o| output_exists(o, project_dir))
 }
 
 /// An output is present if its path exists as written, or relative to the project
@@ -576,6 +595,32 @@ mod tests {
         let d2 = fingerprint_inputs(&value, &InputMeta::default(), &run).digest().to_string();
         assert_eq!(d1, d2);
         assert_eq!(d1, input_digest(&value));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn unchanged_since_reports_only_byte_identical_inputs() {
+        // Phase 38: after one file of a two-file input set changes, only the untouched
+        // file is reported unchanged, so only its loop iteration can be skipped.
+        let dir = unique_dir("incr_unchanged");
+        let a = dir.join("a");
+        let b = dir.join("b");
+        std::fs::write(&a, "one").unwrap();
+        std::fs::write(&b, "two").unwrap();
+        let value = fileset(&[a.clone(), b.clone()]);
+
+        let mut cache = Cache::default();
+        let fp1 = fingerprint_inputs(&value, &cache.input_meta("c"), &RunFileCache::new());
+        cache.update_fingerprint("c", fp1, vec![]);
+
+        // Change only `a`; `b` is byte-for-byte identical.
+        std::fs::write(&a, "one-changed").unwrap();
+        let prior = cache.input_meta("c");
+        let fp2 = fingerprint_inputs(&value, &prior, &RunFileCache::new());
+        let unchanged = fp2.unchanged_since(&prior);
+        assert!(unchanged.contains(&b), "the untouched file is unchanged");
+        assert!(!unchanged.contains(&a), "the edited file is changed");
 
         let _ = std::fs::remove_dir_all(&dir);
     }

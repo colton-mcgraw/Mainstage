@@ -144,6 +144,44 @@ const LARGE: ProjectSpec = ProjectSpec::new(100, 8, 20);
 const HEAVY_S: ProjectSpec = ProjectSpec::with_file_size(30, 5, 8, 64);
 const HEAVY_L: ProjectSpec = ProjectSpec::with_file_size(40, 5, 8, 128);
 
+/// A single-stage project whose stage processes each input file individually in a
+/// `for file in inputs { ... }` loop, copying it to a per-file output. This is the
+/// shape per-file incremental change detection (Phase 38) optimizes: editing one input
+/// re-runs only its iteration, not the whole stage. The copy body makes per-iteration
+/// work proportional to `file_kib`, so skipping iterations is measurable.
+#[derive(Clone, Copy)]
+struct IncrementalSpec {
+    files: usize,
+    file_kib: usize,
+}
+
+impl IncrementalSpec {
+    fn label(&self) -> String {
+        format!("f{}_k{}", self.files, self.file_kib)
+    }
+
+    fn source(&self, base: &Path) -> String {
+        let base = base.display().to_string().replace('\\', "/");
+        format!(
+            "default pipeline build {{ stages: [compile] }}\n\
+             stage compile {{\n    inputs: glob(\"{base}/in/*.txt\")\n    \
+             outputs: [\"{base}/out\"]\n    steps {{\n        for f in inputs {{\n            \
+             copy \"${{f.path}}\" to \"{base}/out/${{f.stem}}.o\"\n        }}\n    }}\n}}\n"
+        )
+    }
+
+    fn materialize(&self, base: &Path) {
+        let dir = base.join("in");
+        std::fs::create_dir_all(&dir).expect("create input dir");
+        for j in 0..self.files {
+            let seed = format!("input {j}\n");
+            let content: Vec<u8> =
+                seed.as_bytes().iter().copied().cycle().take(self.file_kib * 1024).collect();
+            std::fs::write(dir.join(format!("f{j}.txt")), content).expect("write input file");
+        }
+    }
+}
+
 // ── Temp-directory helpers ──────────────────────────────────────────────────────
 
 static COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -332,6 +370,91 @@ fn bench_run_pipeline_warm_large(c: &mut Criterion) {
     group.finish();
 }
 
+// ── Incremental change detection (Phase 38) ──────────────────────────────────────
+
+/// Specs for the incremental benchmark: a per-file compile loop over many medium-size
+/// files, where editing one input should rebuild only that file.
+const INCR_S: IncrementalSpec = IncrementalSpec { files: 40, file_kib: 64 };
+const INCR_L: IncrementalSpec = IncrementalSpec { files: 80, file_kib: 64 };
+
+/// Build a `for`-loop fixture for `spec`, priming the cache and outputs with one full run.
+fn build_incremental_fixture(spec: IncrementalSpec, tag: &str) -> Fixture {
+    let dir = fresh_dir(tag);
+    spec.materialize(&dir);
+    let program = parse(&Source::from_str(dir.join("main.ms"), spec.source(&dir))).expect("parse");
+    let registry = ModuleRegistry::standard();
+    let analysis = analyze_with(&program, &registry).expect("analyze");
+    let fixture = Fixture { program, analysis, registry, dir };
+    reset_run(&fixture.dir);
+    run_pipeline(&fixture.program, None, &fixture.eval(), &fixture.analysis).expect("prime run");
+    fixture
+}
+
+/// Edit one input file (changing its content so its hash differs), then run. Per-file
+/// incremental detection re-runs only the edited file's loop iteration; the other
+/// N−1 iterations are skipped. Compare against `run_pipeline_incremental_full` below,
+/// which clears the cache so every iteration re-runs (the pre-Phase-38 whole-stage cost).
+fn bench_run_pipeline_incremental_edit(c: &mut Criterion) {
+    let mut group = c.benchmark_group("run_pipeline_incremental_edit");
+    group.sample_size(20);
+    for spec in [INCR_S, INCR_L] {
+        let fixture = build_incremental_fixture(spec, "incr_edit");
+        let edit = AtomicU64::new(0);
+        group.bench_with_input(
+            BenchmarkId::from_parameter(spec.label()),
+            &fixture,
+            |b, fixture| {
+                b.iter_batched(
+                    || {
+                        // Edit one file with unique content so its hash always changes.
+                        let n = edit.fetch_add(1, Ordering::Relaxed);
+                        let target =
+                            fixture.dir.join("in").join(format!("f{}.txt", n % spec.files as u64));
+                        let body: Vec<u8> = format!("edit {n}\n")
+                            .as_bytes()
+                            .iter()
+                            .copied()
+                            .cycle()
+                            .take(spec.file_kib * 1024)
+                            .collect();
+                        std::fs::write(&target, body).expect("edit input");
+                        fixture.eval()
+                    },
+                    |ctx| run_pipeline(&fixture.program, None, &ctx, &fixture.analysis),
+                    BatchSize::PerIteration,
+                );
+            },
+        );
+    }
+    group.finish();
+}
+
+/// The whole-stage baseline: clear the cache before each run so every loop iteration
+/// re-runs, mirroring pre-Phase-38 behavior on the same fixture. The delta versus
+/// `run_pipeline_incremental_edit` is the incremental win.
+fn bench_run_pipeline_incremental_full(c: &mut Criterion) {
+    let mut group = c.benchmark_group("run_pipeline_incremental_full");
+    group.sample_size(20);
+    for spec in [INCR_S, INCR_L] {
+        let fixture = build_incremental_fixture(spec, "incr_full");
+        group.bench_with_input(
+            BenchmarkId::from_parameter(spec.label()),
+            &fixture,
+            |b, fixture| {
+                b.iter_batched(
+                    || {
+                        reset_run(&fixture.dir);
+                        fixture.eval()
+                    },
+                    |ctx| run_pipeline(&fixture.program, None, &ctx, &fixture.analysis),
+                    BatchSize::PerIteration,
+                );
+            },
+        );
+    }
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_parse,
@@ -339,6 +462,8 @@ criterion_group!(
     bench_eval,
     bench_run_pipeline,
     bench_run_pipeline_warm,
-    bench_run_pipeline_warm_large
+    bench_run_pipeline_warm_large,
+    bench_run_pipeline_incremental_edit,
+    bench_run_pipeline_incremental_full
 );
 criterion_main!(benches);

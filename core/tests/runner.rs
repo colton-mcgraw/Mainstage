@@ -761,3 +761,94 @@ fn matrix_variant_outputs_feed_a_downstream_stage() {
 
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+// ── Per-file incremental change detection (Phase 38) ──────────────────────────────
+
+#[test]
+fn for_loop_reruns_only_changed_input_files() {
+    let dir = unique_dir("incremental");
+    let d = dir.display();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(dir.join("src/a.txt"), "1").unwrap();
+    std::fs::write(dir.join("src/b.txt"), "2").unwrap();
+
+    // A per-file compile loop: each input writes a corresponding object file. The output
+    // directory is the declared output, so the incremental gate (outputs present) holds.
+    let src = format!(
+        r#"
+        default pipeline build {{ stages: [compile] }}
+        stage compile {{
+            inputs: glob("{d}/src/*.txt")
+            outputs: ["{d}/obj"]
+            steps {{
+                for f in inputs {{
+                    write "{d}/obj/${{f.stem}}.o" content: "built"
+                }}
+            }}
+        }}
+        "#
+    );
+
+    // First run builds both objects.
+    run(&src, &dir, None).expect("first run should succeed");
+    assert!(exists(&dir, "obj/a.o"));
+    assert!(exists(&dir, "obj/b.o"));
+
+    // Overwrite both objects with sentinels, then change only a.txt. A second run should
+    // re-run a's iteration (overwriting its sentinel) but skip b's (sentinel survives).
+    std::fs::write(dir.join("obj/a.o"), "SENTINEL-A").unwrap();
+    std::fs::write(dir.join("obj/b.o"), "SENTINEL-B").unwrap();
+    std::fs::write(dir.join("src/a.txt"), "1-changed").unwrap();
+
+    run(&src, &dir, None).expect("second run should succeed");
+
+    assert_eq!(
+        std::fs::read_to_string(dir.join("obj/a.o")).unwrap(),
+        "built",
+        "the changed input's iteration must re-run"
+    );
+    assert_eq!(
+        std::fs::read_to_string(dir.join("obj/b.o")).unwrap(),
+        "SENTINEL-B",
+        "the unchanged input's iteration must be skipped"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn incremental_skip_disabled_when_outputs_missing() {
+    let dir = unique_dir("incremental_no_out");
+    let d = dir.display();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(dir.join("src/a.txt"), "1").unwrap();
+    std::fs::write(dir.join("src/b.txt"), "2").unwrap();
+
+    let src = format!(
+        r#"
+        default pipeline build {{ stages: [compile] }}
+        stage compile {{
+            inputs: glob("{d}/src/*.txt")
+            outputs: ["{d}/obj"]
+            steps {{
+                for f in inputs {{
+                    write "{d}/obj/${{f.stem}}.o" content: "built"
+                }}
+            }}
+        }}
+        "#
+    );
+
+    run(&src, &dir, None).expect("first run should succeed");
+
+    // Remove the whole output directory: the incremental gate fails, so a changed-input
+    // run rebuilds every object, restoring b.o too.
+    std::fs::remove_dir_all(dir.join("obj")).unwrap();
+    std::fs::write(dir.join("src/a.txt"), "1-changed").unwrap();
+
+    run(&src, &dir, None).expect("second run should succeed");
+    assert!(exists(&dir, "obj/a.o"), "changed input rebuilt");
+    assert!(exists(&dir, "obj/b.o"), "missing outputs force a full rebuild of unchanged inputs");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}

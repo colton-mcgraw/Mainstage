@@ -134,6 +134,11 @@ pub struct EvalContext {
     /// Maps each import alias to the raw module name from the `import` declaration.
     /// e.g. `import "git" as vcs` → `"vcs" → "git"`.
     pub import_aliases: HashMap<String, String>,
+    /// Input file paths whose `for`-loop iterations the executor should skip because
+    /// their content is unchanged since the last successful run and the stage's declared
+    /// outputs are all present (Phase 38 per-file incremental change detection). Empty
+    /// except inside a stage the runner is rebuilding incrementally.
+    pub skip_inputs: std::collections::HashSet<PathBuf>,
     /// Resolved `inputs` fileset for the currently executing stage (set by Phase 6 runner).
     pub stage_inputs: Option<Value>,
     /// Resolved `outputs` value for the currently executing stage (set by Phase 6 runner).
@@ -224,6 +229,9 @@ impl EvalContext {
             // Matrix bindings belong to a stage, so they carry across the per-iteration
             // and per-stage context clones (like `platform`), unlike `for_vars`.
             matrix_vars: self.matrix_vars.clone(),
+            // The incremental skip set is stage-scoped; preserve it so the `for`-loop's
+            // per-iteration context clones still see which inputs to skip.
+            skip_inputs: self.skip_inputs.clone(),
             import_aliases: self.import_aliases.clone(),
             stage_inputs: None,
             stage_outputs: None,
@@ -273,6 +281,7 @@ pub fn eval_program_with(
         project_fields: HashMap::new(),
         for_vars: HashMap::new(),
         matrix_vars: HashMap::new(),
+        skip_inputs: HashSet::new(),
         import_aliases: HashMap::new(),
         stage_inputs: None,
         stage_outputs: None,
@@ -571,6 +580,7 @@ mod tests {
             project_fields: HashMap::new(),
             for_vars: HashMap::new(),
             matrix_vars: HashMap::new(),
+            skip_inputs: HashSet::new(),
             import_aliases: HashMap::new(),
             stage_inputs: None,
             stage_outputs: None,
