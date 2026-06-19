@@ -531,11 +531,11 @@ Refine change detection below whole-stage granularity so editing one source reco
 
 Make tests first-class instead of a bare non-zero exit. Output: a stage flavor that reports pass/fail counts and assertion failures, suitable for unit tests and OS boot-smoke checks.
 
-- [ ] A `test` stage flavor (never cached, like Phase 35 `always_run`) whose result is a pass/fail tally rather than a single exit code
-- [ ] `expect` / `assert` steps — assert a command's exit status and/or compare its captured stdout/stderr against an expected value, with interpolation support
-- [ ] Capture-and-match assertions usable for boot-smoke tests (run a `$` step, scrape output for an expected marker, fail on timeout)
-- [ ] Integrate with the Phase 24 reporter (buffered, atomic per-stage output) and exit-code propagation; add a `--quiet`-aware summary line
-- [ ] Document the harness in `docs/GRAMMAR.md`/`docs/MODULES.md` and add `tests/` example scripts covering passing and failing assertions
+- [x] A `test` stage flavor (never cached, like Phase 35 `always_run`) whose result is a pass/fail tally rather than a single exit code
+- [x] `expect` / `assert` steps — assert a command's exit status and/or compare its captured stdout/stderr against an expected value, with interpolation support
+- [x] Capture-and-match assertions usable for boot-smoke tests (run a `$` step, scrape output for an expected marker, fail on timeout)
+- [x] Integrate with the Phase 24 reporter (buffered, atomic per-stage output) and exit-code propagation; add a `--quiet`-aware summary line
+- [x] Document the harness in `docs/GRAMMAR.md`/`docs/MODULES.md` and add `tests/` example scripts covering passing and failing assertions
 
 ---
 
@@ -543,9 +543,9 @@ Make tests first-class instead of a bare non-zero exit. Output: a stage flavor t
 
 Polish the long-tail papercuts a large multi-stage script exposes. Output: portable firmware/tool discovery and a navigable stage list.
 
-- [ ] First-existing-path discovery helper (e.g. `fs.find_first([...])`) so hardcoded firmware paths like `OVMF_CODE_4M.fd` vs `OVMF_CODE.fd` resolve portably across distros
-- [ ] Optional `description:` field on stages, surfaced by `mainstage list` (and an optional `--describe`) so a 12-stage build is navigable from the CLI
-- [ ] Carry stage descriptions and ordering into LSP document symbols / hover (reusing Goal 3 infrastructure)
-- [ ] Update `main.ms` to use path discovery and stage descriptions
+- [x] First-existing-path discovery helper (e.g. `fs.find_first([...])`) so hardcoded firmware paths like `OVMF_CODE_4M.fd` vs `OVMF_CODE.fd` resolve portably across distros
+- [x] Optional `description:` field on stages, surfaced by `mainstage list` (and an optional `--describe`) so a 12-stage build is navigable from the CLI
+- [x] Carry stage descriptions and ordering into LSP document symbols / hover (reusing Goal 3 infrastructure)
+- [x] Update `main.ms` to use path discovery and stage descriptions
 
 ---
