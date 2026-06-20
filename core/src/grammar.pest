@@ -6,12 +6,15 @@ COMMENT    = _{ "//" ~ (!"\n" ~ ANY)* }
 // ── Top-level ─────────────────────────────────────────────────────────────────
 
 program = { SOI ~ item* ~ EOI }
-item    = _{ import_decl | let_decl | project_block | stage_block | pipeline_block | template_block }
+item    = _{ include_decl | import_decl | let_decl | project_block | stage_block | pipeline_block | template_block }
 
 // ── Declarations ──────────────────────────────────────────────────────────────
 
-import_decl = { "import" ~ string ~ "as" ~ ident ~ ";" }
-let_decl    = { "let" ~ ident ~ "=" ~ expr ~ ";" }
+// Multi-file composition (Phase 48). `include` lexically merges another `.ms` file's
+// items into the program; it is lowered away before semantic analysis.
+include_decl = { "include" ~ string ~ ";" }
+import_decl  = { "import" ~ string ~ "as" ~ ident ~ ";" }
+let_decl     = { "let" ~ ident ~ "=" ~ expr ~ ";" }
 
 // ── Project ───────────────────────────────────────────────────────────────────
 

@@ -21,6 +21,9 @@ fn example_scripts() -> Vec<PathBuf> {
     let root = repo_root();
     vec![
         root.join("main.ms"),
+        root.join("examples/multi-file/main.ms"),
+        root.join("examples/multi-file/components/frontend.ms"),
+        root.join("examples/multi-file/components/backend.ms"),
         root.join("tests/stdlib.ms"),
         root.join("tests/validation_errors.ms"),
         root.join("tests/plugin/main.ms"),

@@ -6,6 +6,7 @@ pub mod error;
 pub mod eval;
 pub mod executor;
 pub mod format;
+pub mod include;
 pub mod matrix;
 pub mod modules;
 pub mod parser;
@@ -22,6 +23,7 @@ pub use eval::{
 };
 pub use executor::{execute_step, execute_steps};
 pub use format::format;
+pub use include::expand as expand_includes;
 pub use matrix::expand as expand_matrix;
 pub use modules::{
     Capability, ExternalModule, LintFinding, LintLevel, LintReport, Module, ModuleRegistry,

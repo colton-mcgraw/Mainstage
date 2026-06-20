@@ -38,6 +38,16 @@ fn parses_import_decl() {
 }
 
 #[test]
+fn parses_include_decl() {
+    let program = parse_ok(r#"include "components/build.ms";"#);
+    assert_eq!(program.items.len(), 1);
+    match &program.items[0] {
+        Item::Include(d) => assert_eq!(d.path, "components/build.ms"),
+        other => panic!("expected include, got {other:?}"),
+    }
+}
+
+#[test]
 fn parses_let_decl_with_string() {
     let program = parse_ok(r#"let target = "release";"#);
     match &program.items[0] {

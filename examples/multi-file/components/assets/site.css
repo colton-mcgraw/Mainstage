@@ -1,0 +1,5 @@
+/* A sample stylesheet picked up by the frontend component's glob, which resolves
+   relative to components/ (the including file's directory). */
+body {
+    font-family: sans-serif;
+}

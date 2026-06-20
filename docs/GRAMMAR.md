@@ -76,7 +76,56 @@ The alias, by contrast, is a plain identifier and must be a valid `ident`. See
 [`MODULES.md`](MODULES.md) for the full list of built-in modules and the plugin
 mechanism.
 
-The semicolon is required on `import` and `let` declarations. It is optional on block constructs (`project`, `stage`, `pipeline`).
+The semicolon is required on `import`, `include`, and `let` declarations. It is optional on block constructs (`project`, `stage`, `pipeline`).
+
+---
+
+### `include`
+
+Splits a build across multiple files. `include` lexically merges another `.ms` file's
+top-level items into the program, so a growing repository need not live in one giant
+`main.ms`.
+
+```text
+include "<path>";
+```
+
+```mainstage
+include "components/frontend.ms";
+include "components/backend.ms";
+```
+
+The path is a **string literal** (no interpolation), resolved **relative to the directory
+of the file that contains the `include`** — so an `include "shared.ms"` written in
+`components/a.ms` reads `components/shared.ms`.
+
+Composition is *lexical inclusion, not a package manager*. Includes are flattened away
+before semantic analysis, so the rest of the toolchain only ever sees a single, ordinary
+build graph:
+
+- **One flat namespace.** Every included item shares the program's namespace, so a stage
+  in one file can `depends_on` a stage in another, or reference its `<stage>.outputs`, by
+  its bare name — no qualification needed. The flip side: a `stage` / `let` / `template` /
+  `pipeline` / `project` field defined in two files **collides**, reported as the usual
+  `'<name>' is already defined` error pointing at the second definition's file.
+- **De-duplication.** Including the same file more than once (directly or transitively)
+  merges it exactly once; a repeated `include` is a no-op, not an error.
+- **Cycle detection.** A file may not transitively include itself; an include cycle is a
+  semantic error pointing at the offending `include`.
+- **Ordering.** Each `include` is replaced in place by the (recursively expanded) items of
+  the file it names, so item order is deterministic: items before the `include`, then the
+  included file's items, then items after.
+
+**Path resolution inside an included file.** Because every item keeps the file it was
+written in on its source spans, a [`glob`](#glob) in an included file resolves against
+*that* file's directory — it matches files next to the file you are looking at, not the
+root script. Relative paths in *steps* (`copy`, `write`, `mkdir`, …) are unaffected: they
+resolve against the run's script directory (the root file's directory), or an enclosing
+[`workdir`](#workdir--set-the-working-directory), regardless of which file declared the
+step. Use `workdir` when an included component needs its steps rooted elsewhere.
+
+A missing or unparseable included file is reported at the `include` site (parse errors in
+the included file carry that file's own spans).
 
 ---
 
@@ -1099,13 +1148,15 @@ Inside a stage declared with a `matrix` block, each matrix dimension name (e.g. 
 
 ```ebnf
 program         = item* ;
-item            = import_decl
+item            = include_decl
+                | import_decl
                 | let_decl
                 | project_block
                 | stage_block
                 | pipeline_block
                 | template_block ;
 
+include_decl    = "include" string ";" ;
 import_decl     = "import" string "as" ident ";" ;
 let_decl        = "let" ident "=" expr ";" ;
 

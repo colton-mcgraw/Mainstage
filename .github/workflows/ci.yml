@@ -68,6 +68,9 @@ jobs:
           examples/hello/main.ms
           examples/static-site/main.ms
           examples/data-report/main.ms
+          examples/multi-file/main.ms
+          examples/multi-file/components/frontend.ms
+          examples/multi-file/components/backend.ms
           tests/stdlib.ms
           tests/validation_errors.ms
           tests/diagnostics.ms

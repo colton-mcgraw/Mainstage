@@ -161,8 +161,18 @@ impl LanguageServer for Backend {
     }
 
     async fn initialized(&self, _params: InitializedParams) {
-        self.client.log_message(MessageType::INFO, "mainstage language server initialized").await;
-        self.client.log_message(MessageType::INFO, format!("version - {}", env!("CARGO_PKG_VERSION").to_string())).await;
+        // Emit a single startup log message. Two separate awaited `log_message` sends here
+        // deadlock a client that has not yet started draining its socket — which is exactly
+        // the case during `initialize`/`initialized` for the in-process integration harness:
+        // the client-bound channel blocks on the second send before this notification
+        // returns, hanging every test that initializes the server. Folding the version into
+        // one message keeps the information while restoring a single, non-blocking send.
+        self.client
+            .log_message(
+                MessageType::INFO,
+                format!("mainstage language server v{} initialized", env!("CARGO_PKG_VERSION")),
+            )
+            .await;
     }
 
     async fn shutdown(&self) -> RpcResult<()> {
@@ -228,6 +238,21 @@ impl LanguageServer for Backend {
         let uri = pos.text_document.uri;
         let Some(text) = self.text_of(&uri).await else { return Ok(None) };
         let program = self.program_for(&uri, &text).await;
+
+        // Cross-file go-to-definition (Phase 48): the cursor on an `include "<path>"` jumps
+        // to the included file, opened at its start. The path is resolved relative to the
+        // document's own directory, mirroring how `include::expand` resolves it at build time.
+        if let Some(rel) = navigation::include_target(&text, pos.position, program.as_ref())
+            && let Ok(doc_path) = uri.to_file_path()
+        {
+            let base = doc_path.parent().unwrap_or_else(|| Path::new(""));
+            if let Ok(target_uri) = Url::from_file_path(base.join(&rel)) {
+                let start = Position::new(0, 0);
+                let location = Location::new(target_uri, Range::new(start, start));
+                return Ok(Some(GotoDefinitionResponse::Scalar(location)));
+            }
+        }
+
         Ok(navigation::definition(&text, pos.position, program.as_ref())
             .map(|range| GotoDefinitionResponse::Scalar(Location::new(uri, range))))
     }

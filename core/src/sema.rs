@@ -151,8 +151,10 @@ impl Analyzer {
                         }
                     }
                 }
-                // Templates are inlined and removed before analysis (Phase 46).
-                Item::Template(_) => {}
+                // Templates are inlined and removed before analysis (Phase 46), and
+                // includes are flattened away before analysis (Phase 48); neither reaches
+                // a well-formed pipeline, but the arms keep the match total.
+                Item::Template(_) | Item::Include(_) => {}
             }
         }
 
@@ -188,7 +190,7 @@ impl Analyzer {
                 }
                 Item::Stage(b) => self.resolve_stage(b, scope),
                 Item::Pipeline(b) => self.resolve_pipeline(b, scope),
-                Item::Template(_) => {}
+                Item::Template(_) | Item::Include(_) => {}
             }
         }
     }

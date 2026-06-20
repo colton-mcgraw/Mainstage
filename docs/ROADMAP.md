@@ -768,21 +768,25 @@ Let a build span many files and directories so a growing repository is not one g
 `main.ms`. Output: a root script can pull in per-component `.ms` files and the runtime
 sees a single, flat build graph.
 
-- [ ] `include "<path>";` top-level item that lexically merges another `.ms` file's items
+- [x] `include "<path>";` top-level item that lexically merges another `.ms` file's items
       into the program, resolved relative to the including file; lower it in `prepare()`
       **before** semantic analysis (mirroring `matrix.rs` / `templates.rs`) so the graph,
       change detection, and scheduler only ever see one ordinary `Program`
-- [ ] Cycle detection across the include graph, deterministic include ordering, and
+- [x] Cycle detection across the include graph, deterministic include ordering, and
       duplicate-include de-duplication — each reported with a source span
-- [ ] Name-collision rules across files for `stage` / `let` / `template` / `pipeline` /
+- [x] Name-collision rules across files for `stage` / `let` / `template` / `pipeline` /
       `param` (a documented flat namespace with a precise collision error, or qualified
-      names) so two components can't silently clobber each other
-- [ ] Define and test `script_dir` / `glob` / relative-path resolution per *including* vs
+      names) so two components can't silently clobber each other — settled on a **flat
+      namespace**: included items share one namespace and a duplicate name is reported by
+      the existing `sema` duplicate-name checks (cross-file references stay unqualified)
+- [x] Define and test `script_dir` / `glob` / relative-path resolution per *including* vs
       *included* file (a glob in an included file resolves against that file's directory),
-      and carry the originating file+span on every node for diagnostics
-- [ ] grammar / ast / parser / sema wiring; `format.rs` and LSP (`navigation.rs`) arms;
-      cross-file go-to-definition; docs in `docs/GRAMMAR.md` and a multi-file example
-      project under `examples/`
+      and carry the originating file+span on every node for diagnostics — step relative
+      paths still resolve against the run's script directory (or an enclosing `workdir`),
+      documented in `docs/GRAMMAR.md`
+- [x] grammar / ast / parser / sema wiring; `format.rs` and LSP (`navigation.rs`) arms;
+      cross-file go-to-definition (the cursor on an `include` jumps to the included file);
+      docs in `docs/GRAMMAR.md` and a multi-file example project under `examples/`
 
 ---
 
