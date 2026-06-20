@@ -5,7 +5,7 @@
 
 use chrono::{DateTime, Local};
 use std::collections::HashMap;
-use std::io::Write;
+use std::io::{IsTerminal, Write};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -14,10 +14,12 @@ use clap::{Arg, ArgAction, Command};
 use console::style;
 use mainstage_core::ast::Program;
 use mainstage_core::{
-    AnalysisResult, AssertionResult, CancelToken, Diagnostic, Error, EvalContext, LintLevel,
-    ModuleRegistry, Permissions, Plan, PlanStatus, Reporter, ReporterHandle, Source, Span,
-    StageOutcome, Value, analyze_with, ast, cache, eval_program_with_overrides, lint_plugin,
-    params_from_manifest, parse, pipeline_input_paths, plan_pipeline, run_pipeline_cancellable,
+    AnalysisResult, AssertionResult, CancelToken, Diagnostic, Error, EvalContext, ExplainVerdict,
+    Explanation, LintLevel, ModuleRegistry, Permissions, Plan, PlanStatus, Reporter,
+    ReporterHandle, RunReason, SkipReason, Source, Span, StageGraph, StageOutcome, Value,
+    analyze_with, ast, cache, critical_path, eval_program_with_overrides, explain_stage,
+    lint_plugin, params_from_manifest, parse, pipeline_input_paths, plan_pipeline, query_graph,
+    run_pipeline_cancellable,
 };
 
 use crate::scaffold::{self, Lang};
@@ -87,6 +89,27 @@ pub fn setup(cli: Command) -> Command {
                 "Show the planned execution order and which stages would run, without executing",
             ),
         )
+        .arg(
+            Arg::new("profile")
+                .long("profile")
+                .action(ArgAction::SetTrue)
+                .global(true)
+                .help("After a run, report per-stage timings and the critical path"),
+        )
+        .arg(
+            Arg::new("check-reproducible")
+                .long("check-reproducible")
+                .action(ArgAction::SetTrue)
+                .global(true)
+                .help("Run the pipeline twice and report outputs that differ between runs"),
+        )
+        .arg(
+            Arg::new("audit-inputs")
+                .long("audit-inputs")
+                .action(ArgAction::SetTrue)
+                .global(true)
+                .help("Warn about files a stage reads but did not declare in its inputs"),
+        )
         // Build-parameter overrides (Phase 49). Repeatable and global, so `-D` may appear
         // before or after the subcommand. Each value overrides a declared `param`.
         .arg(
@@ -114,6 +137,17 @@ pub fn setup(cli: Command) -> Command {
                 .arg(file_arg()),
         )
         .subcommand(
+            Command::new("ui")
+                .about(
+                    "Run a pipeline in a live terminal UI (status board with per-stage progress)",
+                )
+                .arg(
+                    Arg::new("name")
+                        .help("Pipeline name to run (defaults to the default pipeline)"),
+                )
+                .arg(file_arg()),
+        )
+        .subcommand(
             Command::new("list")
                 .about("List all declared pipelines and their stages")
                 .arg(file_arg())
@@ -127,6 +161,39 @@ pub fn setup(cli: Command) -> Command {
         .subcommand(
             Command::new("params")
                 .about("List declared build parameters and their effective values")
+                .arg(file_arg()),
+        )
+        .subcommand(
+            Command::new("query")
+                .about("Print the stage dependency graph and its reverse edges")
+                .arg(file_arg())
+                .arg(
+                    Arg::new("pipeline")
+                        .long("pipeline")
+                        .value_name("NAME")
+                        .help("Restrict the graph to one pipeline's stages"),
+                )
+                .arg(
+                    Arg::new("format")
+                        .long("format")
+                        .value_name("FORMAT")
+                        .default_value("text")
+                        .help("Output format: text, dot, or json"),
+                ),
+        )
+        .subcommand(
+            Command::new("explain")
+                .about("Explain why a stage would run or be skipped on the next run")
+                .arg(Arg::new("stage").required(true).help("Stage name to explain"))
+                .arg(file_arg()),
+        )
+        .subcommand(
+            Command::new("profile")
+                .about("Run a pipeline and report per-stage timings and the critical path")
+                .arg(
+                    Arg::new("name")
+                        .help("Pipeline name to run (defaults to the default pipeline)"),
+                )
                 .arg(file_arg()),
         )
         .subcommand(
@@ -253,6 +320,9 @@ pub fn dispatch(matches: &clap::ArgMatches) -> i32 {
     // `--jobs` is global, so it is read from the top-level matches wherever it appears.
     let jobs = matches.get_one::<usize>("jobs").copied();
     let dry_run = matches.get_flag("dry-run");
+    let profile = matches.get_flag("profile");
+    let check_reproducible = matches.get_flag("check-reproducible");
+    let audit = matches.get_flag("audit-inputs");
     // Build-parameter overrides are global too (Phase 49); collect them once here.
     let overrides = match collect_overrides(matches) {
         Ok(o) => o,
@@ -266,16 +336,36 @@ pub fn dispatch(matches: &clap::ArgMatches) -> i32 {
             let name = sub.get_one::<String>("name").map(String::as_str);
             if dry_run {
                 cmd_dry_run(file_of(sub), name, flags, &overrides)
+            } else if check_reproducible {
+                cmd_check_reproducible(file_of(sub), name, flags, jobs, &overrides)
             } else {
-                cmd_run(file_of(sub), name, flags, jobs, verbosity, &overrides)
+                cmd_run(file_of(sub), name, flags, jobs, verbosity, &overrides, profile, audit)
             }
         }
         Some(("watch", sub)) => {
             let name = sub.get_one::<String>("name").map(String::as_str);
             cmd_watch(file_of(sub), name, flags, jobs, verbosity, &overrides)
         }
+        Some(("ui", sub)) => {
+            let name = sub.get_one::<String>("name").map(String::as_str);
+            cmd_ui(file_of(sub), name, flags, jobs, verbosity, &overrides)
+        }
         Some(("list", sub)) => cmd_list(file_of(sub), flags, sub.get_flag("describe"), &overrides),
         Some(("params", sub)) => cmd_params(file_of(sub), flags, &overrides),
+        Some(("query", sub)) => {
+            let pipeline = sub.get_one::<String>("pipeline").map(String::as_str);
+            let format = sub.get_one::<String>("format").map(String::as_str).unwrap_or("text");
+            cmd_query(file_of(sub), flags, pipeline, format, &overrides)
+        }
+        Some(("explain", sub)) => {
+            let stage = sub.get_one::<String>("stage").map(String::as_str).unwrap_or_default();
+            cmd_explain(file_of(sub), flags, stage, &overrides)
+        }
+        Some(("profile", sub)) => {
+            let name = sub.get_one::<String>("name").map(String::as_str);
+            // A `profile` run always reports the breakdown, regardless of the global flag.
+            cmd_run(file_of(sub), name, flags, jobs, verbosity, &overrides, true, audit)
+        }
         Some(("clean", sub)) => cmd_clean(file_of(sub)),
         Some(("cache", sub)) => match sub.subcommand() {
             Some(("stats", args)) => cmd_cache_stats(file_of(args)),
@@ -309,7 +399,10 @@ pub fn dispatch(matches: &clap::ArgMatches) -> i32 {
         }
         // No subcommand: plan or run the default pipeline.
         None if dry_run => cmd_dry_run(file_of(matches), None, flags, &overrides),
-        None => cmd_run(file_of(matches), None, flags, jobs, verbosity, &overrides),
+        None if check_reproducible => {
+            cmd_check_reproducible(file_of(matches), None, flags, jobs, &overrides)
+        }
+        None => cmd_run(file_of(matches), None, flags, jobs, verbosity, &overrides, profile, audit),
         Some((other, _)) => {
             eprintln!("{} unknown command '{}'", style("error:").red().bold(), other);
             2
@@ -376,6 +469,7 @@ fn flag_permissions(matches: &clap::ArgMatches) -> Permissions {
 
 // ── run ─────────────────────────────────────────────────────────────────────────
 
+#[allow(clippy::too_many_arguments)]
 fn cmd_run(
     file: &str,
     pipeline: Option<&str>,
@@ -383,6 +477,8 @@ fn cmd_run(
     jobs: Option<usize>,
     verbosity: Verbosity,
     overrides: &HashMap<String, String>,
+    profile: bool,
+    audit: bool,
 ) -> i32 {
     let Some((program, analysis, ctx)) = prepare(file, perms, overrides) else {
         return 1;
@@ -398,11 +494,33 @@ fn cmd_run(
         let _ = ctrlc::set_handler(move || cancel.cancel());
     }
 
-    run_prepared(&program, pipeline, &ctx, &analysis, jobs, verbosity, &cancel)
+    run_prepared(&program, pipeline, &ctx, &analysis, jobs, verbosity, &cancel, profile, audit)
+}
+
+/// Resolve the effective input-audit setting (Phase 53). When `--audit-inputs` is requested,
+/// probe whether the filesystem tracks access times; if not, warn that the audit is inert
+/// (so a clean result is not mistaken for completeness) and disable it.
+fn resolve_audit(requested: bool, ctx: &EvalContext) -> bool {
+    if !requested {
+        return false;
+    }
+    if mainstage_core::audit::atime_supported(&ctx.script_dir) {
+        true
+    } else {
+        eprintln!(
+            "{} input audit unavailable: this filesystem does not track access times \
+             (mounted noatime?); skipping",
+            style("warning:").yellow().bold()
+        );
+        false
+    }
 }
 
 /// Run an already-prepared pipeline against `cancel`, rendering progress at `verbosity`.
-/// Shared by `cmd_run` and `cmd_watch`.
+/// Shared by `cmd_run` and `cmd_watch`. When `profile` is set, an end-of-run timing
+/// breakdown and the critical path are printed alongside the usual summary. When `audit`
+/// is set (and supported), the runner warns about undeclared input reads.
+#[allow(clippy::too_many_arguments)]
 fn run_prepared(
     program: &Program,
     pipeline: Option<&str>,
@@ -411,6 +529,8 @@ fn run_prepared(
     jobs: Option<usize>,
     verbosity: Verbosity,
     cancel: &CancelToken,
+    profile: bool,
+    audit: bool,
 ) -> i32 {
     if verbosity != Verbosity::Quiet {
         match pipeline {
@@ -426,8 +546,11 @@ fn run_prepared(
     // Share one reporter between the runner's lifecycle events and the `log` step: install
     // a handle to it on the context so `log` routes through `Reporter::step_log` (honoring
     // `--quiet` and the per-stage buffered output) just like the runner's own markers.
-    let reporter: Arc<dyn Reporter> = Arc::new(TermReporter::new(verbosity));
-    let run_ctx = ctx.with_reporter(ReporterHandle(reporter.clone()));
+    let reporter: Arc<dyn Reporter> =
+        Arc::new(TermReporter::new(verbosity, profile, analysis.dependency_graph.clone()));
+    // Enable the input audit only when supported, so a clean result is meaningful.
+    let audit = resolve_audit(audit, ctx);
+    let run_ctx = ctx.with_reporter(ReporterHandle(reporter.clone())).with_audit_inputs(audit);
     match run_pipeline_cancellable(program, pipeline, &run_ctx, analysis, &*reporter, jobs, cancel)
     {
         Ok(()) => 0,
@@ -436,6 +559,143 @@ fn run_prepared(
         // the per-stage reporter never sees.
         Err(e) => fail(e),
     }
+}
+
+// ── ui (live HUD) ──────────────────────────────────────────────────────────────────
+
+/// Run a pipeline under the live terminal HUD. Falls back to a normal run when stdout is
+/// not a terminal (piped output / CI), so the UI never writes escape codes into a file.
+fn cmd_ui(
+    file: &str,
+    pipeline: Option<&str>,
+    perms: Permissions,
+    jobs: Option<usize>,
+    verbosity: Verbosity,
+    overrides: &HashMap<String, String>,
+) -> i32 {
+    let Some((program, analysis, ctx)) = prepare(file, perms, overrides) else {
+        return 1;
+    };
+
+    // One cancellation token, also driven by Ctrl-C / SIGTERM. In the HUD's raw mode the
+    // signal arrives as a key event (handled there too); this covers the fallback path.
+    let cancel = CancelToken::new();
+    {
+        let cancel = cancel.clone();
+        let _ = ctrlc::set_handler(move || cancel.cancel());
+    }
+
+    if !std::io::stdout().is_terminal() {
+        // Not a TTY: render the ordinary streaming output instead of a HUD.
+        return run_prepared(
+            &program, pipeline, &ctx, &analysis, jobs, verbosity, &cancel, false, false,
+        );
+    }
+
+    crate::ui::run_hud(&program, pipeline, &ctx, &analysis, jobs, &cancel)
+}
+
+// ── check-reproducible (Phase 53) ─────────────────────────────────────────────────
+
+/// Run the pipeline twice from a clean cache and report declared outputs whose content
+/// differs between the two runs — the non-deterministic ones. Each run starts from a clean
+/// cache so every stage actually executes and overwrites its outputs (rather than being
+/// skipped or restored). Exits non-zero when any output differs or a run fails.
+fn cmd_check_reproducible(
+    file: &str,
+    pipeline: Option<&str>,
+    perms: Permissions,
+    jobs: Option<usize>,
+    overrides: &HashMap<String, String>,
+) -> i32 {
+    let Some((program, analysis, ctx)) = prepare(file, perms, overrides) else {
+        return 1;
+    };
+    let jobs =
+        jobs.unwrap_or_else(|| std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1));
+    let dir = ctx.script_dir.clone();
+
+    // Run the pipeline once from a clean cache, returning `Err` (already reported) on failure.
+    let run_once = |label: &str| -> std::result::Result<(), ()> {
+        if let Err(e) = cache::clean(&dir) {
+            fail(e);
+            return Err(());
+        }
+        println!("{} {label}", style("reproducibility:").bold());
+        let cancel = CancelToken::new();
+        match run_pipeline_cancellable(
+            &program,
+            pipeline,
+            &ctx,
+            &analysis,
+            &mainstage_core::NoopReporter,
+            jobs,
+            &cancel,
+        ) {
+            Ok(()) => Ok(()),
+            Err(e) => {
+                fail(e);
+                Err(())
+            }
+        }
+    };
+
+    if run_once("run 1 of 2…").is_err() {
+        return 1;
+    }
+    // The declared output paths are stable across runs, so resolve them once via the plan.
+    let outputs = match plan_pipeline(&program, pipeline, &ctx, &analysis) {
+        Ok(plan) => {
+            let mut v: Vec<String> = plan
+                .stages()
+                .flat_map(|s| s.outputs.iter().map(|p| p.to_string_lossy().into_owned()))
+                .collect();
+            v.sort();
+            v.dedup();
+            v
+        }
+        Err(e) => return fail(e),
+    };
+    let snapshot1 = hash_outputs(&dir, &outputs);
+
+    if run_once("run 2 of 2…").is_err() {
+        return 1;
+    }
+    let snapshot2 = hash_outputs(&dir, &outputs);
+
+    // An output is non-deterministic when its content digest differs between the two runs —
+    // including an output that appeared in one run but not the other.
+    let nondeterministic: Vec<&String> =
+        outputs.iter().filter(|o| snapshot1.get(*o) != snapshot2.get(*o)).collect();
+
+    println!();
+    if nondeterministic.is_empty() {
+        println!(
+            "{} {} declared output(s) identical across both runs",
+            style("reproducible:").green().bold(),
+            outputs.len()
+        );
+        0
+    } else {
+        println!(
+            "{} {} output(s) differ between runs:",
+            style("not reproducible:").red().bold(),
+            nondeterministic.len()
+        );
+        for out in &nondeterministic {
+            println!("  {} {}", style("✗").red(), out);
+        }
+        1
+    }
+}
+
+/// Hash each declared output's current content into a `path → digest` map (Phase 53).
+/// Outputs absent from the tree are omitted, so a missing output reads as `None`.
+fn hash_outputs(dir: &Path, outputs: &[String]) -> HashMap<String, String> {
+    outputs
+        .iter()
+        .filter_map(|o| cache::output_content_digest(dir, o).map(|d| (o.clone(), d)))
+        .collect()
 }
 
 // ── dry-run ──────────────────────────────────────────────────────────────────────
@@ -575,7 +835,9 @@ fn cmd_watch(
         }
         match prepare(file, perms, overrides) {
             Some((program, analysis, ctx)) => {
-                let _ = run_prepared(&program, pipeline, &ctx, &analysis, jobs, verbosity, &cancel);
+                let _ = run_prepared(
+                    &program, pipeline, &ctx, &analysis, jobs, verbosity, &cancel, false, false,
+                );
                 // A Ctrl-C during the run cancels it and ends the watch session.
                 if cancel.is_cancelled() {
                     break;
@@ -794,6 +1056,141 @@ fn cmd_params(file: &str, perms: Permissions, overrides: &HashMap<String, String
         );
     }
     0
+}
+
+// ── query (Phase 52) ───────────────────────────────────────────────────────────
+
+/// Print the stage dependency graph — forward edges and reverse edges — optionally
+/// restricted to one pipeline, in text (default), Graphviz DOT, or JSON form.
+fn cmd_query(
+    file: &str,
+    perms: Permissions,
+    pipeline: Option<&str>,
+    format: &str,
+    overrides: &HashMap<String, String>,
+) -> i32 {
+    let Some((program, analysis, ctx)) = prepare(file, perms, overrides) else {
+        return 1;
+    };
+    let graph = match query_graph(&program, pipeline, &ctx, &analysis) {
+        Ok(g) => g,
+        Err(e) => return fail(e),
+    };
+    match format {
+        "dot" => print!("{}", graph.to_dot()),
+        "json" => println!("{}", graph.to_json()),
+        "text" => print_graph(&graph),
+        other => {
+            eprintln!(
+                "{} unknown --format '{other}'; expected text, dot, or json",
+                style("error:").red().bold()
+            );
+            return 2;
+        }
+    }
+    0
+}
+
+/// Render a [`StageGraph`] as an indented, human-readable listing: each stage with the
+/// stages it depends on and the stages that depend on it.
+fn print_graph(graph: &StageGraph) {
+    match &graph.pipeline {
+        Some(name) => {
+            println!("{} pipeline {}", style("dependency graph:").bold(), style(name).cyan())
+        }
+        None => println!("{} {}", style("dependency graph:").bold(), style("all stages").cyan()),
+    }
+    if graph.nodes.is_empty() {
+        println!("  {}", style("(no stages)").dim());
+        return;
+    }
+    for node in &graph.nodes {
+        println!("{}", style(&node.name).bold());
+        if node.depends_on.is_empty() {
+            println!("  {} {}", style("depends on").dim(), style("(none)").dim());
+        } else {
+            println!("  {} {}", style("depends on").dim(), node.depends_on.join(", "));
+        }
+        if !node.dependents.is_empty() {
+            println!("  {} {}", style("required by").dim(), node.dependents.join(", "));
+        }
+    }
+}
+
+// ── explain (Phase 52) ─────────────────────────────────────────────────────────
+
+/// Explain why a single stage would run or be skipped on the next invocation, reading the
+/// change-detection cache and the current state of the tree.
+fn cmd_explain(
+    file: &str,
+    perms: Permissions,
+    stage: &str,
+    overrides: &HashMap<String, String>,
+) -> i32 {
+    let Some((program, analysis, ctx)) = prepare(file, perms, overrides) else {
+        return 1;
+    };
+    match explain_stage(&program, stage, &ctx, &analysis) {
+        Ok(exp) => {
+            print_explanation(&exp);
+            0
+        }
+        Err(e) => fail(e),
+    }
+}
+
+/// Render an [`Explanation`]: the headline verdict (run/skip and why), then the changed
+/// inputs, missing outputs, and dependency context that justify it.
+fn print_explanation(exp: &Explanation) {
+    let (glyph, headline) = match &exp.verdict {
+        ExplainVerdict::Run(reason) => {
+            let why = match reason {
+                RunReason::Uncacheable(label) => format!("would run — never cached ({label})"),
+                RunReason::NeverRun => {
+                    "would run — no prior successful run is recorded".to_string()
+                }
+                RunReason::InputsChanged => {
+                    "would run — inputs changed since the last run".to_string()
+                }
+            };
+            (style("▶").cyan(), style(why).cyan().to_string())
+        }
+        ExplainVerdict::Skip(reason) => {
+            let why = match reason {
+                SkipReason::UpToDate => "would skip — inputs unchanged and outputs present",
+                SkipReason::RestoredFromCache => {
+                    "would skip — inputs unchanged; outputs would be restored from the cache"
+                }
+            };
+            (style("•").dim(), style(why).dim().to_string())
+        }
+    };
+    println!("{} {} {}", glyph, style(&exp.stage).bold(), headline);
+
+    if exp.incremental {
+        println!(
+            "  {} only the changed inputs' outputs would be rebuilt (incremental)",
+            style("note:").blue()
+        );
+    }
+    if !exp.changed_inputs.is_empty() {
+        println!("  {}", style("changed inputs:").dim());
+        for p in &exp.changed_inputs {
+            println!("    {}", p.display());
+        }
+    }
+    if !exp.missing_outputs.is_empty() {
+        println!("  {}", style("missing outputs:").dim());
+        for p in &exp.missing_outputs {
+            println!("    {}", p.display());
+        }
+    }
+    if !exp.depends_on.is_empty() {
+        println!("  {} {}", style("depends on:").dim(), exp.depends_on.join(", "));
+    }
+    if !exp.dependents.is_empty() {
+        println!("  {} {}", style("required by:").dim(), exp.dependents.join(", "));
+    }
 }
 
 // ── clean ───────────────────────────────────────────────────────────────────────
@@ -1192,6 +1589,12 @@ fn script_dir(file: &str) -> &Path {
     Path::new(file).parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or(Path::new("."))
 }
 
+/// Render a core error to stderr and return the failure exit code. Crate-visible so the UI
+/// module can report a pre-run error before it takes over the terminal.
+pub(crate) fn report_error(e: mainstage_core::Error) -> i32 {
+    fail(e)
+}
+
 /// Render a core error to stderr — with a source snippet and caret underline when the
 /// diagnostic carries a span — and return the failure exit code.
 fn fail(e: mainstage_core::Error) -> i32 {
@@ -1297,11 +1700,21 @@ struct TermReporter {
     /// Per-stage timings, recorded as stages settle. Behind a `Mutex` so the reporter is
     /// `Sync` and shareable across the runner's worker threads.
     timings: Mutex<Vec<StageTiming>>,
+    /// When `true`, append the critical-path breakdown to the end-of-run summary.
+    profile: bool,
+    /// The stage dependency graph, used to compute the critical path under `--profile`.
+    dep_graph: HashMap<String, Vec<String>>,
 }
 
 impl TermReporter {
-    fn new(verbosity: Verbosity) -> Self {
-        Self { start_time: Local::now(), verbosity, timings: Mutex::new(Vec::new()) }
+    fn new(verbosity: Verbosity, profile: bool, dep_graph: HashMap<String, Vec<String>>) -> Self {
+        Self {
+            start_time: Local::now(),
+            verbosity,
+            timings: Mutex::new(Vec::new()),
+            profile,
+            dep_graph,
+        }
     }
 
     fn quiet(&self) -> bool {
@@ -1393,6 +1806,26 @@ impl Reporter for TermReporter {
             writeln!(out, "{} {} {}", style("⊘").yellow(), stage, style("(cancelled)").yellow());
     }
 
+    fn stage_input_audit(
+        &self,
+        out: &mut dyn Write,
+        _stage: &str,
+        undeclared: &[std::path::PathBuf],
+    ) {
+        if self.quiet() {
+            return;
+        }
+        let _ = writeln!(
+            out,
+            "  {} {} file(s) read but not declared in inputs:",
+            style("audit:").yellow().bold(),
+            undeclared.len()
+        );
+        for p in undeclared {
+            let _ = writeln!(out, "      {} {}", style("?").yellow(), p.display());
+        }
+    }
+
     fn stage_tests(&self, out: &mut dyn Write, _stage: &str, results: &[AssertionResult]) {
         let passed = results.iter().filter(|r| r.passed).count();
         let failed = results.len() - passed;
@@ -1462,6 +1895,9 @@ impl Reporter for TermReporter {
             return;
         }
         self.render_timing_summary(out);
+        if self.profile {
+            self.render_critical_path(out);
+        }
 
         let elapsed = Local::now().signed_duration_since(self.start_time);
         let elapsed_str = format_millis(elapsed.num_milliseconds().max(0) as u128);
@@ -1510,5 +1946,29 @@ impl TermReporter {
                 width = width,
             );
         }
+    }
+
+    /// Print the critical path: the chain of stages with the greatest cumulative duration,
+    /// the longest sequential bottleneck through the dependency graph. Reuses the per-stage
+    /// timings already collected for the summary above.
+    fn render_critical_path(&self, out: &mut dyn Write) {
+        let timings = self.timings.lock().unwrap();
+        if timings.is_empty() {
+            return;
+        }
+        let durations: HashMap<String, Duration> =
+            timings.iter().map(|t| (t.name.clone(), t.elapsed)).collect();
+        let path = critical_path(&self.dep_graph, &durations);
+        if path.is_empty() {
+            return;
+        }
+        let total: Duration = path.iter().filter_map(|s| durations.get(s)).sum();
+        let _ = writeln!(
+            out,
+            "\n{} ({} total)",
+            style("critical path").bold(),
+            format_millis(total.as_millis())
+        );
+        let _ = writeln!(out, "  {}", path.join(&format!(" {} ", style("→").dim())));
     }
 }

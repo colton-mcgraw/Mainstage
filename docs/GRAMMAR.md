@@ -248,10 +248,12 @@ stage <name> {
 | `outputs`       | `list`            | No       | Paths this stage produces. Used for change detection.     |
 | `depends_on`    | stage-name list   | No       | Explicit ordering edges to other stages (see below).      |
 | `matrix`        | block             | No       | Expand the stage into one variant per combination of values (see below). |
+| `requires`      | block             | No       | External tools that must be present before the stage runs (see below). |
 | `allow_failure` | `bool`            | No       | If `true`, pipeline does not stop on stage failure.       |
 | `always_run`    | `bool`            | No       | If `true`, the stage runs every invocation (see below).   |
 | `run_once`      | `bool`            | No       | If `true`, the stage's success is cached without `outputs` (see below). |
 | `test`          | `bool`            | No       | If `true`, the stage is a test stage: never cached, its `expect` / `assert` steps tallied (see below). |
+| `hermetic`      | `bool`            | No       | If `true`, spawned commands run with a cleared environment (see below). |
 | `steps`         | block             | No       | Ordered steps to execute.                                 |
 | `on_failure`    | block             | No       | Steps to run if this stage fails. Always runs on failure. |
 
@@ -303,6 +305,31 @@ stage compile {
     description: "Build the release binary for the host target"
     inputs: sources
     steps { $ cargo build --release }
+}
+```
+
+**`requires`:** Declares the external tools the stage needs. Each entry is a program name (a string, so paths and names with `-`/`+` are allowed) and an optional version constraint — a comparison operator (`>=`, `>`, `<=`, `<`, `==`) and a dotted version string. Before the stage's steps run, every program must resolve on `PATH`, and any version constraint must be satisfied by the version reported by `<tool> --version`; otherwise the stage fails with a clear "missing/mismatched tool" diagnostic (behaving like any other failed step — `try` swallows it, `on_failure` fires, downstream stages cancel). A skipped (cached) stage is not checked, since its steps do not run. The version string in a constraint must be a dotted number (`"1.70"`), checked at analysis time.
+
+```mainstage
+stage compile {
+    requires {
+        "cargo" >= "1.70"   // present on PATH and at least 1.70
+        "git"               // present on PATH (any version)
+    }
+    steps { $ cargo build --release }
+}
+```
+
+**`hermetic`:** When `true`, the stage's spawned commands (`$` exec and `expect`) start from a **cleared** environment rather than inheriting the parent process's, so the stage cannot silently depend on ambient variables. A minimal set is passed through so executables can still be found and run — `PATH` on Unix (plus `SystemRoot`, `ComSpec`, `PATHEXT`, etc. on Windows) — and anything else the stage needs must be set explicitly with a `with_env { … }` block. This moves a build toward reproducibility; combine it with `mainstage --check-reproducible` to verify (see [Hermeticity & Reproducibility](HERMETICITY.md)).
+
+```mainstage
+stage package {
+    hermetic: true
+    steps {
+        with_env { SOURCE_DATE_EPOCH: "0" } {
+            $ tar -czf dist/app.tar.gz dist/
+        }
+    }
 }
 ```
 
@@ -1209,13 +1236,17 @@ stage_field     = "description"   ":" string                            ","?
                 | "outputs"       ":" expr                              ","?
                 | "depends_on"    ":" "[" ( ident ( "," ident )* ","? )? "]" ","?
                 | "matrix"        "{" matrix_dim*                       "}"
+                | "requires"      "{" tool_req*                         "}"
                 | "allow_failure" ":" bool                              ","?
                 | "always_run"    ":" bool                              ","?
                 | "run_once"      ":" bool                              ","?
                 | "test"          ":" bool                              ","?
+                | "hermetic"      ":" bool                              ","?
                 | "steps"         "{" step*                             "}"
                 | "on_failure"    "{" step*                             "}" ;
 matrix_dim      = ident ":" "[" ( string ( "," string )* ","? )? "]" ","? ;
+tool_req        = string ( version_op string )? ","? ;
+version_op      = ">=" | "<=" | "==" | ">" | "<" ;
 
 pipeline_block  = "default"? "pipeline" ident "{" pipeline_field* "}" ;
 pipeline_field  = "input"      ":" expr         ","?

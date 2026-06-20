@@ -851,14 +851,14 @@ that has never built the project pulls finished outputs instead of recomputing t
 Make the dependency graph and the change-detection decisions inspectable. Output: an author
 can see *why* a stage ran, what depends on it, and where the time went.
 
-- [ ] `mainstage query` — print the stage dependency graph and its reverse edges, filtered
+- [x] `mainstage query` — print the stage dependency graph and its reverse edges, filtered
       by pipeline, with DOT and JSON export for external tooling, reading `AnalysisResult`
-- [ ] `mainstage explain <stage>` — why the stage ran or was skipped on the last run: which
+- [x] `mainstage explain <stage>` — why the stage ran or was skipped on the last run: which
       input changed, which output was missing, a whole-stage vs. per-output decision, a
       local hit, or a CAS/remote restore (reading the `change_detection_inputs` decision)
-- [ ] `mainstage profile` / a `--profile` flag — per-stage timings and the critical path,
+- [x] `mainstage profile` / a `--profile` flag — per-stage timings and the critical path,
       building on the Phase 27 end-of-run timing summary
-- [ ] Tests over a fixture graph (diamond + fan-out) asserting query output and explain
+- [x] Tests over a fixture graph (diamond + fan-out) asserting query output and explain
       verdicts; a `docs/` page
 
 ---
@@ -868,16 +868,16 @@ can see *why* a stage ran, what depends on it, and where the time went.
 Move builds from "works on my machine" toward reproducible. Output: a build declares the
 tools it needs, can isolate itself from ambient state, and can be checked for determinism.
 
-- [ ] Declared tool requirements — a `requires { … }` stage field or a top-level
+- [x] Declared tool requirements — a `requires { … }` stage field or a top-level
       `tool`/`toolchain` item asserting a program is present and (optionally) a version
       constraint, checked before the stage runs with a clear "missing/mismatched tool"
       diagnostic
-- [ ] Optional per-stage environment isolation (`hermetic: true`): run with a cleared
+- [x] Optional per-stage environment isolation (`hermetic: true`): run with a cleared
       environment plus an explicit passthrough/`with_env` allowlist, so a stage can't
       silently depend on ambient variables
-- [ ] `--check-reproducible` — run a pipeline twice and diff output content hashes,
+- [x] `--check-reproducible` — run a pipeline twice and diff output content hashes,
       reporting the specific non-deterministic outputs (reusing the Phase 50 output hashing)
-- [ ] Input-completeness audit: where the platform allows, warn when a stage reads files
+- [x] Input-completeness audit: where the platform allows, warn when a stage reads files
       outside its declared `inputs` (the most common cause of a stale cache); `docs/` +
       an example
 

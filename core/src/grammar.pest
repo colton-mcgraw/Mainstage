@@ -31,16 +31,25 @@ project_field = { ident ~ ":" ~ expr ~ ","? }
 // ── Stage ─────────────────────────────────────────────────────────────────────
 
 stage_block         = { "stage" ~ ident ~ "{" ~ stage_field* ~ "}" }
-stage_field         = _{ stage_description | stage_inputs | stage_outputs | stage_depends_on | stage_matrix | stage_allow_failure | stage_always_run | stage_run_once | stage_test | steps_block | stage_on_failure }
+stage_field         = _{ stage_description | stage_inputs | stage_outputs | stage_depends_on | stage_matrix | stage_requires | stage_allow_failure | stage_always_run | stage_run_once | stage_test | stage_hermetic | steps_block | stage_on_failure }
 stage_inputs        = { "inputs" ~ ":" ~ expr ~ ","? }
 stage_outputs       = { "outputs" ~ ":" ~ expr ~ ","? }
 stage_depends_on    = { "depends_on" ~ ":" ~ "[" ~ (ident ~ ("," ~ ident)* ~ ","?)? ~ "]" ~ ","? }
 stage_matrix        = { "matrix" ~ "{" ~ matrix_dim* ~ "}" }
 matrix_dim          = { ident ~ ":" ~ "[" ~ (string ~ ("," ~ string)* ~ ","?)? ~ "]" ~ ","? }
+// Declared tool requirements (Phase 53): each `requires` entry names a program that must
+// be present before the stage runs, with an optional version constraint. The program name
+// is a string so paths and names with `-`/`+` (e.g. `g++`) are expressible.
+stage_requires      = { "requires" ~ "{" ~ tool_req* ~ "}" }
+tool_req            = { string ~ (version_op ~ string)? ~ ","? }
+version_op          = { ">=" | "<=" | "==" | ">" | "<" }
 stage_allow_failure = { "allow_failure" ~ ":" ~ bool_lit ~ ","? }
 stage_always_run    = { "always_run" ~ ":" ~ bool_lit ~ ","? }
 stage_run_once      = { "run_once" ~ ":" ~ bool_lit ~ ","? }
 stage_test          = { "test" ~ ":" ~ bool_lit ~ ","? }
+// Per-stage environment isolation (Phase 53): when true, spawned commands run with a
+// cleared environment plus a minimal passthrough and any `with_env` overlay.
+stage_hermetic      = { "hermetic" ~ ":" ~ bool_lit ~ ","? }
 stage_description   = { "description" ~ ":" ~ string ~ ","? }
 steps_block         = { "steps" ~ "{" ~ step* ~ "}" }
 stage_on_failure    = { "on_failure" ~ "{" ~ step* ~ "}" }

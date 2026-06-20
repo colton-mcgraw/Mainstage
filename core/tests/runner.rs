@@ -1444,3 +1444,261 @@ fn use_of_undefined_template_is_rejected() {
     let err = expand_templates(&program).expect_err("an undefined template must be rejected");
     assert!(format!("{err}").contains("undefined template 'missing'"), "got: {err}");
 }
+
+// ── Phase 52: graph query & explain ────────────────────────────────────────────────
+
+use mainstage_core::{ExplainVerdict, RunReason, SkipReason, explain_stage, query_graph};
+
+/// Parse → analyze → eval the source against `dir`, returning the pieces the introspection
+/// commands consume.
+fn prepared(
+    src: &str,
+    dir: &Path,
+) -> (mainstage_core::ast::Program, mainstage_core::AnalysisResult, mainstage_core::EvalContext) {
+    let program = parse(&Source::from_str("test.ms", src)).expect("parse should succeed");
+    let analysis = analyze(&program).expect("analysis should succeed");
+    let ctx = eval_program(&program, dir).expect("eval should succeed");
+    (program, analysis, ctx)
+}
+
+/// A diamond-plus-fan-out fixture: `gen` feeds `a` and `b` (fan-out); both feed `combine`
+/// (diamond join). Every stage writes its declared output so a real run populates the cache.
+fn diamond_src(dir: &Path) -> String {
+    let d = dir.display();
+    format!(
+        r#"
+        project {{ name: "demo" version: "1.0" }}
+        default pipeline build {{ stages: [gen, a, b, combine] }}
+        stage gen {{ outputs: ["{d}/gen.txt"] steps {{ write "{d}/gen.txt" content: "seed" }} }}
+        stage a {{ inputs: [gen.outputs] outputs: ["{d}/a.txt"] steps {{ write "{d}/a.txt" content: "a" }} }}
+        stage b {{ inputs: [gen.outputs] outputs: ["{d}/b.txt"] steps {{ write "{d}/b.txt" content: "b" }} }}
+        stage combine {{ inputs: [a.outputs, b.outputs] outputs: ["{d}/c.txt"] steps {{ write "{d}/c.txt" content: "c" }} }}
+        "#
+    )
+}
+
+#[test]
+fn query_graph_reports_forward_and_reverse_edges() {
+    let dir = unique_dir("query_edges");
+    let src = diamond_src(&dir);
+    let (program, analysis, ctx) = prepared(&src, &dir);
+
+    let graph = query_graph(&program, None, &ctx, &analysis).expect("query should succeed");
+    assert_eq!(graph.pipeline, None);
+
+    let node = |name: &str| graph.nodes.iter().find(|n| n.name == name).expect("node present");
+
+    // gen is a root depended on by a and b.
+    assert!(node("gen").depends_on.is_empty());
+    assert_eq!(node("gen").dependents, vec!["a".to_string(), "b".to_string()]);
+    // combine is the join: depends on a and b, depended on by nothing.
+    assert_eq!(node("combine").depends_on, vec!["a".to_string(), "b".to_string()]);
+    assert!(node("combine").dependents.is_empty());
+    // Topological order: gen precedes a/b precede combine.
+    let pos = |name: &str| graph.nodes.iter().position(|n| n.name == name).unwrap();
+    assert!(pos("gen") < pos("a") && pos("a") < pos("combine"));
+    assert!(pos("gen") < pos("b") && pos("b") < pos("combine"));
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn query_graph_filters_by_pipeline() {
+    // A pipeline containing only `gen` and `a` must drop edges to stages outside it.
+    let dir = unique_dir("query_filter");
+    let d = dir.display();
+    let src = format!(
+        r#"
+        default pipeline only {{ stages: [gen, a] }}
+        stage gen {{ outputs: ["{d}/gen.txt"] steps {{ write "{d}/gen.txt" content: "x" }} }}
+        stage a {{ inputs: [gen.outputs] steps {{ }} }}
+        stage b {{ inputs: [gen.outputs] steps {{ }} }}
+        "#
+    );
+    let (program, analysis, ctx) = prepared(&src, &dir);
+
+    let graph = query_graph(&program, Some("only"), &ctx, &analysis).expect("query");
+    assert_eq!(graph.pipeline.as_deref(), Some("only"));
+    assert_eq!(graph.nodes.len(), 2, "only the pipeline's two stages appear");
+    let gen_node = graph.nodes.iter().find(|n| n.name == "gen").unwrap();
+    // `b` is out of the pipeline, so it is not listed as a dependent of `gen`.
+    assert_eq!(gen_node.dependents, vec!["a".to_string()]);
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn query_graph_dot_and_json_export() {
+    let dir = unique_dir("query_export");
+    let src = diamond_src(&dir);
+    let (program, analysis, ctx) = prepared(&src, &dir);
+    let graph = query_graph(&program, None, &ctx, &analysis).expect("query");
+
+    let dot = graph.to_dot();
+    assert!(dot.starts_with("digraph mainstage {"));
+    assert!(dot.contains("\"gen\" -> \"a\";"));
+    assert!(dot.contains("\"a\" -> \"combine\";"));
+
+    let json = graph.to_json();
+    assert!(json.contains("\"name\": \"gen\""));
+    assert!(json.contains("\"dependents\""));
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn explain_reports_never_run_then_up_to_date() {
+    let dir = unique_dir("explain_verdicts");
+    let src = diamond_src(&dir);
+
+    // Before any run: a cacheable stage has no recorded entry.
+    {
+        let (program, analysis, ctx) = prepared(&src, &dir);
+        let exp = explain_stage(&program, "a", &ctx, &analysis).expect("explain");
+        assert_eq!(exp.verdict, ExplainVerdict::Run(RunReason::NeverRun));
+        assert_eq!(exp.depends_on, vec!["gen".to_string()]);
+        assert_eq!(exp.dependents, vec!["combine".to_string()]);
+    }
+
+    // Run the pipeline to populate the cache.
+    run(&src, &dir, None).expect("pipeline should succeed");
+
+    // After a successful run with outputs present: the stage is up to date.
+    {
+        let (program, analysis, ctx) = prepared(&src, &dir);
+        let exp = explain_stage(&program, "a", &ctx, &analysis).expect("explain");
+        assert_eq!(exp.verdict, ExplainVerdict::Skip(SkipReason::UpToDate));
+        assert!(exp.changed_inputs.is_empty());
+    }
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn explain_detects_changed_inputs_and_restorable_outputs() {
+    let dir = unique_dir("explain_changed");
+    let src = diamond_src(&dir);
+    run(&src, &dir, None).expect("pipeline should succeed");
+
+    // Mutate gen's output (which is a's input) → a would re-run on changed input.
+    std::fs::write(dir.join("gen.txt"), "mutated").unwrap();
+    {
+        let (program, analysis, ctx) = prepared(&src, &dir);
+        let exp = explain_stage(&program, "a", &ctx, &analysis).expect("explain");
+        assert_eq!(exp.verdict, ExplainVerdict::Run(RunReason::InputsChanged));
+        assert!(exp.changed_inputs.iter().any(|p| p.ends_with("gen.txt")));
+    }
+
+    // Restore gen.txt and re-run so the cache is fresh again, then delete a's output:
+    // a is unchanged but its output is missing, so it is restorable from the CAS.
+    std::fs::write(dir.join("gen.txt"), "seed").unwrap();
+    run(&src, &dir, None).expect("re-run should succeed");
+    std::fs::remove_file(dir.join("a.txt")).unwrap();
+    {
+        let (program, analysis, ctx) = prepared(&src, &dir);
+        let exp = explain_stage(&program, "a", &ctx, &analysis).expect("explain");
+        assert_eq!(exp.verdict, ExplainVerdict::Skip(SkipReason::RestoredFromCache));
+        assert!(exp.missing_outputs.iter().any(|p| p.ends_with("a.txt")));
+    }
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn explain_marks_always_run_uncacheable() {
+    let dir = unique_dir("explain_always");
+    let d = dir.display();
+    let src = format!(
+        r#"
+        default pipeline build {{ stages: [boot] }}
+        stage boot {{ always_run: true steps {{ write "{d}/boot" content: "x" }} }}
+        "#
+    );
+    let (program, analysis, ctx) = prepared(&src, &dir);
+    let exp = explain_stage(&program, "boot", &ctx, &analysis).expect("explain");
+    assert_eq!(exp.verdict, ExplainVerdict::Run(RunReason::Uncacheable("always_run")));
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn explain_unknown_stage_errors() {
+    let dir = unique_dir("explain_unknown");
+    let src = diamond_src(&dir);
+    let (program, analysis, ctx) = prepared(&src, &dir);
+    assert!(explain_stage(&program, "nope", &ctx, &analysis).is_err());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+// ── Phase 53: tool requirements & hermetic execution ────────────────────────────────
+
+#[test]
+fn missing_required_tool_fails_the_stage() {
+    let dir = unique_dir("requires_missing");
+    let d = dir.display();
+    // The stage requires a tool that does not exist, so it must fail before its steps run —
+    // the marker file is never written, and its on_failure fires.
+    let src = format!(
+        r#"
+        default pipeline build {{ stages: [a] }}
+        stage a {{
+            requires {{ "ms_no_such_tool_zzz_53" }}
+            steps {{ write "{d}/ran" content: "x" }}
+            on_failure {{ write "{d}/onfail" content: "x" }}
+        }}
+        "#
+    );
+    let result = run(&src, &dir, None);
+    assert!(result.is_err(), "a missing required tool must fail the pipeline");
+    assert!(!exists(&dir, "ran"), "the stage's steps must not run when a tool is missing");
+    assert!(exists(&dir, "onfail"), "the stage on_failure should fire");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn present_required_tool_lets_the_stage_run() {
+    let dir = unique_dir("requires_present");
+    let d = dir.display();
+    // `cargo` runs these tests, so it is guaranteed present on PATH.
+    let src = format!(
+        r#"
+        default pipeline build {{ stages: [a] }}
+        stage a {{
+            requires {{ "cargo" >= "1.0" }}
+            steps {{ write "{d}/ran" content: "x" }}
+        }}
+        "#
+    );
+    run(&src, &dir, None).expect("a satisfied requirement should let the stage run");
+    assert!(exists(&dir, "ran"));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[cfg(unix)]
+#[test]
+fn hermetic_stage_clears_ambient_environment() {
+    let dir = unique_dir("hermetic");
+    let d = dir.display();
+    // The stage runs hermetically, so an ambient variable set on this process is not visible
+    // to its spawned command, while a `with_env` value is. The command records both to files.
+    unsafe { std::env::set_var("MS_HERMETIC_AMBIENT_53", "leaked") };
+    let src = format!(
+        r#"
+        default pipeline build {{ stages: [a] }}
+        stage a {{
+            hermetic: true
+            steps {{
+                with_env {{ MS_HERMETIC_OVERLAY_53: "set" }} {{
+                    $ sh -c 'printf %s "$MS_HERMETIC_AMBIENT_53" > {d}/ambient; printf %s "$MS_HERMETIC_OVERLAY_53" > {d}/overlay'
+                }}
+            }}
+        }}
+        "#
+    );
+    run(&src, &dir, None).expect("hermetic stage should run");
+    let ambient = std::fs::read_to_string(dir.join("ambient")).unwrap_or_default();
+    let overlay = std::fs::read_to_string(dir.join("overlay")).unwrap_or_default();
+    assert_eq!(ambient, "", "ambient environment must be cleared in a hermetic stage");
+    assert_eq!(overlay, "set", "a with_env value must still reach a hermetic command");
+    let _ = std::fs::remove_dir_all(&dir);
+}

@@ -30,8 +30,13 @@ stage compile {
     description: "Build the release binary for the host target"
     inputs: sources
     outputs: ["target/${target}/release/my-app"]
+    requires {
+        "cargo" >= "1.70"
+    }
 
     steps {
+        // Fail fast with a clear message if the toolchain is missing or too old, rather
+        // than partway through the build (Phase 53).
         $ cargo build --release --target ${target}
     }
 
@@ -71,8 +76,11 @@ stage package {
     description: "Assemble the versioned release tarball"
     inputs: [compile.outputs]
     outputs: ["${out}/${project.name}-${project.version}.tar.gz"]
+    hermetic: true
 
     steps {
+        // Run with a cleared environment (Phase 53) so the archive can't pick up ambient
+        // variables — a small step toward reproducible release artifacts.
         mkdir "${out}/"
         write "${out}/VERSION" content: "${project.version}"
         copy "${changelog}" to "${out}/CHANGELOG.md"

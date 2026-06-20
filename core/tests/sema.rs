@@ -853,3 +853,40 @@ fn local_let_with_undefined_value_errors() {
     );
     assert!(has_msg(&diags, "undefined name 'missing'"));
 }
+
+// ── Phase 53: tool requirements ──────────────────────────────────────────────────
+
+#[test]
+fn accepts_well_formed_tool_requirements() {
+    analyze_ok(
+        r#"
+        default pipeline b { stages: [x] }
+        stage x {
+            requires {
+                "cargo" >= "1.70"
+                "git"
+            }
+            hermetic: true
+            steps {
+                $ cargo build
+            }
+        }
+        "#,
+    );
+}
+
+#[test]
+fn rejects_unparseable_version_constraint() {
+    let diags = analyze_err(
+        r#"
+        default pipeline b { stages: [x] }
+        stage x {
+            requires { "cargo" >= "latest" }
+            steps {
+                $ cargo build
+            }
+        }
+        "#,
+    );
+    assert!(has_msg(&diags, "not a dotted version number"), "got: {diags:?}");
+}

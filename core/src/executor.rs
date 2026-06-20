@@ -78,7 +78,7 @@ fn exec_step(s: &ExecStep, ctx: &EvalContext) -> Result<()> {
     }
     let mut cmd = std::process::Command::new(&argv[0]);
     cmd.args(&argv[1..]).current_dir(ctx.effective_cwd());
-    cmd.envs(&ctx.env_overlay);
+    apply_env(&mut cmd, &ctx.env_overlay, ctx.hermetic);
 
     // With an output sink (the parallel runner), capture stdout/stderr and append it
     // to the stage's buffer so concurrent stages never interleave on the terminal.
@@ -321,6 +321,7 @@ fn expect_step(s: &ExpectStep, ctx: &EvalContext) -> Result<()> {
         &argv,
         ctx.effective_cwd(),
         &ctx.env_overlay,
+        ctx.hermetic,
         timeout,
         stop_marker.as_deref(),
         &s.span,
@@ -498,17 +499,46 @@ struct Capture {
 /// does not finish in time (`timed_out = true`); when a `stop_marker` is given as well, the
 /// command is also stopped early as soon as the captured output contains the marker, so a
 /// never-exiting boot-smoke process is not forced to wait out the full timeout.
+/// Environment variables passed through to a hermetic command so executables can still be
+/// located and run. Everything else is cleared, so a hermetic stage cannot silently depend
+/// on ambient variables — only these essentials and its `with_env` overlay are visible.
+#[cfg(unix)]
+const HERMETIC_PASSTHROUGH: &[&str] = &["PATH"];
+#[cfg(windows)]
+const HERMETIC_PASSTHROUGH: &[&str] =
+    &["PATH", "SystemRoot", "SystemDrive", "ComSpec", "PATHEXT", "windir", "TEMP", "TMP"];
+#[cfg(not(any(unix, windows)))]
+const HERMETIC_PASSTHROUGH: &[&str] = &["PATH"];
+
+/// Configure a command's environment. Ordinarily the child inherits the parent environment
+/// and `overlay` is layered on top. When `hermetic` (Phase 53), the environment is cleared
+/// first, then a minimal passthrough ([`HERMETIC_PASSTHROUGH`]) and the overlay are set — so
+/// the command starts from a known-empty environment plus only what was explicitly allowed.
+fn apply_env(cmd: &mut std::process::Command, overlay: &HashMap<String, String>, hermetic: bool) {
+    if hermetic {
+        cmd.env_clear();
+        for key in HERMETIC_PASSTHROUGH {
+            if let Some(val) = std::env::var_os(key) {
+                cmd.env(key, val);
+            }
+        }
+    }
+    cmd.envs(overlay);
+}
+
+#[allow(clippy::too_many_arguments)]
 fn run_capture(
     argv: &[String],
     cwd: &Path,
     envs: &HashMap<String, String>,
+    hermetic: bool,
     timeout: Option<Duration>,
     stop_marker: Option<&str>,
     span: &Span,
 ) -> Result<Capture> {
     let mut cmd = std::process::Command::new(&argv[0]);
     cmd.args(&argv[1..]).current_dir(cwd);
-    cmd.envs(envs);
+    apply_env(&mut cmd, envs, hermetic);
 
     // Fast path: run to completion and let `output()` collect both streams.
     let Some(timeout) = timeout else {
@@ -842,6 +872,8 @@ mod tests {
             cwd_override: None,
             env_overlay: HashMap::new(),
             reporter: None,
+            hermetic: false,
+            audit_inputs: false,
         }
     }
 
@@ -995,6 +1027,8 @@ mod tests {
             cwd_override: None,
             env_overlay: HashMap::new(),
             reporter: None,
+            hermetic: false,
+            audit_inputs: false,
         };
         let span = span();
         let path_expr = Expr::Ident(IdentExpr { name: "p".to_string(), span: span.clone() });
@@ -1161,6 +1195,8 @@ mod tests {
             cwd_override: None,
             env_overlay: HashMap::new(),
             reporter: None,
+            hermetic: false,
+            audit_inputs: false,
         };
         let span = span();
         let path_expr = Expr::Ident(IdentExpr { name: "p".to_string(), span: span.clone() });
