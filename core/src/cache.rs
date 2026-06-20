@@ -638,7 +638,7 @@ pub fn store_outputs(project_dir: &Path, output_paths: &[String]) -> OutputSnaps
 
     // Hash every file's contents in parallel, then write each blob to the store.
     let hashed = parallel_read_hash(&jobs);
-    for ((idx, rel, _abs, mode), bytes) in jobs.iter().zip(hashed.into_iter()) {
+    for ((idx, rel, _abs, mode), bytes) in jobs.iter().zip(hashed) {
         let Some(bytes) = bytes else {
             return OutputSnapshot(Vec::new()); // unreadable file → nothing is restorable
         };
