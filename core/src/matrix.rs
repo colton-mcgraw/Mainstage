@@ -85,6 +85,11 @@ pub fn expand(program: &Program) -> Result<Program> {
                 rewrite_expr(&mut d.value, &bases);
                 items.push(Item::Let(d));
             }
+            Item::Param(d) => {
+                let mut d = d.clone();
+                rewrite_expr(&mut d.default, &bases);
+                items.push(Item::Param(d));
+            }
             Item::Project(b) => {
                 let mut b = b.clone();
                 for field in &mut b.fields {

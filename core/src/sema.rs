@@ -108,6 +108,19 @@ impl Analyzer {
                         scope.let_bindings.push((d.name.clone(), d.span.clone()));
                     }
                 }
+                // A `param` shares the single value-binding namespace with `let` (Phase 49):
+                // both go into `let_bindings` in declaration order, so a param resolves
+                // anywhere a let does and the forward-reference check sees one ordered list.
+                Item::Param(d) => {
+                    if scope.let_index(&d.name).is_some() {
+                        self.error(
+                            format!("param '{}' is already defined", d.name),
+                            d.span.clone(),
+                        );
+                    } else {
+                        scope.let_bindings.push((d.name.clone(), d.span.clone()));
+                    }
+                }
                 Item::Project(b) => {
                     scope.has_project = true;
                     for field in &b.fields {
@@ -182,6 +195,20 @@ impl Analyzer {
                     self.resolve_expr(&d.value, scope, ctx);
                     let_idx += 1;
                 }
+                // A `param` default resolves exactly like a `let` value — same forward-
+                // reference rule against the shared ordered binding list — and additionally
+                // must produce a value of the declared type (Phase 49).
+                Item::Param(d) => {
+                    let ctx = ExprCtx {
+                        current_let_index: Some(let_idx),
+                        for_vars: &[],
+                        locals: &[],
+                        in_steps: false,
+                    };
+                    self.resolve_expr(&d.default, scope, ctx);
+                    self.check_param_default_type(d, scope);
+                    let_idx += 1;
+                }
                 Item::Project(b) => {
                     let ctx = ExprCtx::top_level();
                     for field in &b.fields {
@@ -192,6 +219,33 @@ impl Analyzer {
                 Item::Pipeline(b) => self.resolve_pipeline(b, scope),
                 Item::Template(_) | Item::Include(_) => {}
             }
+        }
+    }
+
+    /// Check that a `param`'s default expression produces a value of the declared type
+    /// (Phase 49). Skipped when the default's type cannot be inferred statically (e.g. it
+    /// references another binding or a module call returning `Any`) — a mismatch there
+    /// surfaces at evaluation instead.
+    fn check_param_default_type(&mut self, d: &ParamDecl, scope: &Scope) {
+        let Some(actual) = self.infer_type(&d.default, scope) else {
+            return;
+        };
+        let expected = match d.ty {
+            ParamType::String => ExprType::String,
+            ParamType::Int => ExprType::Int,
+            ParamType::Bool => ExprType::Bool,
+            ParamType::List => ExprType::List,
+        };
+        if actual != expected {
+            self.error(
+                format!(
+                    "param '{}' is declared {} but its default produces {}",
+                    d.name,
+                    d.ty.keyword(),
+                    actual.describe()
+                ),
+                d.default.span().clone(),
+            );
         }
     }
 
@@ -901,7 +955,8 @@ fn exprtype_of_valuety(ty: ValueTy) -> Option<ExprType> {
 
 #[derive(Default)]
 struct Scope {
-    // Vec preserves declaration order — required for forward-reference checking.
+    // Vec preserves declaration order — required for forward-reference checking. Holds both
+    // `let` and `param` names (Phase 49): the two share one ordered value-binding namespace.
     let_bindings: Vec<(String, Span)>,
     stage_names: HashMap<String, Span>,
     pipeline_names: HashMap<String, Span>,

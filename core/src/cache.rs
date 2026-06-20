@@ -19,6 +19,15 @@ use crate::eval::Value;
 pub const CACHE_DIR: &str = ".mainstage";
 /// Cache file name within [`CACHE_DIR`].
 pub const CACHE_FILE: &str = "cache.json";
+/// Sub-directory of [`CACHE_DIR`] holding the content-addressed output store (Phase 50):
+/// `<project>/.mainstage/cache/<digest>` is the blob for the file whose contents hash to
+/// `<digest>`. Co-located with the change-detection cache so `mainstage clean` clears both.
+pub const CAS_DIR: &str = "cache";
+
+/// Absolute path to the content-addressed store for the project rooted at `project_dir`.
+fn cas_dir(project_dir: &Path) -> PathBuf {
+    project_dir.join(CACHE_DIR).join(CAS_DIR)
+}
 
 /// The on-disk change-detection cache: one entry per stage, keyed by stage name.
 ///
@@ -28,6 +37,15 @@ pub const CACHE_FILE: &str = "cache.json";
 pub struct Cache {
     #[serde(default)]
     stages: BTreeMap<String, StageEntry>,
+    /// Cumulative output-cache (CAS) restore counters (Phase 50), surfaced by
+    /// `mainstage cache stats`. `cas_hits` counts stages whose missing outputs were
+    /// restored from the store instead of rebuilt; `cas_misses` counts restores that could
+    /// not complete because a referenced blob was absent (and so fell back to a rebuild).
+    /// Defaulted, so a cache written before Phase 50 still loads.
+    #[serde(default)]
+    cas_hits: u64,
+    #[serde(default)]
+    cas_misses: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -42,6 +60,46 @@ struct StageEntry {
     /// such an entry simply re-hashes every file once, then records the metadata.
     #[serde(default)]
     files: BTreeMap<String, FileMeta>,
+    /// Content-addressed snapshot of this stage's declared outputs at its last successful
+    /// run (Phase 50): one [`OutputRecord`] per declared output path, each mapping its
+    /// constituent files to their CAS blob digests. Lets a later run with matching inputs
+    /// *restore* missing outputs from the store rather than re-running the stage. Defaulted,
+    /// so a cache written before Phase 50 (no `output_records`) still loads — such a stage
+    /// simply has nothing to restore from and falls back to a rebuild when its outputs go
+    /// missing.
+    #[serde(default)]
+    output_records: Vec<OutputRecord>,
+}
+
+/// The content-addressed snapshot of a single declared output path (Phase 50). A file
+/// output has exactly one [`OutputFile`] with an empty `rel`; a directory output has one
+/// per regular file beneath it, each `rel` being the file's path relative to the output
+/// root. Restoring re-creates every file from its blob.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct OutputRecord {
+    /// The declared output path, exactly as recorded (e.g. `"dist"` or `"bin/app"`).
+    path: String,
+    files: Vec<OutputFile>,
+}
+
+/// One regular file within an [`OutputRecord`]: where it sits under the output root and
+/// the CAS blob digest of its contents.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct OutputFile {
+    /// Path relative to the output root, using `/` separators. Empty when the output is
+    /// itself a single file.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    rel: String,
+    /// SHA-256 (hex) of the file's contents — the blob's name in the CAS.
+    digest: String,
+    /// Unix permission bits, so an executable output survives a restore. `0` (the default,
+    /// omitted from the serialized form) means "use the umask default", e.g. on Windows.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    mode: u32,
+}
+
+fn is_zero(n: &u32) -> bool {
+    *n == 0
 }
 
 /// A single input file's fast-path fingerprint. When a file's `size` and modification
@@ -104,12 +162,57 @@ impl Cache {
         }
     }
 
+    /// Classify `stage` against `input_digest` for the Phase 50 restore path: a matching
+    /// digest with all outputs present is [`Freshness::Fresh`] (skip); a matching digest
+    /// whose outputs are missing but were snapshotted into the CAS is
+    /// [`Freshness::Restorable`] (restore instead of rebuild); anything else is
+    /// [`Freshness::Stale`] (rebuild). Subsumes [`is_fresh`](Self::is_fresh) — the runner
+    /// uses this richer form, while the planner still uses `is_fresh`.
+    pub fn freshness(&self, stage: &str, input_digest: &str, project_dir: &Path) -> Freshness {
+        match self.stages.get(stage) {
+            Some(entry) if entry.input_digest == input_digest => {
+                if entry.outputs.iter().all(|o| output_exists(o, project_dir)) {
+                    Freshness::Fresh
+                } else if !entry.output_records.is_empty() {
+                    Freshness::Restorable(OutputSnapshot(entry.output_records.clone()))
+                } else {
+                    Freshness::Stale
+                }
+            }
+            _ => Freshness::Stale,
+        }
+    }
+
+    /// Attach a content-addressed output `snapshot` to `stage`'s entry after its outputs
+    /// have been stored in the CAS (Phase 50). A no-op when the stage has no entry yet (it
+    /// must be recorded via [`update_fingerprint`](Self::update_fingerprint) first).
+    pub fn set_output_records(&mut self, stage: &str, snapshot: OutputSnapshot) {
+        if let Some(entry) = self.stages.get_mut(stage) {
+            entry.output_records = snapshot.0;
+        }
+    }
+
+    /// Note that a stage's outputs were restored from the CAS (a cache hit).
+    pub fn note_cas_hit(&mut self) {
+        self.cas_hits += 1;
+    }
+
+    /// Note that a restore was attempted but a referenced blob was absent (a cache miss).
+    pub fn note_cas_miss(&mut self) {
+        self.cas_misses += 1;
+    }
+
     /// Record (or replace) the cache entry for `stage` after a successful run, without
     /// per-file fast-path metadata. Retained for callers that hash via [`input_digest`].
     pub fn update(&mut self, stage: &str, input_digest: String, outputs: Vec<String>) {
         self.stages.insert(
             stage.to_string(),
-            StageEntry { input_digest, outputs, files: BTreeMap::new() },
+            StageEntry {
+                input_digest,
+                outputs,
+                files: BTreeMap::new(),
+                output_records: Vec::new(),
+            },
         );
     }
 
@@ -124,8 +227,42 @@ impl Cache {
     pub fn update_fingerprint(&mut self, stage: &str, fp: InputFingerprint, outputs: Vec<String>) {
         self.stages.insert(
             stage.to_string(),
-            StageEntry { input_digest: fp.digest, outputs, files: fp.files },
+            StageEntry {
+                input_digest: fp.digest,
+                outputs,
+                files: fp.files,
+                // The caller attaches the content-addressed snapshot separately, via
+                // `set_output_records`, after the outputs are stored in the CAS.
+                output_records: Vec::new(),
+            },
         );
+    }
+}
+
+/// The result of classifying a stage against the cache for the restore path (Phase 50).
+#[derive(Debug)]
+pub enum Freshness {
+    /// Inputs changed (or the stage is uncached): the stage must run.
+    Stale,
+    /// Inputs unchanged and outputs all present: the stage can be skipped.
+    Fresh,
+    /// Inputs unchanged but some outputs are missing, and a content-addressed snapshot of
+    /// them exists: restore from the CAS instead of rebuilding. Carries the snapshot to hand
+    /// to [`restore_outputs`].
+    Restorable(OutputSnapshot),
+}
+
+/// An opaque, content-addressed snapshot of a stage's declared outputs (Phase 50). Produced
+/// by [`store_outputs`], carried by [`Freshness::Restorable`], consumed by
+/// [`restore_outputs`] and [`Cache::set_output_records`]. The inner records are private so
+/// the on-disk schema can evolve without breaking callers.
+#[derive(Debug)]
+pub struct OutputSnapshot(Vec<OutputRecord>);
+
+impl OutputSnapshot {
+    /// Whether the snapshot recorded no files — nothing to persist or restore.
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
     }
 }
 
@@ -401,6 +538,358 @@ fn output_exists(output: &str, project_dir: &Path) -> bool {
     p.exists() || project_dir.join(p).exists()
 }
 
+// ── Content-addressed output store (Phase 50) ──────────────────────────────────────
+
+/// Resolve a declared output path to the on-disk location that currently exists — the path
+/// as written, or relative to the project root — or `None` when neither is present.
+fn existing_output_path(output: &str, project_dir: &Path) -> Option<PathBuf> {
+    let p = Path::new(output);
+    if p.exists() {
+        Some(p.to_path_buf())
+    } else {
+        let joined = project_dir.join(p);
+        joined.exists().then_some(joined)
+    }
+}
+
+/// Resolve a declared output path to the location a restore should write it to: the path
+/// itself when absolute, otherwise relative to the project root (mirroring how the runner
+/// produces outputs).
+fn output_dest(output: &str, project_dir: &Path) -> PathBuf {
+    let p = Path::new(output);
+    if p.is_absolute() { p.to_path_buf() } else { project_dir.join(p) }
+}
+
+/// The unix permission bits of `md` (`0` on platforms without them, so the field is omitted).
+fn file_mode(md: &std::fs::Metadata) -> u32 {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        md.permissions().mode()
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = md;
+        0
+    }
+}
+
+/// Recursively list every regular file beneath `base`, each as `(rel, abs, mode)` where
+/// `rel` is the `/`-joined path relative to `base` (empty when `base` is itself a file).
+fn walk_output_files(base: &Path) -> Vec<(String, PathBuf, u32)> {
+    fn recurse(dir: &Path, prefix: &str, out: &mut Vec<(String, PathBuf, u32)>) {
+        let Ok(entries) = std::fs::read_dir(dir) else { return };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let name = entry.file_name().to_string_lossy().into_owned();
+            let rel = if prefix.is_empty() { name } else { format!("{prefix}/{name}") };
+            match std::fs::symlink_metadata(&path) {
+                Ok(md) if md.is_dir() => recurse(&path, &rel, out),
+                Ok(md) if md.is_file() => out.push((rel, path, file_mode(&md))),
+                // Symlinks and other special files are skipped — the output cache stores
+                // plain file contents only.
+                _ => {}
+            }
+        }
+    }
+
+    match std::fs::symlink_metadata(base) {
+        Ok(md) if md.is_file() => vec![(String::new(), base.to_path_buf(), file_mode(&md))],
+        Ok(md) if md.is_dir() => {
+            let mut out = Vec::new();
+            recurse(base, "", &mut out);
+            out
+        }
+        _ => Vec::new(),
+    }
+}
+
+/// Snapshot `output_paths` into the content-addressed store under `<project>/.mainstage/cache/`
+/// (Phase 50), returning the records to attach to the stage's cache entry. Every regular file
+/// of every existing output is hashed (in parallel) and its contents written to the store
+/// keyed by digest; an already-present blob is left untouched (content-addressed dedup).
+///
+/// Best-effort and all-or-nothing: if any blob cannot be written, an **empty** snapshot is
+/// returned so the stage is simply not restorable (and always rebuilds) rather than being
+/// recorded as restorable from an incomplete set. A stage with no existing outputs likewise
+/// yields an empty snapshot.
+pub fn store_outputs(project_dir: &Path, output_paths: &[String]) -> OutputSnapshot {
+    let store = cas_dir(project_dir);
+    if std::fs::create_dir_all(&store).is_err() {
+        return OutputSnapshot(Vec::new());
+    }
+
+    // Gather (output index, rel, abs path, mode) for every file across all outputs.
+    let mut records: Vec<OutputRecord> = Vec::new();
+    let mut jobs: Vec<(usize, String, PathBuf, u32)> = Vec::new();
+    for output in output_paths {
+        let Some(base) = existing_output_path(output, project_dir) else {
+            continue; // a declared-but-unproduced output simply isn't stored
+        };
+        let idx = records.len();
+        records.push(OutputRecord { path: output.clone(), files: Vec::new() });
+        for (rel, abs, mode) in walk_output_files(&base) {
+            jobs.push((idx, rel, abs, mode));
+        }
+    }
+    if records.is_empty() {
+        return OutputSnapshot(Vec::new());
+    }
+
+    // Hash every file's contents in parallel, then write each blob to the store.
+    let hashed = parallel_read_hash(&jobs);
+    for ((idx, rel, _abs, mode), bytes) in jobs.iter().zip(hashed) {
+        let Some(bytes) = bytes else {
+            return OutputSnapshot(Vec::new()); // unreadable file → nothing is restorable
+        };
+        let digest = sha256_hex(&bytes);
+        if write_blob(&store, &digest, &bytes).is_err() {
+            return OutputSnapshot(Vec::new());
+        }
+        records[*idx].files.push(OutputFile { rel: rel.clone(), digest, mode: *mode });
+    }
+    OutputSnapshot(records)
+}
+
+/// Read and SHA-256 each file in `jobs`, in parallel for larger sets. A file that cannot be
+/// read yields `None`. Returns the raw bytes (not just the hash) so the caller can both key
+/// and write the blob without a second read.
+fn parallel_read_hash(jobs: &[(usize, String, PathBuf, u32)]) -> Vec<Option<Vec<u8>>> {
+    fn read_one(job: &(usize, String, PathBuf, u32)) -> Option<Vec<u8>> {
+        std::fs::read(&job.2).ok()
+    }
+    let workers =
+        std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1).min(jobs.len().max(1));
+    if workers <= 1 || jobs.len() <= 1 {
+        return jobs.iter().map(read_one).collect();
+    }
+    let chunk = jobs.len().div_ceil(workers);
+    let mut out = Vec::with_capacity(jobs.len());
+    std::thread::scope(|s| {
+        let handles: Vec<_> = jobs
+            .chunks(chunk)
+            .map(|c| s.spawn(move || c.iter().map(read_one).collect::<Vec<_>>()))
+            .collect();
+        for h in handles {
+            out.extend(h.join().unwrap());
+        }
+    });
+    out
+}
+
+/// Write `bytes` to the store as the blob named `digest`, atomically and only if absent.
+/// A present blob (same digest ⇒ same contents) is left as-is and its mtime touched so the
+/// LRU eviction in [`gc`] treats it as recently used.
+fn write_blob(store: &Path, digest: &str, bytes: &[u8]) -> std::io::Result<()> {
+    let path = store.join(digest);
+    if path.exists() {
+        touch(&path);
+        return Ok(());
+    }
+    let tmp = store.join(format!("{digest}.{}.tmp", uuid::Uuid::new_v4()));
+    std::fs::write(&tmp, bytes)?;
+    match std::fs::rename(&tmp, &path) {
+        Ok(()) => Ok(()),
+        Err(e) => {
+            let _ = std::fs::remove_file(&tmp);
+            Err(e)
+        }
+    }
+}
+
+/// Restore every file in `snapshot` from the content-addressed store (Phase 50). Returns
+/// `true` once all files are written; returns `false` without touching the tree when any
+/// referenced blob is absent, so the caller can fall back to a full rebuild. Restoring is
+/// idempotent and creates parent directories as needed.
+pub fn restore_outputs(project_dir: &Path, snapshot: &OutputSnapshot) -> bool {
+    let store = cas_dir(project_dir);
+
+    // Verify every referenced blob is present before writing anything, so a missing blob
+    // never leaves the tree half-restored.
+    for record in &snapshot.0 {
+        for file in &record.files {
+            if !store.join(&file.digest).exists() {
+                return false;
+            }
+        }
+    }
+
+    for record in &snapshot.0 {
+        let base = output_dest(&record.path, project_dir);
+        for file in &record.files {
+            let dest =
+                if file.rel.is_empty() { base.clone() } else { base.join(rel_to_path(&file.rel)) };
+            if let Some(parent) = dest.parent()
+                && std::fs::create_dir_all(parent).is_err()
+            {
+                return false;
+            }
+            let blob = store.join(&file.digest);
+            if std::fs::copy(&blob, &dest).is_err() {
+                return false;
+            }
+            apply_mode(&dest, file.mode);
+            touch(&blob); // restored ⇒ recently used, for LRU
+        }
+    }
+    true
+}
+
+/// Convert a `/`-separated stored relative path into a platform path.
+fn rel_to_path(rel: &str) -> PathBuf {
+    rel.split('/').collect()
+}
+
+/// Apply stored unix permission bits to `path` (no-op when `mode` is `0` or off-unix).
+fn apply_mode(path: &Path, mode: u32) {
+    #[cfg(unix)]
+    if mode != 0 {
+        use std::os::unix::fs::PermissionsExt as _;
+        let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode));
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (path, mode);
+    }
+}
+
+/// Best-effort bump of `path`'s modification time to now, so [`gc`]'s LRU eviction orders
+/// it as recently used. Failures (e.g. a read-only store) are ignored.
+fn touch(path: &Path) {
+    if let Ok(f) = std::fs::OpenOptions::new().write(true).open(path) {
+        let _ = f.set_modified(std::time::SystemTime::now());
+    }
+}
+
+// ── Cache maintenance: stats & gc (Phase 50) ───────────────────────────────────────
+
+/// Aggregate statistics about the content-addressed store, for `mainstage cache stats`.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct CacheStats {
+    /// Number of blobs currently in the store.
+    pub blob_count: usize,
+    /// Total size of all blobs, in bytes.
+    pub total_bytes: u64,
+    /// How many of those blobs are referenced by a recorded stage output.
+    pub referenced: usize,
+    /// Cumulative restores served from the store.
+    pub hits: u64,
+    /// Cumulative restores that failed because a referenced blob was absent.
+    pub misses: u64,
+}
+
+/// Compute [`CacheStats`] for the project rooted at `project_dir`: walks the store for blob
+/// count and size, and reads the cumulative hit/miss counters from the cache file.
+pub fn stats(project_dir: &Path) -> CacheStats {
+    let cache = Cache::load(project_dir);
+    let referenced = cache.referenced_digests();
+    let mut stats =
+        CacheStats { hits: cache.cas_hits, misses: cache.cas_misses, ..Default::default() };
+    for (name, size) in blob_sizes(&cas_dir(project_dir)) {
+        stats.blob_count += 1;
+        stats.total_bytes += size;
+        if referenced.contains(&name) {
+            stats.referenced += 1;
+        }
+    }
+    stats
+}
+
+/// What a [`gc`] pass removed.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct GcReport {
+    /// Blobs deleted because no recorded output referenced them.
+    pub pruned_count: usize,
+    pub pruned_bytes: u64,
+    /// Blobs deleted by LRU eviction to honor the size ceiling.
+    pub evicted_count: usize,
+    pub evicted_bytes: u64,
+    /// Total store size after the pass.
+    pub remaining_bytes: u64,
+}
+
+/// Garbage-collect the content-addressed store (Phase 50): first prune every blob no
+/// recorded stage output references, then — when `max_bytes` is set and the store is still
+/// over the ceiling — evict the least-recently-used remaining blobs until it fits. Returns a
+/// [`GcReport`] of what was removed.
+pub fn gc(project_dir: &Path, max_bytes: Option<u64>) -> Result<GcReport> {
+    let store = cas_dir(project_dir);
+    let mut report = GcReport::default();
+    if !store.exists() {
+        return Ok(report);
+    }
+    let referenced = Cache::load(project_dir).referenced_digests();
+
+    // Pass 1: prune unreferenced blobs.
+    let mut survivors: Vec<(String, PathBuf, u64, std::time::SystemTime)> = Vec::new();
+    for entry in std::fs::read_dir(&store)
+        .map_err(|e| cache_err(format!("read cache store '{}': {}", store.display(), e)))?
+        .flatten()
+    {
+        let path = entry.path();
+        let name = entry.file_name().to_string_lossy().into_owned();
+        // Skip stray non-blob files (e.g. an interrupted `.tmp`); only hex digests are blobs.
+        let Ok(md) = entry.metadata() else { continue };
+        if !md.is_file() || name.contains('.') {
+            continue;
+        }
+        let size = md.len();
+        if referenced.contains(&name) {
+            let mtime = md.modified().unwrap_or(std::time::UNIX_EPOCH);
+            survivors.push((name, path, size, mtime));
+        } else if std::fs::remove_file(&path).is_ok() {
+            report.pruned_count += 1;
+            report.pruned_bytes += size;
+        }
+    }
+
+    // Pass 2: LRU eviction down to the ceiling, if one was given.
+    let mut remaining: u64 = survivors.iter().map(|(_, _, size, _)| *size).sum();
+    if let Some(max) = max_bytes
+        && remaining > max
+    {
+        // Oldest modification time first — least recently stored or restored.
+        survivors.sort_by_key(|(_, _, _, mtime)| *mtime);
+        for (_, path, size, _) in &survivors {
+            if remaining <= max {
+                break;
+            }
+            if std::fs::remove_file(path).is_ok() {
+                report.evicted_count += 1;
+                report.evicted_bytes += size;
+                remaining -= size;
+            }
+        }
+    }
+    report.remaining_bytes = remaining;
+    Ok(report)
+}
+
+/// The `(blob-name, size)` of every blob in `store`, ignoring stray temp files.
+fn blob_sizes(store: &Path) -> Vec<(String, u64)> {
+    let Ok(entries) = std::fs::read_dir(store) else { return Vec::new() };
+    entries
+        .flatten()
+        .filter_map(|e| {
+            let name = e.file_name().to_string_lossy().into_owned();
+            let md = e.metadata().ok()?;
+            (md.is_file() && !name.contains('.')).then_some((name, md.len()))
+        })
+        .collect()
+}
+
+impl Cache {
+    /// Every CAS blob digest referenced by a recorded stage output across the whole cache.
+    fn referenced_digests(&self) -> std::collections::HashSet<String> {
+        self.stages
+            .values()
+            .flat_map(|s| &s.output_records)
+            .flat_map(|r| &r.files)
+            .map(|f| f.digest.clone())
+            .collect()
+    }
+}
+
 fn hex(bytes: &[u8]) -> String {
     use std::fmt::Write as _;
     let mut s = String::with_capacity(bytes.len() * 2);
@@ -643,6 +1132,164 @@ mod tests {
         let loaded = Cache::load(&dir);
         assert!(loaded.is_fresh("build", "abc123", &dir), "legacy entry stays fresh by digest");
         assert!(loaded.input_meta("build").0.is_empty(), "no per-file metadata yet");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // ── Phase 50: content-addressed output cache ────────────────────────────────
+
+    /// Record a stage with the given input digest and stored outputs, returning the cache.
+    fn cache_with_stored(dir: &Path, stage: &str, digest: &str, outputs: &[String]) -> Cache {
+        let mut cache = Cache::default();
+        cache.update(stage, digest.to_string(), outputs.to_vec());
+        let snapshot = store_outputs(dir, outputs);
+        cache.set_output_records(stage, snapshot);
+        cache
+    }
+
+    #[test]
+    fn store_then_restore_a_file_output() {
+        let dir = unique_dir("cas_file");
+        let out = dir.join("dist").join("app.txt");
+        std::fs::create_dir_all(out.parent().unwrap()).unwrap();
+        std::fs::write(&out, "artifact contents").unwrap();
+
+        let outputs = vec!["dist/app.txt".to_string()];
+        let cache = cache_with_stored(&dir, "build", "digestA", &outputs);
+
+        // Outputs present ⇒ Fresh.
+        assert!(matches!(cache.freshness("build", "digestA", &dir), Freshness::Fresh));
+
+        // Delete the output, then a matching digest is Restorable from the CAS.
+        std::fs::remove_dir_all(dir.join("dist")).unwrap();
+        let snapshot = match cache.freshness("build", "digestA", &dir) {
+            Freshness::Restorable(s) => s,
+            other => panic!("expected Restorable, got {other:?}"),
+        };
+        assert!(restore_outputs(&dir, &snapshot));
+        assert_eq!(std::fs::read_to_string(&out).unwrap(), "artifact contents");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn store_then_restore_a_directory_output() {
+        let dir = unique_dir("cas_dir");
+        let base = dir.join("dist");
+        std::fs::create_dir_all(base.join("nested")).unwrap();
+        std::fs::write(base.join("a.txt"), "one").unwrap();
+        std::fs::write(base.join("nested").join("b.txt"), "two").unwrap();
+
+        let outputs = vec!["dist".to_string()];
+        let cache = cache_with_stored(&dir, "bundle", "d", &outputs);
+
+        std::fs::remove_dir_all(&base).unwrap();
+        let snapshot = match cache.freshness("bundle", "d", &dir) {
+            Freshness::Restorable(s) => s,
+            other => panic!("expected Restorable, got {other:?}"),
+        };
+        assert!(restore_outputs(&dir, &snapshot));
+        assert_eq!(std::fs::read_to_string(base.join("a.txt")).unwrap(), "one");
+        assert_eq!(std::fs::read_to_string(base.join("nested").join("b.txt")).unwrap(), "two");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn restore_fails_when_a_blob_is_missing() {
+        let dir = unique_dir("cas_missing");
+        let out = dir.join("out.bin");
+        std::fs::write(&out, "data").unwrap();
+        let outputs = vec!["out.bin".to_string()];
+        let cache = cache_with_stored(&dir, "s", "d", &outputs);
+
+        // Wipe the CAS, then a restore must fail (and leave the tree untouched).
+        std::fs::remove_dir_all(cas_dir(&dir)).unwrap();
+        std::fs::remove_file(&out).unwrap();
+        let snapshot = match cache.freshness("s", "d", &dir) {
+            Freshness::Restorable(s) => s,
+            other => panic!("expected Restorable, got {other:?}"),
+        };
+        assert!(!restore_outputs(&dir, &snapshot), "a missing blob must make restore fail");
+        assert!(!out.exists(), "a failed restore writes nothing");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn freshness_is_stale_without_stored_outputs() {
+        // A pre-Phase-50 entry (no output_records) whose output is gone is Stale, not
+        // Restorable — there is nothing to restore from.
+        let dir = unique_dir("cas_legacy_stale");
+        let mut cache = Cache::default();
+        cache.update("s", "d".to_string(), vec!["gone.txt".to_string()]);
+        assert!(matches!(cache.freshness("s", "d", &dir), Freshness::Stale));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn gc_prunes_unreferenced_blobs_only() {
+        let dir = unique_dir("cas_gc");
+        std::fs::write(dir.join("out.bin"), "kept").unwrap();
+        let cache = cache_with_stored(&dir, "s", "d", &["out.bin".to_string()]);
+        cache.save(&dir).unwrap();
+
+        // Drop a stray blob the cache does not reference.
+        let store = cas_dir(&dir);
+        std::fs::write(store.join(sha256_hex(b"orphan")), "orphan").unwrap();
+        assert_eq!(stats(&dir).blob_count, 2);
+
+        let report = gc(&dir, None).unwrap();
+        assert_eq!(report.pruned_count, 1, "only the unreferenced blob is pruned");
+        let after = stats(&dir);
+        assert_eq!(after.blob_count, 1);
+        assert_eq!(after.referenced, 1);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn gc_evicts_lru_to_honor_ceiling() {
+        let dir = unique_dir("cas_lru");
+        let store = cas_dir(&dir);
+        std::fs::create_dir_all(&store).unwrap();
+        // Two unreferenced-but-large blobs; an empty cache references neither, so a no-ceiling
+        // gc would prune both. Use a ceiling instead to exercise eviction on survivors: make
+        // them referenced by recording a stage that "produced" them.
+        std::fs::write(dir.join("a.bin"), vec![b'a'; 100]).unwrap();
+        std::fs::write(dir.join("b.bin"), vec![b'b'; 100]).unwrap();
+        let mut cache = Cache::default();
+        cache.update("s", "d".to_string(), vec!["a.bin".to_string(), "b.bin".to_string()]);
+        let snapshot = store_outputs(&dir, &["a.bin".to_string(), "b.bin".to_string()]);
+        cache.set_output_records("s", snapshot);
+        cache.save(&dir).unwrap();
+
+        // Make `a` the least-recently-used by back-dating its mtime.
+        let a_blob = store.join(sha256_hex(&[b'a'; 100]));
+        let old = std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1);
+        std::fs::OpenOptions::new().write(true).open(&a_blob).unwrap().set_modified(old).unwrap();
+
+        // Ceiling of 150 bytes forces eviction of one 100-byte blob — the older `a`.
+        let report = gc(&dir, Some(150)).unwrap();
+        assert_eq!(report.evicted_count, 1);
+        assert!(!a_blob.exists(), "the least-recently-used blob is evicted first");
+        assert!(report.remaining_bytes <= 150);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn stats_report_hit_and_miss_counters() {
+        let dir = unique_dir("cas_stats");
+        let mut cache = Cache::default();
+        cache.note_cas_hit();
+        cache.note_cas_hit();
+        cache.note_cas_miss();
+        cache.save(&dir).unwrap();
+
+        let stats = stats(&dir);
+        assert_eq!(stats.hits, 2);
+        assert_eq!(stats.misses, 1);
 
         let _ = std::fs::remove_dir_all(&dir);
     }

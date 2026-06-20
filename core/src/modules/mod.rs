@@ -27,7 +27,7 @@ pub use builtin::{
     EnvModule, FsModule, GitModule, HashModule, HttpModule, JsonModule, PathModule, ShellModule,
     StrModule, TimeModule,
 };
-pub use permissions::{Capability, Permissions};
+pub use permissions::{Capability, Permissions, params_from_manifest};
 pub use plugin::ExternalModule;
 pub use plugin::lint::{LintFinding, LintLevel, LintReport, lint_plugin};
 

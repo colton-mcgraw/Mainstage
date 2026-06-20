@@ -370,6 +370,40 @@ fn bench_run_pipeline_warm_large(c: &mut Criterion) {
     group.finish();
 }
 
+/// Restore-from-cache execution (Phase 50) — the cache and content-addressed store are
+/// primed once, then each iteration deletes only the produced outputs (keeping
+/// `.mainstage/`), so every stage's outputs are *restored* from the store instead of its
+/// steps re-running. Compare against `bench_run_pipeline` (cold rebuild) on the same specs:
+/// the delta is the win from serving outputs out of the CAS rather than rebuilding them.
+fn bench_run_pipeline_restore(c: &mut Criterion) {
+    let mut group = c.benchmark_group("run_pipeline_restore");
+    group.sample_size(10);
+    for spec in [SMALL, MEDIUM] {
+        let fixture = Fixture::build(spec, "restore");
+        // Prime the cache and the content-addressed store with one full run.
+        reset_run(&fixture.dir);
+        run_pipeline(&fixture.program, None, &fixture.eval(), &fixture.analysis)
+            .expect("prime run");
+        group.bench_with_input(
+            BenchmarkId::from_parameter(spec.label()),
+            &fixture,
+            |b, fixture| {
+                b.iter_batched(
+                    || {
+                        // Delete only the outputs; the cache + CAS under `.mainstage/` stay,
+                        // so each stage restores rather than rebuilds.
+                        let _ = std::fs::remove_dir_all(fixture.dir.join("out"));
+                        fixture.eval()
+                    },
+                    |ctx| run_pipeline(&fixture.program, None, &ctx, &fixture.analysis),
+                    BatchSize::PerIteration,
+                );
+            },
+        );
+    }
+    group.finish();
+}
+
 // ── Incremental change detection (Phase 38) ──────────────────────────────────────
 
 /// Specs for the incremental benchmark: a per-file compile loop over many medium-size
@@ -463,6 +497,7 @@ criterion_group!(
     bench_run_pipeline,
     bench_run_pipeline_warm,
     bench_run_pipeline_warm_large,
+    bench_run_pipeline_restore,
     bench_run_pipeline_incremental_edit,
     bench_run_pipeline_incremental_full
 );

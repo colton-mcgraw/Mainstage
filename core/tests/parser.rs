@@ -64,6 +64,57 @@ fn parses_let_decl_with_string() {
     }
 }
 
+// ── Params (Phase 49) ─────────────────────────────────────────────────────────────
+
+#[test]
+fn parses_param_decl_of_each_type() {
+    let program = parse_ok(
+        r#"param target: string = "release";
+           param jobs: int = 4;
+           param release: bool = true;
+           param features: list = ["a", "b"];"#,
+    );
+    assert_eq!(program.items.len(), 4);
+    let types: Vec<(String, ParamType)> = program
+        .items
+        .iter()
+        .map(|item| match item {
+            Item::Param(d) => (d.name.clone(), d.ty),
+            other => panic!("expected param, got {other:?}"),
+        })
+        .collect();
+    assert_eq!(
+        types,
+        vec![
+            ("target".to_string(), ParamType::String),
+            ("jobs".to_string(), ParamType::Int),
+            ("release".to_string(), ParamType::Bool),
+            ("features".to_string(), ParamType::List),
+        ]
+    );
+}
+
+#[test]
+fn param_default_is_a_full_expression() {
+    // The default may reference an earlier binding, like any `let` value.
+    let program = parse_ok(
+        r#"let base = "rel";
+           param target: string = "${base}-build";"#,
+    );
+    match &program.items[1] {
+        Item::Param(d) => {
+            assert_eq!(d.name, "target");
+            assert!(matches!(d.default, Expr::String(_)));
+        }
+        other => panic!("expected param, got {other:?}"),
+    }
+}
+
+#[test]
+fn param_without_type_is_a_parse_error() {
+    parse_err(r#"param target = "release";"#);
+}
+
 // ── Project ─────────────────────────────────────────────────────────────────────
 
 #[test]

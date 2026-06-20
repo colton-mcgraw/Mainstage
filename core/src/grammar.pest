@@ -6,7 +6,7 @@ COMMENT    = _{ "//" ~ (!"\n" ~ ANY)* }
 // ── Top-level ─────────────────────────────────────────────────────────────────
 
 program = { SOI ~ item* ~ EOI }
-item    = _{ include_decl | import_decl | let_decl | project_block | stage_block | pipeline_block | template_block }
+item    = _{ include_decl | import_decl | param_decl | let_decl | project_block | stage_block | pipeline_block | template_block }
 
 // ── Declarations ──────────────────────────────────────────────────────────────
 
@@ -15,6 +15,13 @@ item    = _{ include_decl | import_decl | let_decl | project_block | stage_block
 include_decl = { "include" ~ string ~ ";" }
 import_decl  = { "import" ~ string ~ "as" ~ ident ~ ";" }
 let_decl     = { "let" ~ ident ~ "=" ~ expr ~ ";" }
+// Typed, CLI-overridable build parameter (Phase 49). A `param` is resolved at load time
+// in declaration order alongside `let` and is referenceable anywhere a `let` is; its
+// default may be overridden with `-D name=value` on the command line.
+param_decl   = { "param" ~ ident ~ ":" ~ param_type ~ "=" ~ expr ~ ";" }
+// The four declarable parameter types. The trailing boundary check keeps `string` from
+// matching the prefix of an identifier like `stringy` in this position.
+param_type   = @{ ("string" | "int" | "bool" | "list") ~ !(ASCII_ALPHANUMERIC | "_") }
 
 // ── Project ───────────────────────────────────────────────────────────────────
 

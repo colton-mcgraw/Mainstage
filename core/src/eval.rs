@@ -187,8 +187,14 @@ pub struct EvalContext {
     pub script_dir: PathBuf,
     /// Host platform string: `"windows"`, `"linux"`, or `"macos"`.
     pub platform: String,
-    /// Evaluated `let` bindings in declaration order.
+    /// Evaluated `let` bindings in declaration order. Resolved `param` values (Phase 49) are
+    /// appended here too, so a parameter resolves as an identifier exactly like a `let`.
     pub let_values: Vec<(String, Value)>,
+    /// Resolved build parameters (Phase 49) in declaration order: each `param`'s name paired
+    /// with its effective value (the command-line override when one was supplied, otherwise
+    /// the evaluated default). A duplicate of the matching `let_values` entries, kept as the
+    /// authoritative list for `mainstage params`, `list`, and `--dry-run` reporting.
+    pub params: Vec<(String, Value)>,
     /// Evaluated `project` block fields.
     pub project_fields: HashMap<String, Value>,
     /// Active `for`-loop variable bindings set by the step executor (Phase 5).
@@ -350,6 +356,7 @@ impl EvalContext {
             script_dir: self.script_dir.clone(),
             platform: self.platform.clone(),
             let_values: self.let_values.clone(),
+            params: self.params.clone(),
             project_fields: self.project_fields.clone(),
             for_vars: HashMap::new(),
             // Matrix bindings belong to a stage, so they carry across the per-iteration
@@ -413,6 +420,20 @@ pub fn eval_program_with(
     script_dir: &Path,
     registry: ModuleRegistry,
 ) -> Result<EvalContext> {
+    eval_program_with_overrides(program, script_dir, registry, &HashMap::new())
+}
+
+/// Like [`eval_program_with`], but applies command-line parameter `overrides` (Phase 49):
+/// a map of `param` name → raw override string (from `-D name=value` flags or a manifest
+/// `[params]` block). Each override is parsed against its parameter's declared type, with a
+/// precise [`Error::Eval`] diagnostic on a type mismatch; an override naming no declared
+/// parameter is likewise an error. Parameters without an override evaluate their default.
+pub fn eval_program_with_overrides(
+    program: &Program,
+    script_dir: &Path,
+    registry: ModuleRegistry,
+    overrides: &HashMap<String, String>,
+) -> Result<EvalContext> {
     // Collect all stage names in one pass before evaluation so bare stage-name
     // identifiers (e.g. in `stages: [compile, test]`) resolve to their string value.
     let stage_names: HashSet<String> = program
@@ -425,6 +446,7 @@ pub fn eval_program_with(
         script_dir: script_dir.to_path_buf(),
         platform: host_platform().to_string(),
         let_values: Vec::new(),
+        params: Vec::new(),
         project_fields: HashMap::new(),
         for_vars: HashMap::new(),
         matrix_vars: HashMap::new(),
@@ -453,6 +475,24 @@ pub fn eval_program_with(
                 Err(Error::Eval(diags)) => errors.extend(diags),
                 Err(e) => return Err(e),
             },
+            // A `param` resolves to its command-line override (parsed against the declared
+            // type) when one was supplied, otherwise to its evaluated default (Phase 49).
+            // Either way the resolved value joins both `let_values` (so it resolves as an
+            // identifier like a `let`) and `params` (the authoritative list for reporting).
+            Item::Param(d) => {
+                let resolved = match overrides.get(&d.name) {
+                    Some(raw) => parse_param_override(d, raw),
+                    None => eval_expr(&d.default, &ctx),
+                };
+                match resolved {
+                    Ok(v) => {
+                        ctx.let_values.push((d.name.clone(), v.clone()));
+                        ctx.params.push((d.name.clone(), v));
+                    }
+                    Err(Error::Eval(diags)) => errors.extend(diags),
+                    Err(e) => return Err(e),
+                }
+            }
             Item::Project(b) => {
                 for field in &b.fields {
                     match eval_expr(&field.value, &ctx) {
@@ -468,7 +508,63 @@ pub fn eval_program_with(
         }
     }
 
+    // Reject any override that names no declared `param`, so a misspelled `-D` flag fails
+    // loudly rather than being silently ignored. The diagnostic carries no span — the name
+    // came from the command line, not the source.
+    let declared: HashSet<&str> = program
+        .items
+        .iter()
+        .filter_map(|item| if let Item::Param(p) = item { Some(p.name.as_str()) } else { None })
+        .collect();
+    for name in overrides.keys() {
+        if !declared.contains(name.as_str()) {
+            errors.push(Diagnostic::new(format!(
+                "unknown parameter '{name}': no `param {name}` is declared in this build"
+            )));
+        }
+    }
+
     if errors.is_empty() { Ok(ctx) } else { Err(Error::Eval(errors)) }
+}
+
+/// Parse a command-line override `raw` string for parameter `d` against its declared type,
+/// producing the typed [`Value`] (Phase 49). A value that does not parse as the declared
+/// type is an [`Error::Eval`] carrying the parameter's span. A `list` override is split on
+/// commas into string items (an empty string yields an empty list).
+fn parse_param_override(d: &ParamDecl, raw: &str) -> Result<Value> {
+    let type_err = |detail: String| {
+        Error::Eval(vec![
+            Diagnostic::new(format!(
+                "invalid value for parameter '{}' (declared {}): {detail}",
+                d.name,
+                d.ty.keyword()
+            ))
+            .with_span(d.span.clone()),
+        ])
+    };
+    match d.ty {
+        ParamType::String => Ok(Value::String(raw.to_string())),
+        ParamType::Int => raw
+            .trim()
+            .parse::<i64>()
+            .map(Value::Int)
+            .map_err(|_| type_err(format!("'{raw}' is not an integer"))),
+        ParamType::Bool => match raw.trim() {
+            "true" => Ok(Value::Bool(true)),
+            "false" => Ok(Value::Bool(false)),
+            other => Err(type_err(format!("'{other}' is not a bool (expected `true` or `false`)"))),
+        },
+        // A list override is comma-separated strings; an empty string is the empty list
+        // (rather than a one-element list containing the empty string).
+        ParamType::List => {
+            let items = if raw.is_empty() {
+                Vec::new()
+            } else {
+                raw.split(',').map(|s| Value::String(s.to_string())).collect()
+            };
+            Ok(Value::List(items))
+        }
+    }
 }
 
 /// Evaluate a single expression within `ctx`.
@@ -807,6 +903,7 @@ mod tests {
             script_dir: PathBuf::from("."),
             platform: "windows".to_string(),
             let_values: Vec::new(),
+            params: Vec::new(),
             project_fields: HashMap::new(),
             for_vars: HashMap::new(),
             matrix_vars: HashMap::new(),

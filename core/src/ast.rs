@@ -24,6 +24,12 @@ pub enum Item {
     /// `use <name>;` step with the template's steps and drops the template item *before*
     /// semantic analysis, so the graph, change detection, and scheduler never see it.
     Template(TemplateBlock),
+    /// `param <name>: <type> = <default>;` — a typed, CLI-overridable build parameter
+    /// (Phase 49). Resolved at load time in declaration order alongside `let` and
+    /// referenceable anywhere a `let` is; the default may be overridden from the command
+    /// line with `-D name=value`. Unlike a `let`, a `param` carries a declared type so an
+    /// override can be parsed and a default type-checked against it.
+    Param(ParamDecl),
     /// `include "<path>";` — lexically merges another `.ms` file's items here (Phase 48).
     /// Lowered away by [`crate::include::expand`] *before* semantic analysis: the include
     /// is replaced in place by the (recursively expanded) items of the referenced file, so
@@ -39,6 +45,7 @@ impl Item {
         match self {
             Item::Import(d) => &d.span,
             Item::Let(d) => &d.span,
+            Item::Param(d) => &d.span,
             Item::Project(b) => &b.span,
             Item::Stage(b) => &b.span,
             Item::Pipeline(b) => &b.span,
@@ -74,6 +81,44 @@ pub struct LetDecl {
     pub name: String,
     pub value: Expr,
     pub span: Span,
+}
+
+/// A `param <name>: <type> = <default>;` top-level declaration (Phase 49). A typed build
+/// parameter whose `default` is evaluated at load time — exactly like a `let` — unless a
+/// `-D <name>=<value>` flag (or manifest `[params]` entry) overrides it, in which case the
+/// override string is parsed against `ty`. Its resolved value joins the `let` environment,
+/// so it is referenceable anywhere a `let` is.
+#[derive(Debug, Clone)]
+pub struct ParamDecl {
+    pub name: String,
+    /// The declared type — constrains both the `default` (checked in `sema`) and the
+    /// parsing of any command-line override (in `eval`).
+    pub ty: ParamType,
+    pub default: Expr,
+    pub span: Span,
+}
+
+/// The declarable type of a build [`ParamDecl`]. Mirrors the scalar/collection value kinds
+/// a parameter may hold; filesets and module-call results are not parameter types.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ParamType {
+    String,
+    Int,
+    Bool,
+    List,
+}
+
+impl ParamType {
+    /// The surface keyword for this type, as written after the `:` in a `param` declaration
+    /// and as rendered by the formatter.
+    pub fn keyword(&self) -> &'static str {
+        match self {
+            ParamType::String => "string",
+            ParamType::Int => "int",
+            ParamType::Bool => "bool",
+            ParamType::List => "list",
+        }
+    }
 }
 
 // ── Project ───────────────────────────────────────────────────────────────────

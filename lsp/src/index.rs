@@ -21,6 +21,15 @@ pub struct LetInfo {
     pub value_span: Span,
 }
 
+/// A top-level `param <name>: <type> = <default>` declaration (Phase 49).
+pub struct ParamInfo {
+    pub name: String,
+    /// The declared type keyword (`string` / `int` / `bool` / `list`).
+    pub ty: String,
+    pub span: Span,
+    pub default_span: Span,
+}
+
 /// A `stage <name> { … }` declaration.
 pub struct StageInfo {
     pub name: String,
@@ -50,6 +59,7 @@ pub struct TemplateInfo {
 pub struct DocumentIndex {
     pub imports: Vec<ImportInfo>,
     pub lets: Vec<LetInfo>,
+    pub params: Vec<ParamInfo>,
     pub stages: Vec<StageInfo>,
     pub project_fields: Vec<FieldInfo>,
     pub templates: Vec<TemplateInfo>,
@@ -70,6 +80,12 @@ impl DocumentIndex {
                     name: d.name.clone(),
                     span: d.span.clone(),
                     value_span: d.value.span().clone(),
+                }),
+                Item::Param(d) => idx.params.push(ParamInfo {
+                    name: d.name.clone(),
+                    ty: d.ty.keyword().to_string(),
+                    span: d.span.clone(),
+                    default_span: d.default.span().clone(),
                 }),
                 Item::Stage(s) => idx.stages.push(StageInfo {
                     name: s.name.clone(),

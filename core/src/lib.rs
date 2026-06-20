@@ -19,7 +19,7 @@ pub mod trivia;
 pub use error::{Diagnostic, Error, Result, Span};
 pub use eval::{
     AssertionResult, EvalContext, FileEntry, OutputSink, ReporterHandle, TestRecorder, Value,
-    eval_condition, eval_expr, eval_program, eval_program_with,
+    eval_condition, eval_expr, eval_program, eval_program_with, eval_program_with_overrides,
 };
 pub use executor::{execute_step, execute_steps};
 pub use format::format;
@@ -27,7 +27,7 @@ pub use include::expand as expand_includes;
 pub use matrix::expand as expand_matrix;
 pub use modules::{
     Capability, ExternalModule, LintFinding, LintLevel, LintReport, Module, ModuleRegistry,
-    Permissions, lint_plugin,
+    Permissions, lint_plugin, params_from_manifest,
 };
 pub use parser::parse;
 pub use runner::{

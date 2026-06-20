@@ -19,6 +19,7 @@ fn example_scripts() -> Vec<PathBuf> {
     let root = repo_root();
     vec![
         root.join("main.ms"),
+        root.join("examples/params/main.ms"),
         root.join("examples/multi-file/main.ms"),
         root.join("examples/multi-file/components/frontend.ms"),
         root.join("examples/multi-file/components/backend.ms"),
@@ -67,6 +68,19 @@ fn formatted_output_ends_with_single_newline() {
     let out = format_str("let x = 1;");
     assert!(out.ends_with('\n'));
     assert!(!out.ends_with("\n\n"));
+}
+
+#[test]
+fn param_declaration_is_canonicalized() {
+    // Tight spacing around `:` and `=` is normalized; the declared type is preserved.
+    let out = format_str(r#"param   target:string="release";"#);
+    assert_eq!(out, "param target: string = \"release\";\n");
+}
+
+#[test]
+fn param_declaration_formats_idempotently() {
+    let canonical = "param features: list = [\"a\", \"b\"];\n";
+    assert_eq!(format_str(canonical), canonical);
 }
 
 /// Golden fixture: a deliberately messy script and its canonical form. Pins the

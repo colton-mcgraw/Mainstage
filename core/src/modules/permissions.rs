@@ -95,6 +95,52 @@ impl Permissions {
     }
 }
 
+/// Read the optional `[params]` block from the `plugins.toml` manifest under `script_dir`,
+/// returning each entry as a `name → raw value` override string (Phase 49). Scalars are
+/// stringified (`true`, `42`, `"release"` → `release`) and arrays are comma-joined, so a
+/// manifest override is parsed against its parameter's declared type exactly like a `-D`
+/// flag. A missing manifest or block yields an empty map; a malformed manifest is a hard
+/// error. Command-line `-D` flags take precedence and are layered on top by the caller.
+pub fn params_from_manifest(
+    script_dir: &Path,
+) -> Result<std::collections::HashMap<String, String>> {
+    let manifest = script_dir.join(MANIFEST);
+    let text = match std::fs::read_to_string(&manifest) {
+        Ok(text) => text,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Default::default()),
+        Err(e) => return Err(manifest_error(format!("could not read {}: {}", MANIFEST, e))),
+    };
+    let parsed: toml::Value = toml::from_str(&text)
+        .map_err(|e| manifest_error(format!("invalid {}: {}", MANIFEST, e)))?;
+
+    let mut out = std::collections::HashMap::new();
+    if let Some(table) = parsed.get("params").and_then(|v| v.as_table()) {
+        for (key, value) in table {
+            out.insert(key.clone(), toml_param_value(value));
+        }
+    }
+    Ok(out)
+}
+
+/// Render a manifest `[params]` value as the raw override string the typed parameter parser
+/// expects: an array becomes its comma-joined items (matching `-D name=a,b,c`), and any
+/// scalar becomes its plain string form (no surrounding quotes for strings).
+fn toml_param_value(value: &toml::Value) -> String {
+    match value {
+        toml::Value::String(s) => s.clone(),
+        toml::Value::Array(items) => {
+            items.iter().map(toml_param_value).collect::<Vec<_>>().join(",")
+        }
+        toml::Value::Integer(n) => n.to_string(),
+        toml::Value::Boolean(b) => b.to_string(),
+        toml::Value::Float(f) => f.to_string(),
+        toml::Value::Datetime(d) => d.to_string(),
+        // A nested table has no sensible flat override form; render empty so the typed
+        // parser reports a mismatch rather than silently accepting it.
+        toml::Value::Table(_) => String::new(),
+    }
+}
+
 /// Build a manifest-loading [`Error`] (no source span is available at load time).
 fn manifest_error(message: impl Into<String>) -> Error {
     Error::Eval(vec![Diagnostic::new(message)])

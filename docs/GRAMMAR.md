@@ -30,6 +30,7 @@ Top-level items are:
 
 - `import` — bring a module into scope
 - `let` — declare a named value
+- `param` — declare a typed, command-line-overridable build parameter
 - `project` — project metadata
 - `stage` — a build stage
 - `pipeline` / `default pipeline` — a named entry point
@@ -148,6 +149,42 @@ let target  = if platform == "windows" {
 ```
 
 `let` bindings are evaluated once at script load time, in declaration order. Forward references to bindings not yet declared are not allowed.
+
+---
+
+### `param`
+
+Declares a typed build **parameter**: a named value with a default that can be overridden from the command line (or a manifest), replacing the `env()`-for-everything idiom with declared, type-checked knobs.
+
+```text
+param <name>: <type> = <default>;
+```
+
+`<type>` is one of `string`, `int`, `bool`, or `list`. The `<default>` is any expression of the matching type — referencing earlier `let` / `param` bindings is allowed, the same forward-reference rule as `let`.
+
+```mainstage
+param release:  bool   = false;
+param target:   string = "x86_64-unknown-linux-gnu";
+param jobs:     int    = 4;
+param features: list    = ["default"];
+```
+
+A `param` is resolved once at script load time, in declaration order **alongside `let`** — the two share a single namespace, so a `param` and a `let` may not have the same name — and is referenceable anywhere a `let` is:
+
+```mainstage
+param release: bool = false;
+let profile = if release == true { "release" } else { "debug" };
+```
+
+**Overriding.** Supply `-D <name>=<value>` (or the long form `--param <name>=<value>`) on the command line to override a default; the flag is repeatable and may appear before or after the subcommand:
+
+```sh
+mainstage run ci -D release=true -D jobs=8
+```
+
+The override string is parsed against the declared type: an `int` that is not an integer, or a `bool` that is not `true`/`false`, is a precise error, as is a `-D` flag that names no declared parameter. A `list` override is comma-separated (`-D features=a,b,c`). Defaults may also be set in the `plugins.toml` manifest under a `[params]` table; command-line `-D` flags take precedence over the manifest.
+
+`mainstage params` lists every declared parameter with its type and effective value, and the effective values are shown by `mainstage list` and `--dry-run`.
 
 ---
 
@@ -1150,6 +1187,7 @@ Inside a stage declared with a `matrix` block, each matrix dimension name (e.g. 
 program         = item* ;
 item            = include_decl
                 | import_decl
+                | param_decl
                 | let_decl
                 | project_block
                 | stage_block
@@ -1159,6 +1197,8 @@ item            = include_decl
 include_decl    = "include" string ";" ;
 import_decl     = "import" string "as" ident ";" ;
 let_decl        = "let" ident "=" expr ";" ;
+param_decl      = "param" ident ":" param_type "=" expr ";" ;
+param_type      = "string" | "int" | "bool" | "list" ;
 
 project_block   = "project" "{" project_field* "}" ;
 project_field   = ident ":" expr ","? ;

@@ -18,6 +18,7 @@ use mainstage_core::{
 struct Recorder {
     ran: Mutex<Vec<String>>,
     skipped: Mutex<Vec<String>>,
+    restored: Mutex<Vec<String>>,
 }
 
 impl Reporter for Recorder {
@@ -27,6 +28,9 @@ impl Reporter for Recorder {
     fn stage_skipped(&self, _out: &mut dyn Write, stage: &str) {
         self.skipped.lock().unwrap().push(stage.to_string());
     }
+    fn stage_restored(&self, _out: &mut dyn Write, stage: &str) {
+        self.restored.lock().unwrap().push(stage.to_string());
+    }
 }
 
 impl Recorder {
@@ -35,6 +39,9 @@ impl Recorder {
     }
     fn skipped(&self, stage: &str) -> bool {
         self.skipped.lock().unwrap().iter().any(|s| s == stage)
+    }
+    fn restored(&self, stage: &str) -> bool {
+        self.restored.lock().unwrap().iter().any(|s| s == stage)
     }
 }
 
@@ -123,15 +130,36 @@ fn new_input_file_triggers_rerun() {
 }
 
 #[test]
-fn missing_output_triggers_rerun() {
+fn missing_output_is_restored_from_cache() {
+    // Phase 50: a missing output with unchanged inputs is *restored* from the
+    // content-addressed store rather than re-running the stage's steps.
     let dir = unique_dir("missingout");
     std::fs::write(dir.join("src/a.txt"), "alpha").unwrap();
     run_once(&dir);
 
-    // Delete the declared output — even with unchanged inputs, the stage must re-run.
     std::fs::remove_file(dir.join("out/result.bin")).unwrap();
     let second = run_once(&dir);
-    assert!(second.ran("gen"), "a missing output must re-run the stage");
+    assert!(second.restored("gen"), "a missing output must be restored from the cache");
+    assert!(!second.ran("gen"), "restoring must not re-run the stage's steps");
+    // The restored file matches what the stage produced.
+    assert_eq!(std::fs::read_to_string(dir.join("out/result.bin")).unwrap(), "built");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn missing_output_rebuilds_when_blob_is_gone() {
+    // If the CAS blob backing an output is absent, restore falls back to a full rebuild.
+    let dir = unique_dir("missingblob");
+    std::fs::write(dir.join("src/a.txt"), "alpha").unwrap();
+    run_once(&dir);
+
+    // Wipe the content store (but keep cache.json), then delete the output.
+    std::fs::remove_dir_all(dir.join(".mainstage").join("cache")).unwrap();
+    std::fs::remove_file(dir.join("out/result.bin")).unwrap();
+    let second = run_once(&dir);
+    assert!(second.ran("gen"), "with no blob to restore, the stage must rebuild");
+    assert!(dir.join("out/result.bin").exists());
 
     let _ = std::fs::remove_dir_all(&dir);
 }

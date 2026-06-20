@@ -154,6 +154,11 @@ impl Printer<'_> {
                 let content = format!("let {} = {};", d.name, render_expr(&d.value));
                 self.node_line(&d.span, &content);
             }
+            Item::Param(d) => {
+                let content =
+                    format!("param {}: {} = {};", d.name, d.ty.keyword(), render_expr(&d.default));
+                self.node_line(&d.span, &content);
+            }
             Item::Project(p) => self.project(p),
             Item::Stage(s) => self.stage(s),
             Item::Pipeline(p) => self.pipeline(p),

@@ -98,6 +98,19 @@ fn symbol_hover(
                 code_block(&format!("let {word} = {}", slice_span(text, &binding.value_span))),
             ));
         }
+        // A build parameter (Phase 49) hovers as its declaration, showing the declared type
+        // and default so the override-able knobs of a build are discoverable in the editor.
+        if let Some(param) = index.params.iter().find(|p| p.name == word) {
+            return Some(with_docs(
+                trivia,
+                &param.span,
+                code_block(&format!(
+                    "param {word}: {} = {}",
+                    param.ty,
+                    slice_span(text, &param.default_span)
+                )),
+            ));
+        }
         if let Some(stage) = index.stages.iter().find(|s| s.name == word) {
             let after = if stage.depends_on.is_empty() {
                 String::new()
@@ -201,6 +214,17 @@ mod tests {
         let pos = position_at(text, text.rfind("name").unwrap());
         let hover = hover(text, pos, &registry, Some(&program)).expect("hover");
         assert!(markup(&hover).contains("let name = \"demo\""));
+    }
+
+    #[test]
+    fn hovers_param_declaration() {
+        let registry = ModuleRegistry::standard();
+        let text = "param target: string = \"release\";\nlet label = target;";
+        let program = parse(text);
+        // The `target` reference in the let binding.
+        let pos = position_at(text, text.rfind("target").unwrap());
+        let hover = hover(text, pos, &registry, Some(&program)).expect("hover");
+        assert!(markup(&hover).contains("param target: string = \"release\""));
     }
 
     #[test]

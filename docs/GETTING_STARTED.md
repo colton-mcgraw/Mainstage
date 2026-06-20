@@ -123,6 +123,24 @@ After a run, Mainstage records each stage's input digest and output paths in
 unchanged *and* its declared outputs still exist. Force a full rebuild with
 `mainstage clean`. (The `.mainstage/` directory is conventionally git-ignored.)
 
+### Output cache (restore, don't rebuild)
+
+Each successful run also snapshots a stage's declared outputs into a local
+**content-addressed store** under `.mainstage/cache/`, keyed by content digest. If a later
+run finds the inputs unchanged but the **outputs missing** — you deleted `dist/`, switched
+branches, or did a fresh checkout — Mainstage **restores** them from the store instead of
+re-running the stage's steps (reported as `↻ (restored from cache)`). If a needed blob is
+absent, it transparently falls back to a full rebuild.
+
+Maintain the store with:
+
+- `mainstage cache stats` — blob count, on-disk size, and the restore hit-rate.
+- `mainstage cache gc` — prune blobs no recorded output references; pass
+  `--max-size <SIZE>` (e.g. `500MB`, `2G`) to additionally evict least-recently-used blobs
+  until the store fits under the ceiling.
+
+`mainstage clean` clears the whole `.mainstage/` directory, store included.
+
 ---
 
 ## 4. Steps you can use
