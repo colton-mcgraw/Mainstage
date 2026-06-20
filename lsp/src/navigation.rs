@@ -26,9 +26,92 @@ enum Target {
 /// document, or `None` when the cursor is not on a navigable reference.
 pub fn definition(text: &str, pos: Position, program: Option<&Program>) -> Option<Range> {
     let program = program?;
+    // A block-scoped local `let` (Phase 44) is resolved first: it is scope-sensitive and not
+    // in the top-level index, so jumping to it takes precedence over the index lookup.
+    if let Some(range) = local_let_definition(text, pos, program) {
+        return Some(range);
+    }
     let index = DocumentIndex::from_program(program);
     let target = target_at(text, pos, &index)?;
     decl_range(text, &index, &target)
+}
+
+/// A block-scoped local `let` declaration and the byte offset at which its scope ends
+/// (the end of its enclosing block), used to resolve go-to-definition for locals.
+struct LocalDecl {
+    name: String,
+    decl_span: Span,
+    scope_end: usize,
+}
+
+/// Resolve the cursor at `pos` to a block-scoped local `let` declaration, when it lands on a
+/// local binding's name or a reference to one in scope. Returns the declaration's name range.
+fn local_let_definition(text: &str, pos: Position, program: &Program) -> Option<Range> {
+    let offset = offset_at(text, pos);
+    let (start, end) = ident_at(text, offset)?;
+    let word = &text[start..end];
+    // A `<receiver>.<field>` access never denotes a bare local binding.
+    if receiver_before(text, start).is_some() {
+        return None;
+    }
+
+    let mut decls = Vec::new();
+    for item in &program.items {
+        match item {
+            Item::Stage(s) => {
+                let scope_end = span_offsets(text, &s.span).1;
+                collect_local_decls(&s.steps, scope_end, text, &mut decls);
+                collect_local_decls(&s.on_failure, scope_end, text, &mut decls);
+            }
+            Item::Pipeline(p) => {
+                let scope_end = span_offsets(text, &p.span).1;
+                collect_local_decls(&p.on_failure, scope_end, text, &mut decls);
+                collect_local_decls(&p.on_success, scope_end, text, &mut decls);
+            }
+            _ => {}
+        }
+    }
+
+    // Among the locals named `word` whose scope covers the cursor, the innermost (latest-
+    // declared) one wins — mirroring how the evaluator's reverse lookup resolves the name.
+    let best = decls
+        .iter()
+        .filter(|d| d.name == word)
+        .filter(|d| {
+            let decl_start = span_offsets(text, &d.decl_span).0;
+            decl_start <= offset && offset <= d.scope_end
+        })
+        .max_by_key(|d| span_offsets(text, &d.decl_span).0)?;
+    name_range(text, &best.decl_span, word)
+}
+
+/// Collect every block-scoped local `let` reachable from `steps`, recording each binding's
+/// declaration span and the offset at which its scope ends (`container_end`). Nested blocks
+/// narrow the scope to that block's span.
+fn collect_local_decls(steps: &[Step], container_end: usize, text: &str, out: &mut Vec<LocalDecl>) {
+    for step in steps {
+        match step {
+            Step::Let(l) => out.push(LocalDecl {
+                name: l.name.clone(),
+                decl_span: l.span.clone(),
+                scope_end: container_end,
+            }),
+            Step::If(s) => {
+                let end = span_offsets(text, &s.span).1;
+                collect_local_decls(&s.then_steps, end, text, out);
+                collect_local_decls(&s.else_steps, end, text, out);
+            }
+            Step::For(s) => collect_local_decls(&s.steps, span_offsets(text, &s.span).1, text, out),
+            Step::Try(s) => collect_local_decls(&s.steps, span_offsets(text, &s.span).1, text, out),
+            Step::Workdir(s) => {
+                collect_local_decls(&s.steps, span_offsets(text, &s.span).1, text, out)
+            }
+            Step::WithEnv(s) => {
+                collect_local_decls(&s.steps, span_offsets(text, &s.span).1, text, out)
+            }
+            _ => {}
+        }
+    }
 }
 
 /// Every occurrence of the symbol at `pos`, including its declaration when
@@ -362,6 +445,24 @@ fn walk_steps(steps: &[Step], occ: &mut Vec<Occurrence>) {
                     }
                 }
             }
+            // `log` / `fail` carry an interpolated string whose `${…}` expressions may
+            // reference navigable symbols.
+            Step::Log(s) => {
+                for part in &s.message.parts {
+                    if let StringPart::Interpolation(inner) = part {
+                        walk_expr(inner, occ);
+                    }
+                }
+            }
+            Step::Fail(s) => {
+                for part in &s.reason.parts {
+                    if let StringPart::Interpolation(inner) = part {
+                        walk_expr(inner, occ);
+                    }
+                }
+            }
+            // A block-scoped `let`: its value expression may reference navigable symbols.
+            Step::Let(s) => walk_expr(&s.value, occ),
             Step::Expect(s) => {
                 // The `$` command keeps its argument as a raw string (not walked); only an
                 // `output` check's expected value carries parsed `${…}` expressions.
@@ -613,5 +714,23 @@ mod tests {
     #[test]
     fn no_definition_without_a_program() {
         assert!(definition("let x = 1;", Position::new(0, 4), None).is_none());
+    }
+
+    #[test]
+    fn definition_of_a_block_scoped_local_let() {
+        let text = "stage s {\n    steps {\n        let obj = \"o\";\n        write obj content: \"x\"\n    }\n}";
+        let program = parse(text);
+        // Click on the `obj` reference in the `write` step → jumps to the local declaration.
+        let def = definition(text, at_last(text, "obj"), Some(&program)).expect("definition");
+        assert_eq!(def.start, at(text, "obj"), "jumps to the local `let` declaration");
+    }
+
+    #[test]
+    fn local_let_out_of_scope_has_no_definition() {
+        // A local declared inside an `if` block is not navigable from after the block.
+        let text = "stage s {\n    steps {\n        if env(\"CI\") {\n            let inner = \"x\";\n        }\n        write inner content: \"y\"\n    }\n}";
+        let program = parse(text);
+        // The `inner` in the `write` after the `if` is out of scope: no local definition.
+        assert!(definition(text, at_last(text, "inner"), Some(&program)).is_none());
     }
 }

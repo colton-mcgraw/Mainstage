@@ -70,6 +70,7 @@ jobs:
           examples/data-report/main.ms
           tests/stdlib.ms
           tests/validation_errors.ms
+          tests/diagnostics.ms
           tests/plugin/main.ms
 
   # Compile the VS Code extension and run its tests, including the integration

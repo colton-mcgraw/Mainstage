@@ -172,6 +172,7 @@ impl Analyzer {
                     let ctx = ExprCtx {
                         current_let_index: Some(let_idx),
                         for_vars: &[],
+                        locals: &[],
                         in_steps: false,
                     };
                     self.resolve_expr(&d.value, scope, ctx);
@@ -229,12 +230,8 @@ impl Analyzer {
                 self.error(format!("unknown stage '{}' in depends_on", dep.name), dep.span.clone());
             }
         }
-        for step in &stage.steps {
-            self.resolve_step(step, scope, &[]);
-        }
-        for step in &stage.on_failure {
-            self.resolve_step(step, scope, &[]);
-        }
+        self.resolve_steps(&stage.steps, scope, &[], &[]);
+        self.resolve_steps(&stage.on_failure, scope, &[], &[]);
         self.matrix_vars.clear();
     }
 
@@ -246,12 +243,8 @@ impl Analyzer {
         if let Some(expr) = &pipeline.stages {
             self.resolve_pipeline_stages(expr, scope);
         }
-        for step in &pipeline.on_failure {
-            self.resolve_step(step, scope, &[]);
-        }
-        for step in &pipeline.on_success {
-            self.resolve_step(step, scope, &[]);
-        }
+        self.resolve_steps(&pipeline.on_failure, scope, &[], &[]);
+        self.resolve_steps(&pipeline.on_success, scope, &[], &[]);
     }
 
     // The `stages:` field is commonly a list of bare stage-name identifiers.
@@ -279,9 +272,78 @@ impl Analyzer {
         }
     }
 
-    fn resolve_step(&mut self, step: &Step, scope: &Scope, for_vars: &[String]) {
-        let ctx = ExprCtx { current_let_index: None, for_vars, in_steps: true };
+    /// Resolve a block of steps in order, threading the block-scoped local `let` bindings
+    /// (Phase 44): each `let` step extends `locals` for the steps that follow it, and nested
+    /// blocks inherit the locals visible at their start. `outer_locals` are the bindings in
+    /// scope when the block begins (empty for a stage's top-level `steps` block).
+    fn resolve_steps(
+        &mut self,
+        steps: &[Step],
+        scope: &Scope,
+        for_vars: &[String],
+        outer_locals: &[(String, Span)],
+    ) {
+        let mut locals: Vec<(String, Span)> = outer_locals.to_vec();
+        for step in steps {
+            if let Step::Let(l) = step {
+                let ctx =
+                    ExprCtx { current_let_index: None, for_vars, locals: &locals, in_steps: true };
+                self.resolve_expr(&l.value, scope, ctx);
+                self.check_local_let_shadowing(l, scope, for_vars, &locals);
+                locals.push((l.name.clone(), l.span.clone()));
+            } else {
+                self.resolve_step(step, scope, for_vars, &locals);
+            }
+        }
+    }
+
+    /// Report a block-scoped `let` that shadows a name already in scope: an outer (top-level
+    /// or enclosing-block) `let`, or an enclosing `for`-loop variable. The diagnostic points
+    /// at the new binding and, for a shadowed `let`, notes where the original was declared.
+    fn check_local_let_shadowing(
+        &mut self,
+        l: &LetStep,
+        scope: &Scope,
+        for_vars: &[String],
+        locals: &[(String, Span)],
+    ) {
+        if let Some((_, prior)) = scope.let_bindings.iter().find(|(n, _)| *n == l.name) {
+            self.errors.push(
+                Diagnostic::new(format!(
+                    "local `let` '{}' shadows a top-level `let` of the same name",
+                    l.name
+                ))
+                .with_span(l.span.clone())
+                .with_note(format!("the top-level binding is declared at {prior}")),
+            );
+        } else if let Some((_, prior)) = locals.iter().find(|(n, _)| *n == l.name) {
+            self.errors.push(
+                Diagnostic::new(format!(
+                    "local `let` '{}' shadows an outer block-scoped binding of the same name",
+                    l.name
+                ))
+                .with_span(l.span.clone())
+                .with_note(format!("the outer binding is declared at {prior}")),
+            );
+        } else if for_vars.contains(&l.name) {
+            self.error(
+                format!("local `let` '{}' shadows the enclosing `for`-loop variable", l.name),
+                l.span.clone(),
+            );
+        }
+    }
+
+    fn resolve_step(
+        &mut self,
+        step: &Step,
+        scope: &Scope,
+        for_vars: &[String],
+        locals: &[(String, Span)],
+    ) {
+        let ctx = ExprCtx { current_let_index: None, for_vars, locals, in_steps: true };
         match step {
+            // Handled in `resolve_steps`, which threads the binding to later steps.
+            Step::Let(_) => {}
             Step::Exec(_) => {}
             Step::Copy(s) => {
                 self.resolve_expr(&s.src, scope, ctx);
@@ -299,26 +361,16 @@ impl Analyzer {
             }
             Step::If(s) => {
                 self.resolve_condition(&s.condition, scope, ctx);
-                for step in &s.then_steps {
-                    self.resolve_step(step, scope, for_vars);
-                }
-                for step in &s.else_steps {
-                    self.resolve_step(step, scope, for_vars);
-                }
+                self.resolve_steps(&s.then_steps, scope, for_vars, locals);
+                self.resolve_steps(&s.else_steps, scope, for_vars, locals);
             }
             Step::For(s) => {
                 self.resolve_expr(&s.iterable, scope, ctx);
                 let mut inner = for_vars.to_vec();
                 inner.push(s.var.clone());
-                for step in &s.steps {
-                    self.resolve_step(step, scope, &inner);
-                }
+                self.resolve_steps(&s.steps, scope, &inner, locals);
             }
-            Step::Try(s) => {
-                for step in &s.steps {
-                    self.resolve_step(step, scope, for_vars);
-                }
-            }
+            Step::Try(s) => self.resolve_steps(&s.steps, scope, for_vars, locals),
             Step::Workdir(s) => {
                 self.resolve_expr(&s.path, scope, ctx);
                 // The working directory must be a string-typed expression.
@@ -330,17 +382,13 @@ impl Analyzer {
                         s.span.clone(),
                     );
                 }
-                for step in &s.steps {
-                    self.resolve_step(step, scope, for_vars);
-                }
+                self.resolve_steps(&s.steps, scope, for_vars, locals);
             }
             Step::WithEnv(s) => {
                 for binding in &s.vars {
                     self.resolve_expr(&binding.value, scope, ctx);
                 }
-                for step in &s.steps {
-                    self.resolve_step(step, scope, for_vars);
-                }
+                self.resolve_steps(&s.steps, scope, for_vars, locals);
             }
             Step::Expect(s) => {
                 if let ExpectCheck::Output { expected, .. } = &s.check {
@@ -359,6 +407,8 @@ impl Analyzer {
                 self.resolve_expr(&s.actual, scope, ctx);
                 self.resolve_string_parts(&s.expected.parts, scope, ctx);
             }
+            Step::Log(s) => self.resolve_string_parts(&s.message.parts, scope, ctx),
+            Step::Fail(s) => self.resolve_string_parts(&s.reason.parts, scope, ctx),
         }
     }
 
@@ -416,8 +466,12 @@ impl Analyzer {
             } else if !scope.project_fields.contains_key(&m.field) {
                 self.error(format!("unknown project field '{}'", m.field), m.span.clone());
             }
-        } else if ctx.for_vars.contains(&m.object) || scope.let_index(&m.object).is_some() {
-            // for-loop variables and let-bound names are valid member-access targets
+        } else if ctx.for_vars.contains(&m.object)
+            || scope.let_index(&m.object).is_some()
+            || ctx.locals.iter().any(|(n, _)| *n == m.object)
+        {
+            // for-loop variables and (top-level or block-scoped) let-bound names are valid
+            // member-access targets
         } else {
             self.error(
                 format!("undefined name '{}' in '{}.{}'", m.object, m.object, m.field),
@@ -439,6 +493,10 @@ impl Analyzer {
         }
         // for-loop iteration variable
         if ctx.for_vars.contains(&ident.name) {
+            return;
+        }
+        // Block-scoped local `let` binding in scope (Phase 44).
+        if ctx.locals.iter().any(|(n, _)| *n == ident.name) {
             return;
         }
         // Matrix dimension bound by the enclosing stage (Phase 37).
@@ -863,6 +921,10 @@ struct ExprCtx<'a> {
     /// Names bound by enclosing `for` loops — valid as bare identifiers and as
     /// member-access objects inside the loop body.
     for_vars: &'a [String],
+    /// Block-scoped local `let` bindings (Phase 44) in scope at this point — valid as bare
+    /// identifiers. Carries each binding's span so a later shadowing diagnostic can point
+    /// back at it.
+    locals: &'a [(String, Span)],
     /// True when the expression appears inside a step block, making `inputs` and
     /// `outputs` valid as built-in identifiers.
     in_steps: bool,
@@ -870,6 +932,6 @@ struct ExprCtx<'a> {
 
 impl ExprCtx<'static> {
     fn top_level() -> Self {
-        Self { current_let_index: None, for_vars: &[], in_steps: false }
+        Self { current_let_index: None, for_vars: &[], locals: &[], in_steps: false }
     }
 }

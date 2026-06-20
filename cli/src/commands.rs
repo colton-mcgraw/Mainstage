@@ -6,7 +6,7 @@
 use chrono::{DateTime, Local};
 use std::io::Write;
 use std::path::Path;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use clap::{Arg, ArgAction, Command};
@@ -14,9 +14,9 @@ use console::style;
 use mainstage_core::ast::Program;
 use mainstage_core::{
     AnalysisResult, AssertionResult, CancelToken, Diagnostic, Error, EvalContext, LintLevel,
-    ModuleRegistry, Permissions, Plan, PlanStatus, Reporter, Source, Span, StageOutcome,
-    analyze_with, ast, cache, eval_program_with, lint_plugin, parse, pipeline_input_paths,
-    plan_pipeline, run_pipeline_cancellable,
+    ModuleRegistry, Permissions, Plan, PlanStatus, Reporter, ReporterHandle, Source, Span,
+    StageOutcome, analyze_with, ast, cache, eval_program_with, lint_plugin, parse,
+    pipeline_input_paths, plan_pipeline, run_pipeline_cancellable,
 };
 
 use crate::scaffold::{self, Lang};
@@ -345,8 +345,13 @@ fn run_prepared(
     let jobs =
         jobs.unwrap_or_else(|| std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1));
 
-    let reporter = TermReporter::new(verbosity);
-    match run_pipeline_cancellable(program, pipeline, ctx, analysis, &reporter, jobs, cancel) {
+    // Share one reporter between the runner's lifecycle events and the `log` step: install
+    // a handle to it on the context so `log` routes through `Reporter::step_log` (honoring
+    // `--quiet` and the per-stage buffered output) just like the runner's own markers.
+    let reporter: Arc<dyn Reporter> = Arc::new(TermReporter::new(verbosity));
+    let run_ctx = ctx.with_reporter(ReporterHandle(reporter.clone()));
+    match run_pipeline_cancellable(program, pipeline, &run_ctx, analysis, &*reporter, jobs, cancel)
+    {
         Ok(()) => 0,
         // Print the conclusion for every failure mode — including ones that occur
         // before any stage runs (unknown pipeline name, dependency cycle, …), which
@@ -1012,6 +1017,14 @@ impl TermReporter {
 }
 
 impl Reporter for TermReporter {
+    fn step_log(&self, out: &mut dyn Write, message: &str) {
+        // A `log` step is progress output: suppressed in quiet mode, shown otherwise.
+        if self.quiet() {
+            return;
+        }
+        let _ = writeln!(out, "  {} {}", style("›").cyan(), message);
+    }
+
     fn stage_start(&self, out: &mut dyn Write, stage: &str) {
         if self.quiet() {
             return;

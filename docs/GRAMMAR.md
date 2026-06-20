@@ -665,6 +665,31 @@ stage compile {
 | `file.ext`  | Extension without leading dot                | `"rs"`                     |
 | `file.dir`  | Parent directory path                        | `"src"`                    |
 
+### `let` — Block-Scoped Binding
+
+Names a derived value once for the steps that **follow** it within the same block, so a multi-path stage or a `for`-loop body stops repeating an interpolated expression. It uses the same surface syntax as a top-level [`let`](#let), but is scoped to its enclosing block: the binding is visible to later steps in that block (and to nested blocks), and falls out of scope when the block ends. Inside a `for` loop the binding is re-evaluated each iteration.
+
+```text
+let <ident> = <expr>;
+```
+
+```mainstage
+stage compile {
+    inputs: sources
+
+    steps {
+        for file in inputs {
+            // Named once, used twice — and recomputed per file.
+            let obj = "obj/${file.stem}.o";
+            $ gcc -c "${file.path}" -o "${obj}"
+            log "compiled ${obj}"
+        }
+    }
+}
+```
+
+Shadowing a name already in scope — a top-level `let`, an enclosing block-scoped `let`, or the enclosing `for`-loop variable — is a semantic error, so every binding reads unambiguously. A local `let` may reference any top-level binding and any local declared earlier in the same scope; referencing one declared later is an "undefined name" error.
+
 ### `try` — Tolerate a Failing Step
 
 Runs a block of steps but does **not** propagate a failure: if a step inside the block fails, the remaining steps in the block are skipped and the stage continues as though the block had succeeded. This is the native, checkable replacement for the `$ sh -c "… || true"` idiom — a best-effort step whose failure is acceptable.
@@ -742,6 +767,48 @@ stage build {
 `workdir` and `with_env` nest in either order and compose with `if` / `for` / `try`, so `sh -c "cd build && VAR=1 cmd"` becomes `workdir "build" { with_env { VAR: "1" } { $ cmd } }`. This is the native replacement for `$ sh -c "VAR=… cmd"`.
 
 > **Prefer native steps over `$ sh -c`.** Reach for `copy` / `move` / `mkdir` / `delete` / `write`, `try`, `workdir`, and `with_env` instead of shelling out: they run without a shell (no quoting or `PATH` surprises), are validated at analysis time, and work identically across platforms. For example, `sh -c "rm -rf d && mkdir -p d/sub && cp a d/sub/b"` is better written as `delete "d"` then `mkdir "d/sub"` then `copy a to "d/sub/b"`; `sh -c "cmd || true"` as `try { $ cmd }`; and `sh -c "cd build && VAR=1 make"` as `workdir "build" { with_env { VAR: "1" } { $ make } }`.
+
+### `log` — Print a Progress Message
+
+Prints a message, with the usual `${…}` interpolation. The message is routed through the runner's reporter, so it honors `--quiet` (suppressed) and is captured in the per-stage buffered output — interleaved with the captured output of `$` commands, never tangled with another stage's output under parallel execution. Use it to surface progress instead of `$ echo`, which would spawn a process and stream raw to the terminal.
+
+```text
+log "<message>"
+```
+
+```mainstage
+stage deploy {
+    always_run: true
+
+    steps {
+        log "deploying ${project.name} to ${target}"
+        $ ./deploy.sh
+        log "deploy complete"
+    }
+}
+```
+
+### `fail` — Fail Deliberately
+
+Fails the enclosing stage with the given reason (interpolated), producing a user-facing error pointing at the step. It behaves exactly like any other failed step: a `fail` inside a [`try`](#try--tolerate-a-failing-step) block is swallowed, and a stage's [`on_failure`](#stage-level-on_failure) block fires. Use it to assert an invariant and stop — instead of a sentinel non-zero command like `$ exit 1`.
+
+```text
+fail "<reason>"
+```
+
+```mainstage
+stage release {
+    always_run: true
+
+    steps {
+        if env("VERSION") {
+            $ ./cut-release.sh
+        } else {
+            fail "VERSION must be set to cut a release"
+        }
+    }
+}
+```
 
 ### Test Harness
 
@@ -993,12 +1060,15 @@ pipeline_field  = "input"      ":" expr         ","?
                 | "on_success" "{" step*        "}" ;
 
 (* Steps *)
-step            = exec_step
+step            = let_step
+                | exec_step
                 | copy_step
                 | move_step
                 | mkdir_step
                 | delete_step
                 | write_step
+                | log_step
+                | fail_step
                 | if_step
                 | for_step
                 | try_step
@@ -1013,6 +1083,9 @@ move_step       = "move" expr "to" expr ;
 mkdir_step      = "mkdir" expr ;
 delete_step     = "delete" expr ;
 write_step      = "write" expr "content" ":" string ;
+let_step        = "let" ident "=" expr ";" ;
+log_step        = "log" string ;
+fail_step       = "fail" string ;
 if_step         = "if" condition "{" step* "}" ( "else" "{" step* "}" )? ;
 for_step        = "for" ident "in" expr "{" step* "}" ;
 try_step        = "try" "{" step* "}" ;

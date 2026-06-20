@@ -49,9 +49,14 @@ pub enum StageOutcome {
 /// Each method is handed a `&mut dyn Write` rather than printing directly. Under the
 /// parallel runner, a stage's events — and the captured output of its steps — are
 /// written to a single buffer and flushed atomically, so the output of concurrently
-/// executing stages never interleaves on the terminal. The trait is `Sync` so a single
-/// reporter can be shared across worker threads.
-pub trait Reporter: Sync {
+/// executing stages never interleaves on the terminal. The trait is `Send + Sync` so a
+/// single reporter can be shared across worker threads — by reference for lifecycle events,
+/// and behind an `Arc` (see [`ReporterHandle`](crate::ReporterHandle)) for the `log` step.
+pub trait Reporter: Send + Sync {
+    /// A `log "<msg>"` step emitted an (already-interpolated) progress message. Written to
+    /// the stage's buffer like any other event, so it participates in the per-stage atomic
+    /// flush; a frontend honors `--quiet` here by writing nothing. Default: no-op.
+    fn step_log(&self, _out: &mut dyn Write, _message: &str) {}
     /// A stage is about to execute its steps.
     fn stage_start(&self, _out: &mut dyn Write, _stage: &str) {}
     /// A stage was skipped because its inputs are unchanged and outputs present.

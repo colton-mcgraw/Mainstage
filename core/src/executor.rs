@@ -19,9 +19,23 @@ use crate::{
 // ── Public API ─────────────────────────────────────────────────────────────────
 
 /// Execute a sequence of steps in order, stopping at the first failure.
+///
+/// A `let <ident> = <expr>;` step (Phase 44) binds a name for the steps that *follow* it
+/// within this block: it extends the context lazily so each subsequent step — and any
+/// nested block — resolves the binding. The extended context is local to this call, so the
+/// binding falls out of scope when the block ends (and is rebuilt per iteration of a `for`).
 pub fn execute_steps(steps: &[Step], ctx: &EvalContext) -> Result<()> {
+    // `extended` holds the context once a local `let` has added a binding; until then we run
+    // against the caller's `ctx` directly, cloning only when a block actually binds a local.
+    let mut extended: Option<EvalContext> = None;
     for step in steps {
-        execute_step(step, ctx)?;
+        let cur = extended.as_ref().unwrap_or(ctx);
+        if let Step::Let(l) = step {
+            let value = eval_expr(&l.value, cur)?;
+            extended = Some(cur.with_local_let(l.name.clone(), value));
+        } else {
+            execute_step(step, cur)?;
+        }
     }
     Ok(())
 }
@@ -42,6 +56,12 @@ pub fn execute_step(step: &Step, ctx: &EvalContext) -> Result<()> {
         Step::WithEnv(s) => with_env_step(s, ctx),
         Step::Expect(s) => expect_step(s, ctx),
         Step::Assert(s) => assert_step(s, ctx),
+        Step::Log(s) => log_step(s, ctx),
+        Step::Fail(s) => fail_step(s, ctx),
+        // A local `let` only affects the steps that follow it within its block, which
+        // `execute_steps` threads. Reached only on a direct single-step call: evaluate the
+        // value (so its errors surface) and discard the binding, which has no successors here.
+        Step::Let(s) => eval_expr(&s.value, ctx).map(|_| ()),
     }
 }
 
@@ -191,6 +211,47 @@ fn with_env_step(s: &WithEnvStep, ctx: &EvalContext) -> Result<()> {
     }
     let child = ctx.with_env_overlay(overlay);
     execute_steps(&s.steps, &child)
+}
+
+// ── Diagnostic & control-flow steps (Phase 43) ───────────────────────────────────
+
+/// `log "<msg>"` — print an interpolated progress message. The message is rendered by the
+/// run's reporter (so `--quiet` and styling are honored centrally) and routed to the same
+/// destination as a `$` exec step's output: the per-stage buffer under the parallel runner,
+/// or straight to the terminal on the sequential path. Without a reporter (library use) it
+/// is a no-op, matching the `NoopReporter` default.
+fn log_step(s: &LogStep, ctx: &EvalContext) -> Result<()> {
+    let message = eval_string_expr(&s.message, ctx)?;
+    let Some(handle) = &ctx.reporter else {
+        return Ok(());
+    };
+    let mut line = Vec::new();
+    handle.0.step_log(&mut line, &message);
+    if line.is_empty() {
+        // The reporter suppressed the line (e.g. `--quiet`).
+        return Ok(());
+    }
+    match &ctx.output {
+        // Buffered (parallel) path: append to the stage's sink so the line interleaves with
+        // `$` output in execution order and is flushed atomically with the rest of the stage.
+        Some(sink) => sink.write(&line),
+        // Sequential path: a single worker streams output live, so write straight to stdout.
+        None => {
+            use std::io::Write as _;
+            let mut out = std::io::stdout().lock();
+            let _ = out.write_all(&line);
+            let _ = out.flush();
+        }
+    }
+    Ok(())
+}
+
+/// `fail "<reason>"` — fail the enclosing stage deliberately. The interpolated reason becomes
+/// a user-facing `Error::Eval` carrying the step span, so it behaves like any other failed
+/// step: a `try` block swallows it and a stage's `on_failure` block fires.
+fn fail_step(s: &FailStep, ctx: &EvalContext) -> Result<()> {
+    let reason = eval_string_expr(&s.reason, ctx)?;
+    Err(step_err(reason, &s.span))
 }
 
 // ── Test-harness steps (Phase 39) ────────────────────────────────────────────────
@@ -732,6 +793,7 @@ mod tests {
             tests: None,
             cwd_override: None,
             env_overlay: HashMap::new(),
+            reporter: None,
         }
     }
 
@@ -852,6 +914,7 @@ mod tests {
             tests: None,
             cwd_override: None,
             env_overlay: HashMap::new(),
+            reporter: None,
         };
         let span = span();
         let path_expr = Expr::Ident(IdentExpr { name: "p".to_string(), span: span.clone() });
@@ -1016,6 +1079,7 @@ mod tests {
             tests: None,
             cwd_override: None,
             env_overlay: HashMap::new(),
+            reporter: None,
         };
         let span = span();
         let path_expr = Expr::Ident(IdentExpr { name: "p".to_string(), span: span.clone() });
@@ -1184,6 +1248,187 @@ mod tests {
         // Inner `A` overrides outer; outer `B` is preserved through the merge.
         assert!(out.contains("9 2"), "inner overlay wins and outer keys survive; got: {out}");
 
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // ── log / fail (Phase 43) ──────────────────────────────────────────────────
+
+    /// A reporter that renders `log` messages as `LOG:<msg>` so a test can observe routing.
+    struct EchoReporter;
+    impl crate::runner::Reporter for EchoReporter {
+        fn step_log(&self, out: &mut dyn std::io::Write, message: &str) {
+            let _ = write!(out, "LOG:{message}");
+        }
+    }
+
+    /// A `log "<msg>"` step.
+    fn log(message: &str) -> Step {
+        Step::Log(LogStep {
+            message: StringExpr {
+                parts: vec![StringPart::Literal(message.to_string())],
+                span: span(),
+            },
+            span: span(),
+        })
+    }
+
+    #[test]
+    fn log_routes_through_reporter_into_the_stage_sink() {
+        use crate::eval::{OutputSink, ReporterHandle};
+        let sink = Arc::new(OutputSink::default());
+        let mut ctx = ctx_with(&[("who", "world")]);
+        ctx.output = Some(Arc::clone(&sink));
+        ctx.reporter = Some(ReporterHandle(Arc::new(EchoReporter)));
+
+        // log "hi ${who}" → routed through the reporter, captured in the per-stage buffer.
+        let step = Step::Log(LogStep {
+            message: StringExpr {
+                parts: vec![
+                    StringPart::Literal("hi ".to_string()),
+                    StringPart::Interpolation(Box::new(Expr::Ident(IdentExpr {
+                        name: "who".to_string(),
+                        span: span(),
+                    }))),
+                ],
+                span: span(),
+            },
+            span: span(),
+        });
+        execute_step(&step, &ctx).expect("log step should succeed");
+        assert_eq!(String::from_utf8_lossy(&sink.take()), "LOG:hi world");
+    }
+
+    #[test]
+    fn log_with_no_reporter_is_a_silent_noop() {
+        use crate::eval::OutputSink;
+        let sink = Arc::new(OutputSink::default());
+        let mut ctx = ctx_with(&[]);
+        ctx.output = Some(Arc::clone(&sink));
+        // No reporter installed (library use): the line is suppressed entirely.
+        execute_step(&log("nothing prints"), &ctx).expect("log is a no-op without a reporter");
+        assert!(sink.take().is_empty(), "log writes nothing when no reporter is present");
+    }
+
+    #[test]
+    fn log_suppressed_when_reporter_writes_nothing() {
+        use crate::eval::{OutputSink, ReporterHandle};
+        // A quiet-style reporter renders nothing; the empty render must not reach the sink.
+        struct QuietReporter;
+        impl crate::runner::Reporter for QuietReporter {}
+        let sink = Arc::new(OutputSink::default());
+        let mut ctx = ctx_with(&[]);
+        ctx.output = Some(Arc::clone(&sink));
+        ctx.reporter = Some(ReporterHandle(Arc::new(QuietReporter)));
+        execute_step(&log("hush"), &ctx).expect("log should succeed");
+        assert!(sink.take().is_empty(), "a no-op reporter render produces no output");
+    }
+
+    #[test]
+    fn fail_returns_an_error_with_the_interpolated_reason() {
+        let ctx = ctx_with(&[("kind", "release")]);
+        // fail "bad ${kind}" → an Eval error carrying the interpolated reason.
+        let step = Step::Fail(FailStep {
+            reason: StringExpr {
+                parts: vec![
+                    StringPart::Literal("bad ".to_string()),
+                    StringPart::Interpolation(Box::new(Expr::Ident(IdentExpr {
+                        name: "kind".to_string(),
+                        span: span(),
+                    }))),
+                ],
+                span: span(),
+            },
+            span: span(),
+        });
+        let err = execute_step(&step, &ctx).expect_err("fail must error");
+        match err {
+            Error::Eval(diags) => assert_eq!(diags[0].message, "bad release"),
+            other => panic!("expected an Eval error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn fail_inside_try_does_not_propagate() {
+        let ctx = ctx_with(&[]);
+        let step = Step::Try(TryStep { steps: vec![log_fail("boom")], span: span() });
+        execute_step(&step, &ctx).expect("try swallows a fail step like any other failure");
+    }
+
+    /// A `fail "<reason>"` step.
+    fn log_fail(reason: &str) -> Step {
+        Step::Fail(FailStep {
+            reason: StringExpr {
+                parts: vec![StringPart::Literal(reason.to_string())],
+                span: span(),
+            },
+            span: span(),
+        })
+    }
+
+    // ── block-scoped local `let` (Phase 44) ────────────────────────────────────
+
+    /// A `let <name> = "<text>";` step binding a string literal.
+    fn local_let(name: &str, text: &str) -> Step {
+        Step::Let(LetStep { name: name.to_string(), value: str_expr(text), span: span() })
+    }
+
+    #[test]
+    fn local_let_is_visible_to_following_steps() {
+        // let msg = "phase44"; write "<dir>/out.txt" content: "${msg}"
+        let dir = unique_dir("local_let");
+        let mut ctx = ctx_with(&[]);
+        ctx.script_dir = dir.clone();
+        let target = dir.join("out.txt");
+        let write_using_local = Step::Write(WriteStep {
+            path: str_expr(target.to_str().unwrap()),
+            content: StringExpr {
+                parts: vec![StringPart::Interpolation(Box::new(Expr::Ident(IdentExpr {
+                    name: "msg".to_string(),
+                    span: span(),
+                })))],
+                span: span(),
+            },
+            span: span(),
+        });
+        execute_steps(&[local_let("msg", "phase44"), write_using_local], &ctx)
+            .expect("a following step should see the local binding");
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), "phase44");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn local_let_does_not_leak_out_of_the_block() {
+        // The caller's context is untouched: a local bound inside `execute_steps` is not
+        // visible to a sibling step list run against the same `ctx`.
+        let ctx = ctx_with(&[]);
+        execute_steps(&[local_let("scoped", "x")], &ctx).expect("inner block succeeds");
+        // Evaluating `scoped` against the original ctx must fail — the binding fell out of scope.
+        let ident = Expr::Ident(IdentExpr { name: "scoped".to_string(), span: span() });
+        assert!(eval_expr(&ident, &ctx).is_err(), "the local must not leak into the outer scope");
+    }
+
+    #[test]
+    fn local_let_shadows_an_earlier_local_via_reverse_lookup() {
+        // sema forbids shadowing, but the evaluator's reverse `let` lookup must still resolve
+        // the most-recent binding so a re-bound name reads as its latest value.
+        let dir = unique_dir("local_let_rebind");
+        let mut ctx = ctx_with(&[]);
+        ctx.script_dir = dir.clone();
+        let target = dir.join("v.txt");
+        let write_v = Step::Write(WriteStep {
+            path: str_expr(target.to_str().unwrap()),
+            content: StringExpr {
+                parts: vec![StringPart::Interpolation(Box::new(Expr::Ident(IdentExpr {
+                    name: "v".to_string(),
+                    span: span(),
+                })))],
+                span: span(),
+            },
+            span: span(),
+        });
+        execute_steps(&[local_let("v", "first"), local_let("v", "second"), write_v], &ctx)
+            .expect("rebinding then reading succeeds");
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), "second");
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

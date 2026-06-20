@@ -116,6 +116,43 @@ fn collect_for_vars(steps: &[Step], vars: &mut Vec<String>) {
     }
 }
 
+/// Collect every block-scoped `let` name (Phase 44) declared anywhere in the program,
+/// descending through nested step blocks — the set offered as expression completions.
+fn local_let_names(program: &Program) -> Vec<String> {
+    let mut names = Vec::new();
+    for item in &program.items {
+        match item {
+            Item::Stage(s) => {
+                collect_local_lets(&s.steps, &mut names);
+                collect_local_lets(&s.on_failure, &mut names);
+            }
+            Item::Pipeline(p) => {
+                collect_local_lets(&p.on_failure, &mut names);
+                collect_local_lets(&p.on_success, &mut names);
+            }
+            _ => {}
+        }
+    }
+    names
+}
+
+fn collect_local_lets(steps: &[Step], names: &mut Vec<String>) {
+    for step in steps {
+        match step {
+            Step::Let(l) => names.push(l.name.clone()),
+            Step::For(f) => collect_local_lets(&f.steps, names),
+            Step::If(i) => {
+                collect_local_lets(&i.then_steps, names);
+                collect_local_lets(&i.else_steps, names);
+            }
+            Step::Try(t) => collect_local_lets(&t.steps, names),
+            Step::Workdir(w) => collect_local_lets(&w.steps, names),
+            Step::WithEnv(e) => collect_local_lets(&e.steps, names),
+            _ => {}
+        }
+    }
+}
+
 /// Identifiers valid in an expression position: `let` bindings, stage names,
 /// import aliases, and the `project` / `platform` built-ins.
 fn expression_completions(text: &str, program: Option<&Program>) -> Vec<CompletionItem> {
@@ -131,6 +168,11 @@ fn expression_completions(text: &str, program: Option<&Program>) -> Vec<Completi
         }
         if !idx.project_fields.is_empty() {
             items.push(simple_item("project", CompletionItemKind::STRUCT));
+        }
+        // Block-scoped `let` bindings (Phase 44). Offered as candidates wherever the cursor
+        // sits in a step block; precise per-position scoping is left to the user.
+        for name in local_let_names(program) {
+            items.push(simple_item(&name, CompletionItemKind::VARIABLE));
         }
     }
 

@@ -12,6 +12,7 @@ use crate::{
     ast::*,
     error::{Diagnostic, Error, Result, Span},
     modules::{self, ModuleRegistry},
+    runner::Reporter,
 };
 
 // ── Value types ───────────────────────────────────────────────────────────────
@@ -105,6 +106,24 @@ impl OutputSink {
     /// Drain and return everything captured so far.
     pub fn take(&self) -> Vec<u8> {
         std::mem::take(&mut self.buf.lock().unwrap())
+    }
+}
+
+// ── Reporter handle (Phase 43) ────────────────────────────────────────────────────
+
+/// A cheaply-clonable handle to the run's [`Reporter`], carried by the [`EvalContext`]
+/// so the `log` step can route its message through the reporter — honoring `--quiet` and
+/// the per-stage buffered output — exactly as the runner's own lifecycle events do.
+///
+/// Installed by the front end (the CLI) onto the base context before a run; absent for
+/// library use, in which case `log` steps render nothing. Wraps the trait object so the
+/// derived `Debug` of [`EvalContext`] keeps working (a `dyn Reporter` is not `Debug`).
+#[derive(Clone)]
+pub struct ReporterHandle(pub Arc<dyn Reporter>);
+
+impl std::fmt::Debug for ReporterHandle {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("ReporterHandle(..)")
     }
 }
 
@@ -218,6 +237,10 @@ pub struct EvalContext {
     /// enclosing `with_env { … }` block (Phase 42). Empty outside such a block; nested
     /// blocks merge with inner keys winning.
     pub env_overlay: HashMap<String, String>,
+    /// Optional handle to the run's reporter (Phase 43). When `Some`, a `log` step renders
+    /// its message through `Reporter::step_log` and writes it to the per-stage output sink
+    /// (or the terminal in the sequential path). `None` (library use) makes `log` a no-op.
+    pub reporter: Option<ReporterHandle>,
 }
 
 impl EvalContext {
@@ -299,6 +322,20 @@ impl EvalContext {
         child
     }
 
+    /// Return a child context with the block-scoped binding `name = value` added (Phase 44).
+    /// The binding joins the `let` environment so subsequent steps in the block resolve it;
+    /// because the child is a fresh clone, the binding falls out of scope when the block ends
+    /// (and is re-evaluated per iteration inside a `for` loop). Preserves the stage and loop
+    /// bindings already in scope.
+    pub fn with_local_let(&self, name: String, value: Value) -> Self {
+        let mut child = self.clone_base();
+        child.stage_inputs = self.stage_inputs.clone();
+        child.stage_outputs = self.stage_outputs.clone();
+        child.for_vars = self.for_vars.clone();
+        child.let_values.push((name, value));
+        child
+    }
+
     /// Return a context where `failed_stage` resolves to `stage_name` (for pipeline on_failure).
     pub fn with_failed_stage(&self, stage_name: String) -> Self {
         let mut child = self.clone_base();
@@ -335,7 +372,21 @@ impl EvalContext {
             // The test recorder is stage-scoped; preserve it so a `for` loop's per-iteration
             // context clones still tally their `expect` / `assert` outcomes.
             tests: self.tests.clone(),
+            // The reporter handle is run-scoped: carry it across every context clone so a
+            // `log` step deep inside a stage still routes through the run's reporter.
+            reporter: self.reporter.clone(),
         }
+    }
+
+    /// Return a copy of this context with `reporter` installed, so its `log` steps route
+    /// through the run's reporter. Used by the front end to attach the reporter to the base
+    /// context before a run; the handle then propagates to every stage / loop context clone.
+    pub fn with_reporter(&self, reporter: ReporterHandle) -> Self {
+        let mut child = self.clone_base();
+        child.stage_inputs = self.stage_inputs.clone();
+        child.stage_outputs = self.stage_outputs.clone();
+        child.reporter = Some(reporter);
+        child
     }
 }
 
@@ -388,6 +439,7 @@ pub fn eval_program_with(
         tests: None,
         cwd_override: None,
         env_overlay: HashMap::new(),
+        reporter: None,
     };
     let mut errors: Vec<Diagnostic> = Vec::new();
 
@@ -752,6 +804,7 @@ mod tests {
             tests: None,
             cwd_override: None,
             env_overlay: HashMap::new(),
+            reporter: None,
         }
     }
 

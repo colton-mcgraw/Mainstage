@@ -614,3 +614,181 @@ fn mixed_inputs_and_depends_on_cycle_errors() {
     );
     assert!(has_msg(&diags, "dependency cycle"));
 }
+
+// ── log / fail steps (Phase 43) ─────────────────────────────────────────────────
+
+#[test]
+fn log_and_fail_resolve_interpolated_names() {
+    // The `${…}` interpolation in a `log` / `fail` message resolves like any expression.
+    analyze_ok(
+        r#"
+        let name = "demo";
+        stage s {
+            steps {
+                log "building ${name}"
+                fail "cannot build ${name}"
+            }
+        }
+        "#,
+    );
+}
+
+#[test]
+fn log_with_undefined_interpolation_errors() {
+    let diags = analyze_err(
+        r#"
+        stage s {
+            steps {
+                log "value is ${missing}"
+            }
+        }
+        "#,
+    );
+    assert!(has_msg(&diags, "undefined name 'missing'"));
+}
+
+#[test]
+fn fail_with_undefined_interpolation_errors() {
+    let diags = analyze_err(
+        r#"
+        stage s {
+            steps {
+                fail "bad ${missing}"
+            }
+        }
+        "#,
+    );
+    assert!(has_msg(&diags, "undefined name 'missing'"));
+}
+
+// ── Block-scoped local `let` (Phase 44) ─────────────────────────────────────────
+
+#[test]
+fn local_let_is_visible_to_following_steps() {
+    analyze_ok(
+        r#"
+        let base = "x";
+        stage s {
+            steps {
+                let derived = "${base}-suffix";
+                log "${derived}"
+                if env("CI") {
+                    log "still in scope: ${derived}"
+                }
+            }
+        }
+        "#,
+    );
+}
+
+#[test]
+fn local_let_is_per_iteration_in_a_for_loop() {
+    analyze_ok(
+        r#"
+        stage s {
+            steps {
+                for f in glob("*.rs") {
+                    let out = "obj/${f.stem}.o";
+                    write out content: "x"
+                }
+            }
+        }
+        "#,
+    );
+}
+
+#[test]
+fn local_let_out_of_scope_after_its_block_errors() {
+    // A local declared inside an `if` block is not visible after the block ends.
+    let diags = analyze_err(
+        r#"
+        stage s {
+            steps {
+                if env("CI") {
+                    let inner = "x";
+                }
+                log "${inner}"
+            }
+        }
+        "#,
+    );
+    assert!(has_msg(&diags, "undefined name 'inner'"));
+}
+
+#[test]
+fn local_let_forward_reference_errors() {
+    // Referencing a local before it is declared in the same block is undefined.
+    let diags = analyze_err(
+        r#"
+        stage s {
+            steps {
+                log "${later}"
+                let later = "x";
+            }
+        }
+        "#,
+    );
+    assert!(has_msg(&diags, "undefined name 'later'"));
+}
+
+#[test]
+fn local_let_shadowing_top_level_errors() {
+    let diags = analyze_err(
+        r#"
+        let x = "1";
+        stage s {
+            steps {
+                let x = "2";
+            }
+        }
+        "#,
+    );
+    assert!(has_msg(&diags, "shadows a top-level `let`"));
+}
+
+#[test]
+fn local_let_shadowing_outer_block_local_errors() {
+    let diags = analyze_err(
+        r#"
+        stage s {
+            steps {
+                let x = "1";
+                if env("CI") {
+                    let x = "2";
+                }
+            }
+        }
+        "#,
+    );
+    assert!(has_msg(&diags, "shadows an outer block-scoped binding"));
+}
+
+#[test]
+fn local_let_shadowing_for_var_errors() {
+    let diags = analyze_err(
+        r#"
+        stage s {
+            steps {
+                for f in glob("*") {
+                    let f = "x";
+                }
+            }
+        }
+        "#,
+    );
+    assert!(has_msg(&diags, "shadows the enclosing `for`-loop variable"));
+}
+
+#[test]
+fn local_let_with_undefined_value_errors() {
+    let diags = analyze_err(
+        r#"
+        stage s {
+            steps {
+                let v = missing;
+            }
+        }
+        "#,
+    );
+    assert!(has_msg(&diags, "undefined name 'missing'"));
+}

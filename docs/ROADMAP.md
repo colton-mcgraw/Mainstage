@@ -641,15 +641,15 @@ common remaining `sh -c "cd … && …"` and `FOO=bar cmd` patterns become nativ
 Make printing a message and failing deliberately first-class. Output: scripts emit progress
 and assert invariants without `$ echo` or a sentinel non-zero command.
 
-- [ ] `log "<msg>"` step (interpolated) routed through a new `Reporter` method (default no-op
+- [x] `log "<msg>"` step (interpolated) routed through a new `Reporter` method (default no-op
       body so `NoopReporter` / test reporters keep compiling), honoring `--quiet` and buffered
       per-stage output
-- [ ] `fail "<reason>"` step that fails the enclosing stage with a user-facing `Error::Eval`
+- [x] `fail "<reason>"` step that fails the enclosing stage with a user-facing `Error::Eval`
       diagnostic carrying the step span; interacts with `try` (swallowed) and `on_failure`
       (fires) exactly like a failed command
-- [ ] Grammar / AST / parser / `sema` (interpolation resolution) / `eval` wiring; `format.rs`
+- [x] Grammar / AST / parser / `sema` (interpolation resolution) / `eval` wiring; `format.rs`
       and LSP `walk_steps` arms
-- [ ] Docs and tests: `log` output under `--quiet` vs default, `fail` inside `if`, and `fail`
+- [x] Docs and tests: `log` output under `--quiet` vs default, `fail` inside `if`, and `fail`
       inside `try` not propagating
 
 ---
@@ -659,14 +659,14 @@ and assert invariants without `$ echo` or a sentinel non-zero command.
 Allow `let` inside step blocks so derived values are named once. Output: multi-path stages and
 `for` loop bodies stop repeating interpolated expressions.
 
-- [ ] Permit `let <ident> = <expr>;` as a step; scope the binding to the remainder of its
+- [x] Permit `let <ident> = <expr>;` as a step; scope the binding to the remainder of its
       enclosing block (including per-iteration inside `for`)
-- [ ] `sema.rs`: extend name resolution into step scopes with the top-level forward-reference
+- [x] `sema.rs`: extend name resolution into step scopes with the top-level forward-reference
       rule; report shadowing of an outer binding as a semantic error with both spans
-- [ ] `eval.rs` / `executor.rs`: maintain a scoped binding environment while executing a block;
+- [x] `eval.rs` / `executor.rs`: maintain a scoped binding environment while executing a block;
       ensure `EvalContext` field additions update `eval_program_with`, `clone_base`, and the
       test helpers
-- [ ] `format.rs` / LSP (completion of locals in scope, go-to-definition) arms; tests for
+- [x] `format.rs` / LSP (completion of locals in scope, go-to-definition) arms; tests for
       scoping, shadowing errors, and a `for`-loop-local binding
 
 ---
