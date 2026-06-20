@@ -5,7 +5,7 @@
 
 use chrono::{DateTime, Local};
 use std::collections::HashMap;
-use std::io::Write;
+use std::io::{IsTerminal, Write};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -130,6 +130,17 @@ pub fn setup(cli: Command) -> Command {
         .subcommand(
             Command::new("watch")
                 .about("Run the pipeline, then re-run it whenever its inputs change")
+                .arg(
+                    Arg::new("name")
+                        .help("Pipeline name to run (defaults to the default pipeline)"),
+                )
+                .arg(file_arg()),
+        )
+        .subcommand(
+            Command::new("ui")
+                .about(
+                    "Run a pipeline in a live terminal UI (status board with per-stage progress)",
+                )
                 .arg(
                     Arg::new("name")
                         .help("Pipeline name to run (defaults to the default pipeline)"),
@@ -334,6 +345,10 @@ pub fn dispatch(matches: &clap::ArgMatches) -> i32 {
         Some(("watch", sub)) => {
             let name = sub.get_one::<String>("name").map(String::as_str);
             cmd_watch(file_of(sub), name, flags, jobs, verbosity, &overrides)
+        }
+        Some(("ui", sub)) => {
+            let name = sub.get_one::<String>("name").map(String::as_str);
+            cmd_ui(file_of(sub), name, flags, jobs, verbosity, &overrides)
         }
         Some(("list", sub)) => cmd_list(file_of(sub), flags, sub.get_flag("describe"), &overrides),
         Some(("params", sub)) => cmd_params(file_of(sub), flags, &overrides),
@@ -544,6 +559,40 @@ fn run_prepared(
         // the per-stage reporter never sees.
         Err(e) => fail(e),
     }
+}
+
+// ── ui (live HUD) ──────────────────────────────────────────────────────────────────
+
+/// Run a pipeline under the live terminal HUD. Falls back to a normal run when stdout is
+/// not a terminal (piped output / CI), so the UI never writes escape codes into a file.
+fn cmd_ui(
+    file: &str,
+    pipeline: Option<&str>,
+    perms: Permissions,
+    jobs: Option<usize>,
+    verbosity: Verbosity,
+    overrides: &HashMap<String, String>,
+) -> i32 {
+    let Some((program, analysis, ctx)) = prepare(file, perms, overrides) else {
+        return 1;
+    };
+
+    // One cancellation token, also driven by Ctrl-C / SIGTERM. In the HUD's raw mode the
+    // signal arrives as a key event (handled there too); this covers the fallback path.
+    let cancel = CancelToken::new();
+    {
+        let cancel = cancel.clone();
+        let _ = ctrlc::set_handler(move || cancel.cancel());
+    }
+
+    if !std::io::stdout().is_terminal() {
+        // Not a TTY: render the ordinary streaming output instead of a HUD.
+        return run_prepared(
+            &program, pipeline, &ctx, &analysis, jobs, verbosity, &cancel, false, false,
+        );
+    }
+
+    crate::ui::run_hud(&program, pipeline, &ctx, &analysis, jobs, &cancel)
 }
 
 // ── check-reproducible (Phase 53) ─────────────────────────────────────────────────
@@ -1538,6 +1587,12 @@ fn prepare(
 /// Directory containing the script — the root for globs and the cache.
 fn script_dir(file: &str) -> &Path {
     Path::new(file).parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or(Path::new("."))
+}
+
+/// Render a core error to stderr and return the failure exit code. Crate-visible so the UI
+/// module can report a pre-run error before it takes over the terminal.
+pub(crate) fn report_error(e: mainstage_core::Error) -> i32 {
+    fail(e)
 }
 
 /// Render a core error to stderr — with a source snippet and caret underline when the

@@ -19,3 +19,6 @@ console = "0.16.1"
 chrono = "0.4.24"
 # `termination` extends the handler to SIGTERM / SIGHUP, not just SIGINT (Ctrl-C).
 ctrlc = { version = "3.5.2", features = ["termination"] }
+# Live-run HUD (`mainstage ui`): a terminal UI rendered in an inline viewport.
+# crossterm is used via ratatui's re-export (`ratatui::crossterm`) to avoid version skew.
+ratatui = "0.29"

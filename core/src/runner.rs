@@ -109,6 +109,24 @@ pub trait Reporter: Send + Sync {
         _failed_stage: Option<&str>,
     ) {
     }
+
+    /// Flush a fully-rendered output block (a stage's atomic buffer, or a single event).
+    ///
+    /// The default writes it to stdout under a lock, so concurrent stages never interleave —
+    /// the behavior every text frontend wants. A frontend that owns the screen (e.g. a TUI)
+    /// overrides this to capture the bytes into its own scrollback instead of letting them
+    /// corrupt the display. Called by the runner for every block it would otherwise print.
+    fn flush_block(&self, bytes: &[u8]) {
+        flush_to_stdout(bytes);
+    }
+
+    /// Whether the runner should buffer and atomically flush each stage's output even when
+    /// only one worker is active. Text frontends leave this `false` (a single worker streams
+    /// live); a screen-owning frontend returns `true` so step output is captured (via
+    /// [`flush_block`](Reporter::flush_block)) rather than inherited onto the terminal.
+    fn wants_buffered(&self) -> bool {
+        false
+    }
 }
 
 /// A [`Reporter`] that does nothing — the default used by [`run_pipeline`].
@@ -240,7 +258,7 @@ pub fn run_pipeline_cancellable(
     // Buffer and atomically flush per-stage output only when stages can actually run
     // concurrently; a single worker streams output live, preserving the sequential UX.
     let workers = jobs.max(1).min(sorted.len().max(1));
-    let buffered = workers > 1;
+    let buffered = workers > 1 || reporter.wants_buffered();
 
     let outcome = schedule(
         program,
@@ -1361,7 +1379,7 @@ fn run_one_stage(
         r.stage_finished(out, name, outcome, elapsed)
     });
 
-    flush_to_stdout(&buf);
+    reporter.flush_block(&buf);
     run
 }
 
@@ -1382,14 +1400,16 @@ fn write_event(
     }
 }
 
-/// Render a single reporter event and flush it to stdout atomically.
+/// Render a single reporter event and hand it to the reporter's [`Reporter::flush_block`]
+/// (stdout by default; a TUI captures it instead).
 fn emit(reporter: &dyn Reporter, f: impl FnOnce(&dyn Reporter, &mut dyn Write)) {
     let mut tmp = Vec::new();
     f(reporter, &mut tmp);
-    flush_to_stdout(&tmp);
+    reporter.flush_block(&tmp);
 }
 
 /// Write a block to stdout under the stdout lock so concurrent stages never interleave.
+/// The default body of [`Reporter::flush_block`].
 fn flush_to_stdout(bytes: &[u8]) {
     if bytes.is_empty() {
         return;

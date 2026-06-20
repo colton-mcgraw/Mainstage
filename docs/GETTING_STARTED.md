@@ -77,6 +77,22 @@ cat dist/hello.txt        # -> Hello from hello v1.0.0!
 
 This is the [`examples/hello`](../examples/hello/) project — copy it and tinker.
 
+### A live view of the run
+
+For an at-a-glance view of a build as it happens, run it under the terminal UI:
+
+```sh
+mainstage ui              # run the default pipeline in a live status board
+mainstage ui release      # or a named pipeline
+```
+
+It draws a per-stage status board (spinners, timings, a running `done` count, and a
+tail of recent output) in place while the pipeline runs, then collapses to a clean
+summary — including the critical path — when it finishes. Press `q` (or Ctrl-C) to
+cancel an in-flight run. When output is piped or redirected (no terminal), `ui`
+automatically falls back to the ordinary streaming output, so it's safe in scripts and
+CI.
+
 ---
 
 ## 3. Stages, inputs & dependencies
