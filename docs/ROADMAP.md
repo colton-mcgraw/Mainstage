@@ -676,11 +676,11 @@ Allow `let` inside step blocks so derived values are named once. Output: multi-p
 Round out the Phase 39 test harness. Output: smoke tests can assert the *absence* of a marker
 and match on prefixes/suffixes/patterns.
 
-- [ ] Extend `match_op` with `not_contains`, `starts_with`, `ends_with`, and `matches`
+- [x] Extend `match_op` with `not_contains`, `starts_with`, `ends_with`, and `matches`
       (anchored glob-style; reuse an existing matcher rather than adding a regex dependency)
-- [ ] Wire through `expect_output` and `assert_step` in AST / parser / `sema` / `executor`
-- [ ] `format.rs` / LSP arms; docs in `docs/GRAMMAR.md` / `docs/MODULES.md`
-- [ ] Tests: each matcher passing and failing, plus a boot-smoke example asserting an error
+- [x] Wire through `expect_output` and `assert_step` in AST / parser / `sema` / `executor`
+- [x] `format.rs` / LSP arms; docs in `docs/GRAMMAR.md` / `docs/MODULES.md`
+- [x] Tests: each matcher passing and failing, plus a boot-smoke example asserting an error
       marker is absent from captured output
 
 ---
@@ -690,13 +690,13 @@ and match on prefixes/suffixes/patterns.
 Factor a shared sequence of steps out of unrelated stages. Output: common setup/teardown step
 runs are authored once and inlined, complementing `matrix` (which parameterizes over values).
 
-- [ ] A top-level `template <ident> { <step>* }` item and a `use <ident>;` step that inlines
+- [x] A top-level `template <ident> { <step>* }` item and a `use <ident>;` step that inlines
       it, lowered *before* semantic analysis so the graph, change detection, and scheduler are
       unchanged (mirrors the Phase 37 `matrix` expansion discipline)
-- [ ] Validate template names (uniqueness, referenced template exists, no recursive `use`
+- [x] Validate template names (uniqueness, referenced template exists, no recursive `use`
       cycles) with source spans
-- [ ] Surface templates in `format.rs`, LSP document symbols, and go-to-definition for `use`
-- [ ] Docs (`docs/GRAMMAR.md`) and tests: inlining, a cycle error, and an example `.ms`
+- [x] Surface templates in `format.rs`, LSP document symbols, and go-to-definition for `use`
+- [x] Docs (`docs/GRAMMAR.md`) and tests: inlining, a cycle error, and an example `.ms`
       sharing a template across two stages
 
 ---

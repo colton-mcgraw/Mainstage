@@ -286,6 +286,7 @@ fn to_document_symbol(symbol: &navigation::Symbol) -> DocumentSymbol {
         navigation::SymbolKind::Let => SymbolKind::VARIABLE,
         navigation::SymbolKind::Stage => SymbolKind::CLASS,
         navigation::SymbolKind::Pipeline => SymbolKind::FUNCTION,
+        navigation::SymbolKind::Template => SymbolKind::INTERFACE,
     };
     #[allow(deprecated)] // `deprecated` field is mandatory but unused.
     DocumentSymbol {

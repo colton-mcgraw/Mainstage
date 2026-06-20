@@ -17,7 +17,7 @@ default pipeline check {
     stages: [unit]
 }
 
-// All assertions here hold, so the stage reports "tests: 3 passed".
+// All assertions here hold, so the stage reports "tests: 6 passed".
 stage unit {
     test: true
 
@@ -26,5 +26,9 @@ stage unit {
         assert "${project.name}" equals "demo"
         assert "${project.version}" contains "1.2"
         assert "release-${project.name}" equals "release-demo"
+        // Phase 45 matchers: absence, prefix/suffix, and an anchored glob pattern.
+        assert "${project.name}" not_contains "debug"
+        assert "${project.version}" starts_with "1."
+        assert "${project.version}" matches "1.*.0"
     }
 }

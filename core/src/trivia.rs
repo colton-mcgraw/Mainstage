@@ -418,6 +418,7 @@ fn collect_anchors(program: &Program) -> Vec<Span> {
                 collect_step_anchors(&p.on_failure, &mut anchors);
                 collect_step_anchors(&p.on_success, &mut anchors);
             }
+            Item::Template(t) => collect_step_anchors(&t.steps, &mut anchors),
             Item::Import(_) | Item::Let(_) => {}
         }
     }

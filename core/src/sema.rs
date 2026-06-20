@@ -151,6 +151,8 @@ impl Analyzer {
                         }
                     }
                 }
+                // Templates are inlined and removed before analysis (Phase 46).
+                Item::Template(_) => {}
             }
         }
 
@@ -186,6 +188,7 @@ impl Analyzer {
                 }
                 Item::Stage(b) => self.resolve_stage(b, scope),
                 Item::Pipeline(b) => self.resolve_pipeline(b, scope),
+                Item::Template(_) => {}
             }
         }
     }
@@ -409,6 +412,8 @@ impl Analyzer {
             }
             Step::Log(s) => self.resolve_string_parts(&s.message.parts, scope, ctx),
             Step::Fail(s) => self.resolve_string_parts(&s.reason.parts, scope, ctx),
+            // `use` is inlined and removed before analysis (Phase 46).
+            Step::Use(_) => {}
         }
     }
 

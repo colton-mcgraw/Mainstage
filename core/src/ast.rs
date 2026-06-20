@@ -19,6 +19,11 @@ pub enum Item {
     Project(ProjectBlock),
     Stage(StageBlock),
     Pipeline(PipelineBlock),
+    /// `template <name> { <step>* }` — a named, reusable sequence of steps (Phase 46).
+    /// A pure macro: the lowering pass ([`crate::templates::expand`]) inlines every
+    /// `use <name>;` step with the template's steps and drops the template item *before*
+    /// semantic analysis, so the graph, change detection, and scheduler never see it.
+    Template(TemplateBlock),
 }
 
 impl Item {
@@ -30,6 +35,7 @@ impl Item {
             Item::Project(b) => &b.span,
             Item::Stage(b) => &b.span,
             Item::Pipeline(b) => &b.span,
+            Item::Template(b) => &b.span,
         }
     }
 }
@@ -169,6 +175,20 @@ pub struct PipelineBlock {
     pub on_failure: Vec<Step>,
     /// Steps executed when all stages in this pipeline succeed.
     pub on_success: Vec<Step>,
+    pub span: Span,
+}
+
+// ── Template ──────────────────────────────────────────────────────────────────
+
+/// A `template <name> { <step>* }` block — a named, reusable sequence of steps
+/// (Phase 46). It is inlined wherever a `use <name>;` step appears and then removed,
+/// complementing `matrix` (which parameterizes a stage over values) by factoring a
+/// shared run of steps out of unrelated stages. Templates may `use` other templates;
+/// a recursive cycle is a semantic error.
+#[derive(Debug, Clone)]
+pub struct TemplateBlock {
+    pub name: String,
+    pub steps: Vec<Step>,
     pub span: Span,
 }
 
@@ -446,6 +466,9 @@ pub enum Step {
     /// `let <ident> = <expr>;` — a block-scoped binding visible to the steps that follow
     /// it within the same block (Phase 44).
     Let(LetStep),
+    /// `use <ident>;` — inline the named `template`'s steps here (Phase 46). Lowered away
+    /// (replaced by the template's steps) before semantic analysis, so it never executes.
+    Use(UseStep),
 }
 
 impl Step {
@@ -468,6 +491,7 @@ impl Step {
             Step::Log(s) => &s.span,
             Step::Fail(s) => &s.span,
             Step::Let(s) => &s.span,
+            Step::Use(s) => &s.span,
         }
     }
 }
@@ -634,6 +658,15 @@ pub struct FailStep {
     pub span: Span,
 }
 
+/// `use <ident>;` — inline the named [`TemplateBlock`]'s steps at this position (Phase 46).
+/// Carries only the referenced template name and its span (for unknown-template and cycle
+/// diagnostics). The lowering pass replaces it with the template's steps before analysis.
+#[derive(Debug, Clone)]
+pub struct UseStep {
+    pub name: String,
+    pub span: Span,
+}
+
 /// `let <ident> = <expr>;` — a block-scoped local binding (Phase 44). It names a derived
 /// value once for the steps that follow it in the same block. Inside a `for` loop body the
 /// binding is re-evaluated per iteration. Shadowing an outer binding is a semantic error.
@@ -651,4 +684,14 @@ pub enum MatchOp {
     Contains,
     /// The actual value equals the expected value (compared after trimming).
     Equals,
+    /// The actual value does **not** contain the expected value as a substring — the
+    /// negation of [`MatchOp::Contains`], for asserting a marker's *absence*.
+    NotContains,
+    /// The actual value begins with the expected value as a prefix.
+    StartsWith,
+    /// The actual value ends with the expected value as a suffix.
+    EndsWith,
+    /// The actual value matches the expected value as an anchored glob pattern (`*`, `?`,
+    /// `[…]` — the whole value must match, like `glob`'s path patterns). No regex dependency.
+    Matches,
 }

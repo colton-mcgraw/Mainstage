@@ -39,6 +39,12 @@ pub struct FieldInfo {
     pub value_span: Span,
 }
 
+/// A `template <name> { … }` declaration (Phase 46).
+pub struct TemplateInfo {
+    pub name: String,
+    pub span: Span,
+}
+
 /// The declarations extracted from a single program.
 #[derive(Default)]
 pub struct DocumentIndex {
@@ -46,6 +52,7 @@ pub struct DocumentIndex {
     pub lets: Vec<LetInfo>,
     pub stages: Vec<StageInfo>,
     pub project_fields: Vec<FieldInfo>,
+    pub templates: Vec<TemplateInfo>,
 }
 
 impl DocumentIndex {
@@ -80,10 +87,18 @@ impl DocumentIndex {
                         });
                     }
                 }
+                Item::Template(t) => {
+                    idx.templates.push(TemplateInfo { name: t.name.clone(), span: t.span.clone() })
+                }
                 Item::Pipeline(_) => {}
             }
         }
         idx
+    }
+
+    /// Whether `name` is a declared template.
+    pub fn is_template(&self, name: &str) -> bool {
+        self.templates.iter().any(|t| t.name == name)
     }
 
     /// The module name bound to `alias`, if any.

@@ -846,6 +846,16 @@ fn prepare(file: &str, flag_perms: Permissions) -> Option<(Program, AnalysisResu
             return None;
         }
     };
+    // Inline `use` steps with their `template` bodies and drop the templates before any
+    // later pass, so every stage sees ordinary steps (Phase 46). Runs before matrix
+    // expansion so generated stage variants inherit the already-inlined steps.
+    let program = match mainstage_core::expand_templates(&program) {
+        Ok(p) => p,
+        Err(e) => {
+            fail(e);
+            return None;
+        }
+    };
     // Lower `matrix` stages into their concrete variants before analysis, evaluation, and
     // scheduling, so every later stage sees ordinary stages (Phase 37).
     let program = match mainstage_core::expand_matrix(&program) {

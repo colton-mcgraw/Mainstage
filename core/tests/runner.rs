@@ -11,7 +11,7 @@ use std::sync::Mutex;
 
 use mainstage_core::{
     AssertionResult, CancelToken, NoopReporter, PlanStatus, Reporter, Source, analyze,
-    eval_program, parse, plan_pipeline, run_pipeline, run_pipeline_cancellable,
+    eval_program, expand_templates, parse, plan_pipeline, run_pipeline, run_pipeline_cancellable,
     run_pipeline_reported_jobs,
 };
 
@@ -988,6 +988,24 @@ fn committed_testing_example_runs_green() {
     assert_eq!(reporter.stages.lock().unwrap()[0].2, 0, "no assertion in the example should fail");
 }
 
+#[test]
+fn committed_templates_example_runs_green() {
+    // The repo-root `tests/templates.ms` example must lower (`use` inlined), analyze,
+    // evaluate, and run — exercising a template shared across two stages (Phase 46).
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap().join("tests");
+    let source = Source::from_file(dir.join("templates.ms")).expect("example file should exist");
+    let program = expand_templates(&parse(&source).expect("example should parse"))
+        .expect("example templates should expand");
+    // No `template` items or `use` steps survive lowering.
+    assert!(
+        !program.items.iter().any(|i| matches!(i, mainstage_core::ast::Item::Template(_))),
+        "templates are dropped after inlining"
+    );
+    let analysis = analyze(&program).expect("example should analyze");
+    let ctx = eval_program(&program, &dir).expect("example should evaluate");
+    run_pipeline(&program, None, &ctx, &analysis).expect("the templates example should run green");
+}
+
 // `expect` exercises real commands; gate it on unix where `true` / `false` / `echo` exist.
 #[cfg(unix)]
 #[test]
@@ -1057,6 +1075,85 @@ fn expect_output_contains_stops_early_on_timeout() {
     result.expect("the marker appears, so the expectation passes");
     assert_eq!(cap.stages.lock().unwrap()[0].1, 1, "the output-contains check passed");
     assert!(start.elapsed().as_secs() < 25, "early-stop must not wait out the 30s sleep");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn assert_richer_matchers_pass_and_fail() {
+    // Phase 45: not_contains / starts_with / ends_with / matches over `assert`. The first
+    // four hold; the last two deliberately fail, so the stage tallies 4 passed, 2 failed.
+    let dir = unique_dir("assert_matchers");
+    let src = r#"
+        project { name: "demo" version: "1.2.0" }
+        default pipeline check { stages: [unit] }
+        stage unit {
+            test: true
+            steps {
+                assert "${project.version}" starts_with "1."
+                assert "${project.version}" ends_with ".0"
+                assert "${project.name}" not_contains "debug"
+                assert "${project.version}" matches "1.*.0"
+                assert "${project.version}" ends_with ".9"
+                assert "${project.name}" matches "demo-*"
+            }
+        }
+    "#;
+
+    let (result, cap) = run_with_capture(src, &dir);
+    assert!(result.is_err(), "two assertions fail, so the pipeline fails");
+    let stages = cap.stages.lock().unwrap();
+    assert_eq!(stages[0].1, 4, "four matchers held");
+    assert_eq!(stages[0].2, 2, "the ends_with and matches mismatches failed");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+// A boot-smoke that asserts an error marker is *absent* from captured output, plus the
+// `starts_with` / `ends_with` / `matches` output matchers. Gated on unix for `echo`.
+#[cfg(unix)]
+#[test]
+fn expect_output_richer_matchers() {
+    let dir = unique_dir("expect_matchers");
+    let src = r#"
+        default pipeline check { stages: [unit] }
+        stage unit {
+            test: true
+            steps {
+                // Boot smoke: the output must NOT contain an error marker.
+                expect output not_contains "ERROR" $ echo booting... ready
+                expect output starts_with "booting" $ echo booting... ready
+                expect output ends_with "ready" $ echo booting... ready
+                expect output matches "booting*ready" $ echo booting... ready
+            }
+        }
+    "#;
+
+    let (result, cap) = run_with_capture(src, &dir);
+    result.expect("all richer output expectations should hold");
+    assert_eq!(cap.stages.lock().unwrap()[0], ("unit".to_string(), 4, 0, Vec::new()));
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[cfg(unix)]
+#[test]
+fn expect_output_not_contains_records_failure() {
+    // `not_contains` must fail when the marker IS present (the inverse of `contains`).
+    let dir = unique_dir("expect_not_contains_fail");
+    let src = r#"
+        default pipeline check { stages: [unit] }
+        stage unit {
+            test: true
+            steps {
+                expect output not_contains "ERROR" $ echo fatal ERROR occurred
+            }
+        }
+    "#;
+
+    let (result, cap) = run_with_capture(src, &dir);
+    assert!(result.is_err(), "the marker is present, so not_contains fails");
+    assert_eq!(cap.stages.lock().unwrap()[0].2, 1, "the not_contains check failed");
 
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -1281,4 +1378,69 @@ fn fail_inside_if_fails_only_when_the_branch_runs() {
     run(src, &dir, None).expect("the unselected `fail` branch does not run, so the stage passes");
 
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn template_shared_across_two_stages_runs_in_both() {
+    // Phase 46: a `template` inlined via `use` runs its steps in every stage that uses it.
+    // Each stage writes a stage-specific marker plus the template's shared marker; observing
+    // both shared markers proves the template body executed in both stages.
+    let dir = unique_dir("template_share");
+    let d = dir.display();
+    let src = format!(
+        r#"
+        template stamp {{
+            write "{d}/stamp-${{platform}}.txt" content: "x"
+        }}
+        default pipeline build {{ stages: [a, b] }}
+        stage a {{
+            always_run: true
+            steps {{
+                write "{d}/a.txt" content: "a"
+                use stamp;
+            }}
+        }}
+        stage b {{
+            always_run: true
+            depends_on: [a]
+            steps {{
+                write "{d}/b.txt" content: "b"
+                use stamp;
+            }}
+        }}
+        "#
+    );
+
+    // Drive the full lowering: templates must be expanded before analysis, exactly as the CLI
+    // does in `prepare`.
+    let program = expand_templates(&parse(&Source::from_str("test.ms", &src)).expect("parse"))
+        .expect("template expansion should succeed");
+    let analysis = analyze(&program).expect("analysis should succeed");
+    let ctx = eval_program(&program, &dir).expect("eval should succeed");
+    run_pipeline(&program, None, &ctx, &analysis).expect("pipeline should run green");
+
+    assert!(dir.join("a.txt").exists(), "stage a ran its own step");
+    assert!(dir.join("b.txt").exists(), "stage b ran its own step");
+    // The shared template `write` step ran in both stages (the interpolation resolved in each).
+    assert!(
+        std::fs::read_dir(&dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .any(|e| e.file_name().to_string_lossy().starts_with("stamp-")),
+        "the shared template step ran"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn use_of_undefined_template_is_rejected() {
+    // Lowering reports a `use` of a template that was never declared, with a clear message.
+    let src = r#"
+        default pipeline build { stages: [a] }
+        stage a { steps { use missing; } }
+    "#;
+    let program = parse(&Source::from_str("test.ms", src)).expect("parse");
+    let err = expand_templates(&program).expect_err("an undefined template must be rejected");
+    assert!(format!("{err}").contains("undefined template 'missing'"), "got: {err}");
 }

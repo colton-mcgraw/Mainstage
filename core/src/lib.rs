@@ -12,6 +12,7 @@ pub mod parser;
 pub mod runner;
 pub mod sema;
 pub mod source;
+pub mod templates;
 pub mod trivia;
 
 pub use error::{Diagnostic, Error, Result, Span};
@@ -34,6 +35,7 @@ pub use runner::{
 };
 pub use sema::{AnalysisResult, analyze, analyze_with};
 pub use source::Source;
+pub use templates::expand as expand_templates;
 pub use trivia::{
     Comment, CommentKind, NodeTrivia, SyntaxToken, TokenKind, TriviaMap, attach as attach_trivia,
     comments, lex, render,

@@ -33,6 +33,7 @@ Top-level items are:
 - `project` — project metadata
 - `stage` — a build stage
 - `pipeline` / `default pipeline` — a named entry point
+- `template` — a reusable, named sequence of steps (inlined by `use`)
 
 ---
 
@@ -333,6 +334,41 @@ pipeline release {
     }
 }
 ```
+
+---
+
+### `template`
+
+A `template` declares a **named, reusable sequence of steps**. Wherever a [`use`](#use--inline-a-template) step names it, the template's steps are inlined in place. This factors a shared setup/teardown run out of unrelated stages — authored once, used many times — and complements [`matrix`](#stage) (which parameterizes a stage over *values*; templates parameterize over *steps*).
+
+```mainstage
+template banner {
+    log "── ${project.name} ──"
+    log "building on ${platform}"
+}
+
+stage frontend {
+    steps {
+        use banner;
+        log "compiling frontend"
+    }
+}
+
+stage backend {
+    steps {
+        use banner;
+        log "compiling backend"
+    }
+}
+```
+
+Templates are a pure compile-time mechanism: every `use` is replaced by the template's steps and the `template` items are dropped **before** semantic analysis, so the dependency graph, change detection, and the scheduler never see them (the same "lower before analysis" discipline as `matrix`). A template body may itself contain `use` steps to compose with other templates. Three rules are enforced, each pointing at the offending source:
+
+- **Unique names** — two templates may not share a name.
+- **Defined target** — every `use` must name a declared template.
+- **No cycles** — a template may not `use` itself, directly or transitively.
+
+Because inlining happens in place, a template can include block-scoped [`let`](#let--block-scoped-binding) bindings and reference built-in variables like `${platform}` or the loop variable of an enclosing `for` — they resolve in the context where the template is used, not where it is declared.
 
 ---
 
@@ -690,6 +726,29 @@ stage compile {
 
 Shadowing a name already in scope — a top-level `let`, an enclosing block-scoped `let`, or the enclosing `for`-loop variable — is a semantic error, so every binding reads unambiguously. A local `let` may reference any top-level binding and any local declared earlier in the same scope; referencing one declared later is an "undefined name" error.
 
+### `use` — Inline a Template
+
+Inlines the steps of the named [`template`](#template) at this position. It is replaced by the template's steps before the build runs, so it behaves exactly as if those steps had been written here — including any nested `use`. A `use` whose name does not match a declared template, or that forms a recursive cycle, is a semantic error.
+
+```text
+use <template-name>;
+```
+
+```mainstage
+template restore_cache {
+    $ tar xzf cache.tgz
+}
+
+stage build {
+    steps {
+        use restore_cache;   // expands to: $ tar xzf cache.tgz
+        $ make
+    }
+}
+```
+
+`use` may appear anywhere a step is valid, including inside `if` / `for` / `try` / `workdir` / `with_env` blocks.
+
 ### `try` — Tolerate a Failing Step
 
 Runs a block of steps but does **not** propagate a failure: if a step inside the block fails, the remaining steps in the block are skipped and the stage continues as though the block had succeeded. This is the native, checkable replacement for the `$ sh -c "… || true"` idiom — a best-effort step whose failure is acceptable.
@@ -819,13 +878,17 @@ stage release {
 Runs a command (the greedy `$` exec line, with the usual `${…}` interpolation) and asserts something about how it ran:
 
 ```text
-expect ok                          [timeout <n>] $ <command>   // exits 0
-expect fails                       [timeout <n>] $ <command>   // exits non-zero
-expect output contains "<string>"  [timeout <n>] $ <command>   // combined stdout/stderr contains the string
-expect output equals "<string>"    [timeout <n>] $ <command>   // combined output (trimmed) equals the string
+expect ok                              [timeout <n>] $ <command>   // exits 0
+expect fails                           [timeout <n>] $ <command>   // exits non-zero
+expect output contains "<string>"      [timeout <n>] $ <command>   // combined stdout/stderr contains the string
+expect output not_contains "<string>"  [timeout <n>] $ <command>   // output does NOT contain the string
+expect output equals "<string>"        [timeout <n>] $ <command>   // combined output (trimmed) equals the string
+expect output starts_with "<string>"   [timeout <n>] $ <command>   // trimmed output begins with the string
+expect output ends_with "<string>"     [timeout <n>] $ <command>   // trimmed output ends with the string
+expect output matches "<glob>"         [timeout <n>] $ <command>   // trimmed output matches the anchored glob
 ```
 
-The expected string in an `output` check supports interpolation. The optional `timeout <n>` (seconds) kills the command if it does not finish in time; for `output contains` the command is also stopped **early** as soon as the marker appears, so a long-running boot-smoke process need not run out the full timeout.
+The expected string in an `output` check supports interpolation. The optional `timeout <n>` (seconds) kills the command if it does not finish in time; for `output contains` the command is also stopped **early** as soon as the marker appears, so a long-running boot-smoke process need not run out the full timeout. The `contains` / `not_contains` matchers scan the raw captured output; the "shape" matchers (`equals`, `starts_with`, `ends_with`, `matches`) compare against the output with surrounding whitespace trimmed, so a trailing newline does not defeat them. `matches` is an **anchored glob** (`*`, `?`, `[…]` — the whole value must match, like `glob`'s path patterns); it adds no regex dependency.
 
 ```mainstage
 stage smoke {
@@ -836,17 +899,23 @@ stage smoke {
         expect fails $ ./build/cli --no-such-flag
         // Boot the image, scrape the serial log for a marker, give up after 30s.
         expect output contains "Boot OK" timeout 30 $ qemu-system-x86_64 -kernel build/os.bin -nographic
+        // A boot-smoke that must NOT print an error marker.
+        expect output not_contains "ERROR" timeout 30 $ qemu-system-x86_64 -kernel build/os.bin -nographic
     }
 }
 ```
 
 #### `assert` — Compare Two Values
 
-Compares an evaluated value against an expected string. Both `equals` (exact, after trimming) and `contains` (substring) are available, and the expected value supports interpolation:
+Compares an evaluated value against an expected string. The expected value supports interpolation, and the matcher is one of:
 
 ```text
-assert <expr> equals   "<string>"
-assert <expr> contains "<string>"
+assert <expr> equals       "<string>"   // exact, after trimming
+assert <expr> contains     "<string>"   // substring
+assert <expr> not_contains "<string>"   // not a substring
+assert <expr> starts_with  "<string>"   // prefix
+assert <expr> ends_with    "<string>"   // suffix
+assert <expr> matches      "<glob>"     // anchored glob (`*`, `?`, `[…]`)
 ```
 
 ```mainstage
@@ -855,6 +924,9 @@ stage unit {
     steps {
         assert "${project.name}" equals "demo"
         assert "${project.version}" contains "1.2"
+        assert "${project.version}" starts_with "1."
+        assert "${project.version}" matches "1.*.0"
+        assert "${project.name}" not_contains "debug"
     }
 }
 ```
@@ -1031,7 +1103,8 @@ item            = import_decl
                 | let_decl
                 | project_block
                 | stage_block
-                | pipeline_block ;
+                | pipeline_block
+                | template_block ;
 
 import_decl     = "import" string "as" ident ";" ;
 let_decl        = "let" ident "=" expr ";" ;
@@ -1059,8 +1132,11 @@ pipeline_field  = "input"      ":" expr         ","?
                 | "on_failure" "{" step*        "}"
                 | "on_success" "{" step*        "}" ;
 
+template_block  = "template" ident "{" step* "}" ;
+
 (* Steps *)
 step            = let_step
+                | use_step
                 | exec_step
                 | copy_step
                 | move_step
@@ -1084,6 +1160,7 @@ mkdir_step      = "mkdir" expr ;
 delete_step     = "delete" expr ;
 write_step      = "write" expr "content" ":" string ;
 let_step        = "let" ident "=" expr ";" ;
+use_step        = "use" ident ";" ;
 log_step        = "log" string ;
 fail_step       = "fail" string ;
 if_step         = "if" condition "{" step* "}" ( "else" "{" step* "}" )? ;
@@ -1097,7 +1174,7 @@ expect_check    = "ok"
                 | "fails"
                 | "output" match_op string ;
 assert_step     = "assert" expr match_op string ;
-match_op        = "contains" | "equals" ;
+match_op        = "not_contains" | "starts_with" | "ends_with" | "matches" | "contains" | "equals" ;
 
 (* Expressions *)
 expr            = string

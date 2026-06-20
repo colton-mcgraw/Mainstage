@@ -32,8 +32,35 @@ pub fn definition(text: &str, pos: Position, program: Option<&Program>) -> Optio
         return Some(range);
     }
     let index = DocumentIndex::from_program(program);
+    // A `use <template>;` step navigates to the template's declaration (Phase 46). Resolved
+    // before the general index lookup and only in `use` argument position, so a bare
+    // identifier that merely shares a template's name elsewhere is unaffected.
+    if let Some(range) = use_definition(text, pos, &index) {
+        return Some(range);
+    }
     let target = target_at(text, pos, &index)?;
     decl_range(text, &index, &target)
+}
+
+/// Resolve the cursor to the `template` declaration named by a `use <template>;` step, or
+/// `None` when the cursor is not on a `use` argument that names a declared template.
+fn use_definition(text: &str, pos: Position, index: &DocumentIndex) -> Option<Range> {
+    let offset = offset_at(text, pos);
+    let (start, end) = ident_at(text, offset)?;
+    let word = &text[start..end];
+    if !preceded_by_keyword(text, start, "use") {
+        return None;
+    }
+    let info = index.templates.iter().find(|t| t.name == word)?;
+    name_range(text, &info.span, &info.name)
+}
+
+/// Whether the token immediately before byte offset `at` (skipping inline whitespace) is the
+/// whole keyword `kw` — used to recognize a `use` argument without a full re-parse.
+fn preceded_by_keyword(text: &str, at: usize, kw: &str) -> bool {
+    let before = text[..at].trim_end_matches([' ', '\t']);
+    let Some(stripped) = before.strip_suffix(kw) else { return false };
+    stripped.chars().next_back().is_none_or(|c| !(c.is_alphanumeric() || c == '_'))
 }
 
 /// A block-scoped local `let` declaration and the byte offset at which its scope ends
@@ -192,6 +219,9 @@ pub fn document_symbols(text: &str, program: Option<&Program>) -> Vec<Symbol> {
             // multi-stage build is navigable from the editor's symbol list.
             Item::Stage(s) => (s.name.clone(), SymbolKind::Stage, &s.span, stage_detail(s)),
             Item::Pipeline(p) => (p.name.clone(), SymbolKind::Pipeline, &p.span, None),
+            // A reusable step template (Phase 46) appears in the outline so `use` targets
+            // are discoverable.
+            Item::Template(t) => (t.name.clone(), SymbolKind::Template, &t.span, None),
             Item::Import(_) | Item::Project(_) => continue,
         };
         let full = span_to_range(text, span);
@@ -232,6 +262,7 @@ pub enum SymbolKind {
     Let,
     Stage,
     Pipeline,
+    Template,
 }
 
 // ── Cursor resolution ──────────────────────────────────────────────────────────
@@ -326,6 +357,8 @@ fn collect_occurrences(program: &Program) -> Vec<Occurrence> {
                 walk_steps(&p.on_failure, &mut occ);
                 walk_steps(&p.on_success, &mut occ);
             }
+            // A template's steps may reference navigable symbols in interpolations.
+            Item::Template(t) => walk_steps(&t.steps, &mut occ),
             Item::Import(_) => {}
         }
     }
@@ -463,6 +496,9 @@ fn walk_steps(steps: &[Step], occ: &mut Vec<Occurrence>) {
             }
             // A block-scoped `let`: its value expression may reference navigable symbols.
             Step::Let(s) => walk_expr(&s.value, occ),
+            // `use <template>;` carries only a template name, resolved separately (it is not
+            // a `let`/stage/alias reference, so it is not an occurrence here).
+            Step::Use(_) => {}
             Step::Expect(s) => {
                 // The `$` command keeps its argument as a raw string (not walked); only an
                 // `output` check's expected value carries parsed `${…}` expressions.
@@ -697,6 +733,27 @@ mod tests {
         let name_sym = &symbols[0];
         assert!(matches!(name_sym.kind, SymbolKind::Let));
         assert_eq!(name_sym.selection.start, at(text, "name"));
+    }
+
+    #[test]
+    fn document_symbols_list_templates() {
+        let text = "template setup {\n    $ checkout\n}\n\
+            stage build {\n    steps {\n        use setup;\n    }\n}";
+        let program = parse(text);
+        let symbols = document_symbols(text, Some(&program));
+        let tmpl = symbols.iter().find(|s| s.name == "setup").expect("template symbol");
+        assert!(matches!(tmpl.kind, SymbolKind::Template));
+        assert_eq!(tmpl.selection.start, at(text, "setup"), "selection covers the template name");
+    }
+
+    #[test]
+    fn definition_of_a_use_jumps_to_the_template() {
+        let text = "template setup {\n    $ checkout\n}\n\
+            stage build {\n    steps {\n        use setup;\n    }\n}";
+        let program = parse(text);
+        // Cursor on the `setup` inside `use setup;` (the last occurrence).
+        let def = definition(text, at_last(text, "setup"), Some(&program)).expect("definition");
+        assert_eq!(def.start, at(text, "setup"), "jumps to the `template setup` declaration");
     }
 
     #[test]
