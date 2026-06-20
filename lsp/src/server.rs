@@ -161,9 +161,17 @@ impl LanguageServer for Backend {
     }
 
     async fn initialized(&self, _params: InitializedParams) {
-        self.client.log_message(MessageType::INFO, "mainstage language server initialized").await;
+        // Emit a single startup log message. Two separate awaited `log_message` sends here
+        // deadlock a client that has not yet started draining its socket — which is exactly
+        // the case during `initialize`/`initialized` for the in-process integration harness:
+        // the client-bound channel blocks on the second send before this notification
+        // returns, hanging every test that initializes the server. Folding the version into
+        // one message keeps the information while restoring a single, non-blocking send.
         self.client
-            .log_message(MessageType::INFO, format!("version - {}", env!("CARGO_PKG_VERSION")))
+            .log_message(
+                MessageType::INFO,
+                format!("mainstage language server v{} initialized", env!("CARGO_PKG_VERSION")),
+            )
             .await;
     }
 
