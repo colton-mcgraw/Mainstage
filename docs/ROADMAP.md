@@ -709,3 +709,170 @@ Make the LSP server integration more ergonomic. Output: a VS Code extension that
 - [x] Improved VS Code extension stability when running in VS Code remote containers or WSL, including better error handling and logging.
 
 ---
+
+## Goal 8: Scaling Up — Composition, Configuration, Shared Caching & Introspection
+
+Goals 1–7 made the *language* expressive: a single `.ms` file can already drive a
+sophisticated, parallel, incremental, well-tested build. The gap that remains is not in
+the language — it is in the **tool**. Today a build is one file, on one machine, with an
+opaque graph: there is no way to split a build across a large repository, parameterize it
+from the command line beyond routing everything through `env()`, share built artifacts
+between machines or CI runs, restore outputs after a `clean` or a branch switch, or ask
+the graph *why* a stage ran. Those are exactly the capabilities that separate a competent
+build system (the Bazel / Buck / Nx / Turborepo / Gradle tier) from a nice single-file
+task runner. Goal 8 closes that distance.
+
+It is deliberately **not** a rewrite. Every phase preserves the pass-pipeline discipline
+the codebase already runs on — everything funnels through `cli/src/commands.rs::prepare()`
+(`parse → expand_matrix → expand_templates → analyze_with → eval_program_with`); new
+multi-file and parameter constructs **lower before semantic analysis**, exactly like
+`matrix` (Phase 37) and `template` (Phase 46), so the dependency graph, change detection,
+and the parallel scheduler keep seeing one flat, ordinary `Program`; exhaustive matches in
+`format.rs` / `navigation.rs` / `ast.rs::span()` continue to turn every new node into a
+compile error until it is fully wired; and the on-disk cache format (`cache.rs`,
+`.mainstage/cache.json`) stays backward compatible (new fields default in).
+
+**Design decisions:**
+
+- **Composition is lexical inclusion, not a package manager.** An `include` merges the
+  items of another `.ms` file into the program *before* analysis, so the build remains a
+  single flat graph — no cross-file runtime, no dependency resolver, no network fetch. The
+  hard problems are name collisions across files and `script_dir`/`glob` resolution, which
+  are settled with explicit rules rather than a module system.
+- **Parameters are typed and declared, not stringly-typed env reads.** A `param` item
+  carries a type and a default and is overridable from the CLI (`-D name=value`). It
+  retires the "route everything through `env()`" idiom the way Phase 41 retired it for
+  conditions: env stays available, but a build's knobs become first-class, validated, and
+  discoverable (`mainstage list`, `--dry-run`, LSP).
+- **Caching gains a content-addressed output store (CAS), then a transport.** The existing
+  input-digest cache is extended to record each output's *content* hash; a local CAS keyed
+  by those hashes lets a stage's outputs be **restored** rather than only **skipped** —
+  surviving `clean`, branch switches, and fresh checkouts. A remote backend is then a thin
+  push/pull transport over that same CAS keyed by the same digest, so local and shared
+  caches never diverge. A cache miss, timeout, or backend error must **never fail a
+  build** — caching is an optimization, degrading to local-only.
+- **Introspection reuses what the analyzer already built.** `query` / `explain` / `profile`
+  read the dependency graph (`AnalysisResult`) and the change-detection decision
+  (`change_detection_inputs`) and the Phase 27 timing summary — no new analysis pass.
+- **Hermeticity is opt-in and additive.** Declared tool requirements and an optional
+  per-stage environment isolation wrap execution without changing the step model; a
+  double-build reproducibility check is a runner mode, not new language.
+
+---
+
+### Phase 48: Multi-File Composition (`include`)
+
+Let a build span many files and directories so a growing repository is not one giant
+`main.ms`. Output: a root script can pull in per-component `.ms` files and the runtime
+sees a single, flat build graph.
+
+- [ ] `include "<path>";` top-level item that lexically merges another `.ms` file's items
+      into the program, resolved relative to the including file; lower it in `prepare()`
+      **before** semantic analysis (mirroring `matrix.rs` / `templates.rs`) so the graph,
+      change detection, and scheduler only ever see one ordinary `Program`
+- [ ] Cycle detection across the include graph, deterministic include ordering, and
+      duplicate-include de-duplication — each reported with a source span
+- [ ] Name-collision rules across files for `stage` / `let` / `template` / `pipeline` /
+      `param` (a documented flat namespace with a precise collision error, or qualified
+      names) so two components can't silently clobber each other
+- [ ] Define and test `script_dir` / `glob` / relative-path resolution per *including* vs
+      *included* file (a glob in an included file resolves against that file's directory),
+      and carry the originating file+span on every node for diagnostics
+- [ ] grammar / ast / parser / sema wiring; `format.rs` and LSP (`navigation.rs`) arms;
+      cross-file go-to-definition; docs in `docs/GRAMMAR.md` and a multi-file example
+      project under `examples/`
+
+---
+
+### Phase 49: CLI Parameters & Build Configurations
+
+Replace the `env()`-for-everything idiom with typed, declared build parameters that are
+overridable from the command line. Output: `mainstage -D release=true run ci` instead of
+exporting environment variables.
+
+- [ ] `param <ident>: <type> = <default>;` top-level item (`string` / `int` / `bool` /
+      `list`), resolved at load time in declaration order alongside `let` and referenceable
+      anywhere a `let` is
+- [ ] `-D <name>=<value>` / `--param <name>=<value>` CLI flags (and an optional manifest
+      `[params]` block) to override defaults, with typed parsing and precise diagnostics on
+      an unknown name or a type mismatch
+- [ ] `sema.rs` validation (unique names, default's type matches the declared type,
+      forward-reference rule); `eval.rs` wiring (thread the resolved param set through
+      `EvalContext` / `clone_base` / test helpers)
+- [ ] Surface parameters and their effective values in `mainstage list`, `--dry-run`, and a
+      `mainstage params` listing; LSP completion and hover; `format.rs` + LSP exhaustive
+      arms; docs in `docs/GRAMMAR.md` and an example
+
+---
+
+### Phase 50: Content-Addressed Output Cache
+
+Make change detection *restore* outputs, not just skip stages. Output: outputs survive a
+`mainstage clean`, a branch switch, or a fresh checkout without re-running the stage.
+
+- [ ] Extend `cache.rs` to record each declared output's content hash at a successful run,
+      and store output blobs in a local content-addressed store under `.mainstage/cache/`
+      keyed by digest (new fields default in — old `cache.json` still loads)
+- [ ] On a cache hit whose outputs are *missing* from the tree, restore them from the CAS
+      instead of re-running the stage; fall back to a full rebuild when a blob is absent
+- [ ] `mainstage cache gc` (prune unreferenced blobs) and `mainstage cache stats` (size /
+      hit-rate reporting); a configurable size ceiling with LRU eviction
+- [ ] Reuse the Phase 25 mtime+size fast path and parallel hashing for output digests;
+      benchmark restore-from-CAS vs. rebuild against the Phase 23 baselines
+
+---
+
+### Phase 51: Remote / Shared Cache
+
+Share built artifacts across machines and CI runs. Output: a second machine (or a CI job)
+that has never built the project pulls finished outputs instead of recomputing them.
+
+- [ ] A `CacheBackend` trait with a local-directory backend and an HTTP backend; push/pull
+      CAS blobs and cache entries keyed by the **same** digest the local cache uses, so a
+      remote hit is indistinguishable from a local one
+- [ ] `--remote-cache <url>` flag and a manifest `[cache]` block; read-through /
+      write-through policy plus a read-only mode for untrusted CI; gate the network on the
+      existing `net` capability
+- [ ] Graceful degradation: a cache miss, timeout, auth failure, or malformed blob logs a
+      warning and falls back to local-only — **never** fails the build
+- [ ] Integration tests against an in-process fake backend (hit, miss, corruption,
+      timeout); document the wire protocol and a CI recipe in `docs/`
+
+---
+
+### Phase 52: Build Graph Query & Explain
+
+Make the dependency graph and the change-detection decisions inspectable. Output: an author
+can see *why* a stage ran, what depends on it, and where the time went.
+
+- [ ] `mainstage query` — print the stage dependency graph and its reverse edges, filtered
+      by pipeline, with DOT and JSON export for external tooling, reading `AnalysisResult`
+- [ ] `mainstage explain <stage>` — why the stage ran or was skipped on the last run: which
+      input changed, which output was missing, a whole-stage vs. per-output decision, a
+      local hit, or a CAS/remote restore (reading the `change_detection_inputs` decision)
+- [ ] `mainstage profile` / a `--profile` flag — per-stage timings and the critical path,
+      building on the Phase 27 end-of-run timing summary
+- [ ] Tests over a fixture graph (diamond + fan-out) asserting query output and explain
+      verdicts; a `docs/` page
+
+---
+
+### Phase 53: Hermeticity & Reproducibility
+
+Move builds from "works on my machine" toward reproducible. Output: a build declares the
+tools it needs, can isolate itself from ambient state, and can be checked for determinism.
+
+- [ ] Declared tool requirements — a `requires { … }` stage field or a top-level
+      `tool`/`toolchain` item asserting a program is present and (optionally) a version
+      constraint, checked before the stage runs with a clear "missing/mismatched tool"
+      diagnostic
+- [ ] Optional per-stage environment isolation (`hermetic: true`): run with a cleared
+      environment plus an explicit passthrough/`with_env` allowlist, so a stage can't
+      silently depend on ambient variables
+- [ ] `--check-reproducible` — run a pipeline twice and diff output content hashes,
+      reporting the specific non-deterministic outputs (reusing the Phase 50 output hashing)
+- [ ] Input-completeness audit: where the platform allows, warn when a stage reads files
+      outside its declared `inputs` (the most common cause of a stale cache); `docs/` +
+      an example
+
+---
