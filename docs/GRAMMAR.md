@@ -33,6 +33,7 @@ Top-level items are:
 - `project` — project metadata
 - `stage` — a build stage
 - `pipeline` / `default pipeline` — a named entry point
+- `template` — a reusable, named sequence of steps (inlined by `use`)
 
 ---
 
@@ -333,6 +334,41 @@ pipeline release {
     }
 }
 ```
+
+---
+
+### `template`
+
+A `template` declares a **named, reusable sequence of steps**. Wherever a [`use`](#use--inline-a-template) step names it, the template's steps are inlined in place. This factors a shared setup/teardown run out of unrelated stages — authored once, used many times — and complements [`matrix`](#stage) (which parameterizes a stage over *values*; templates parameterize over *steps*).
+
+```mainstage
+template banner {
+    log "── ${project.name} ──"
+    log "building on ${platform}"
+}
+
+stage frontend {
+    steps {
+        use banner;
+        log "compiling frontend"
+    }
+}
+
+stage backend {
+    steps {
+        use banner;
+        log "compiling backend"
+    }
+}
+```
+
+Templates are a pure compile-time mechanism: every `use` is replaced by the template's steps and the `template` items are dropped **before** semantic analysis, so the dependency graph, change detection, and the scheduler never see them (the same "lower before analysis" discipline as `matrix`). A template body may itself contain `use` steps to compose with other templates. Three rules are enforced, each pointing at the offending source:
+
+- **Unique names** — two templates may not share a name.
+- **Defined target** — every `use` must name a declared template.
+- **No cycles** — a template may not `use` itself, directly or transitively.
+
+Because inlining happens in place, a template can include block-scoped [`let`](#let--block-scoped-binding) bindings and reference built-in variables like `${platform}` or the loop variable of an enclosing `for` — they resolve in the context where the template is used, not where it is declared.
 
 ---
 
@@ -690,6 +726,29 @@ stage compile {
 
 Shadowing a name already in scope — a top-level `let`, an enclosing block-scoped `let`, or the enclosing `for`-loop variable — is a semantic error, so every binding reads unambiguously. A local `let` may reference any top-level binding and any local declared earlier in the same scope; referencing one declared later is an "undefined name" error.
 
+### `use` — Inline a Template
+
+Inlines the steps of the named [`template`](#template) at this position. It is replaced by the template's steps before the build runs, so it behaves exactly as if those steps had been written here — including any nested `use`. A `use` whose name does not match a declared template, or that forms a recursive cycle, is a semantic error.
+
+```text
+use <template-name>;
+```
+
+```mainstage
+template restore_cache {
+    $ tar xzf cache.tgz
+}
+
+stage build {
+    steps {
+        use restore_cache;   // expands to: $ tar xzf cache.tgz
+        $ make
+    }
+}
+```
+
+`use` may appear anywhere a step is valid, including inside `if` / `for` / `try` / `workdir` / `with_env` blocks.
+
 ### `try` — Tolerate a Failing Step
 
 Runs a block of steps but does **not** propagate a failure: if a step inside the block fails, the remaining steps in the block are skipped and the stage continues as though the block had succeeded. This is the native, checkable replacement for the `$ sh -c "… || true"` idiom — a best-effort step whose failure is acceptable.
@@ -1044,7 +1103,8 @@ item            = import_decl
                 | let_decl
                 | project_block
                 | stage_block
-                | pipeline_block ;
+                | pipeline_block
+                | template_block ;
 
 import_decl     = "import" string "as" ident ";" ;
 let_decl        = "let" ident "=" expr ";" ;
@@ -1072,8 +1132,11 @@ pipeline_field  = "input"      ":" expr         ","?
                 | "on_failure" "{" step*        "}"
                 | "on_success" "{" step*        "}" ;
 
+template_block  = "template" ident "{" step* "}" ;
+
 (* Steps *)
 step            = let_step
+                | use_step
                 | exec_step
                 | copy_step
                 | move_step
@@ -1097,6 +1160,7 @@ mkdir_step      = "mkdir" expr ;
 delete_step     = "delete" expr ;
 write_step      = "write" expr "content" ":" string ;
 let_step        = "let" ident "=" expr ";" ;
+use_step        = "use" ident ";" ;
 log_step        = "log" string ;
 fail_step       = "fail" string ;
 if_step         = "if" condition "{" step* "}" ( "else" "{" step* "}" )? ;

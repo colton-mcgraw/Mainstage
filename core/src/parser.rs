@@ -71,6 +71,7 @@ impl Builder {
             Rule::project_block => Item::Project(self.build_project(pair)),
             Rule::stage_block => Item::Stage(self.build_stage(pair)),
             Rule::pipeline_block => Item::Pipeline(self.build_pipeline(pair)),
+            Rule::template_block => Item::Template(self.build_template(pair)),
             r => unreachable!("unexpected item rule: {:?}", r),
         }
     }
@@ -248,6 +249,16 @@ impl Builder {
         PipelineBlock { is_default, name, input, stages, on_failure, on_success, span }
     }
 
+    // ── Template ────────────────────────────────────────────────────────────────
+
+    fn build_template(&mut self, pair: Pair<Rule>) -> TemplateBlock {
+        let span = self.span(&pair);
+        let mut inner = pair.into_inner();
+        let name = inner.next().unwrap().as_str().to_string();
+        let steps = inner.map(|p| self.build_step(p)).collect();
+        TemplateBlock { name, steps, span }
+    }
+
     // ── Steps ─────────────────────────────────────────────────────────────────
     // `step` is a silent rule; we receive the concrete step rule pairs directly.
 
@@ -269,6 +280,7 @@ impl Builder {
             Rule::log_step => Step::Log(self.build_log_step(pair)),
             Rule::fail_step => Step::Fail(self.build_fail_step(pair)),
             Rule::let_step => Step::Let(self.build_let_step(pair)),
+            Rule::use_step => Step::Use(self.build_use_step(pair)),
             r => unreachable!("unexpected step rule: {:?}", r),
         }
     }
@@ -396,6 +408,12 @@ impl Builder {
         let name = inner.next().unwrap().as_str().to_string();
         let value = self.build_expr(inner.next().unwrap());
         LetStep { name, value, span }
+    }
+
+    fn build_use_step(&mut self, pair: Pair<Rule>) -> UseStep {
+        let span = self.span(&pair);
+        let name = pair.into_inner().next().unwrap().as_str().to_string();
+        UseStep { name, span }
     }
 
     fn build_expect_step(&mut self, pair: Pair<Rule>) -> ExpectStep {

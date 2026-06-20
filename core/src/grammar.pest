@@ -6,7 +6,7 @@ COMMENT    = _{ "//" ~ (!"\n" ~ ANY)* }
 // ── Top-level ─────────────────────────────────────────────────────────────────
 
 program = { SOI ~ item* ~ EOI }
-item    = _{ import_decl | let_decl | project_block | stage_block | pipeline_block }
+item    = _{ import_decl | let_decl | project_block | stage_block | pipeline_block | template_block }
 
 // ── Declarations ──────────────────────────────────────────────────────────────
 
@@ -45,9 +45,15 @@ pipeline_stages     = { "stages" ~ ":" ~ expr ~ ","? }
 pipeline_on_failure = { "on_failure" ~ "{" ~ step* ~ "}" }
 pipeline_on_success = { "on_success" ~ "{" ~ step* ~ "}" }
 
+// ── Template ──────────────────────────────────────────────────────────────────
+// Reusable step sequences (Phase 46). A `template` declares a named run of steps; a
+// `use` step inlines it. Both are lowered away before semantic analysis.
+
+template_block = { "template" ~ ident ~ "{" ~ step* ~ "}" }
+
 // ── Steps ─────────────────────────────────────────────────────────────────────
 
-step        = _{ let_step | exec_step | copy_step | move_step | mkdir_step | delete_step | write_step | log_step | fail_step | if_step | for_step | try_step | workdir_step | with_env_step | expect_step | assert_step }
+step        = _{ let_step | use_step | exec_step | copy_step | move_step | mkdir_step | delete_step | write_step | log_step | fail_step | if_step | for_step | try_step | workdir_step | with_env_step | expect_step | assert_step }
 // Compound-atomic so horizontal whitespace is consumed explicitly (prevents
 // WHITESPACE from swallowing the newline that terminates the exec line).
 exec_step   = ${ "$" ~ (" " | "\t")* ~ exec_line }
@@ -64,6 +70,8 @@ fail_step   = { "fail" ~ string }
 // Block-scoped binding (Phase 44): same surface syntax as a top-level `let`, but scoped to
 // the steps that follow it within the enclosing block.
 let_step    = { "let" ~ ident ~ "=" ~ expr ~ ";" }
+// Inline a named `template`'s steps here (Phase 46).
+use_step    = { "use" ~ ident ~ ";" }
 if_step     = { "if" ~ condition ~ then_block ~ ("else" ~ else_block)? }
 then_block  = { "{" ~ step* ~ "}" }
 else_block  = { "{" ~ step* ~ "}" }

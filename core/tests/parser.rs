@@ -158,6 +158,52 @@ fn parses_named_pipeline_with_hooks() {
     }
 }
 
+// ── Template / use (Phase 46) ─────────────────────────────────────────────────────
+
+#[test]
+fn parses_template_item_and_use_step() {
+    let program = parse_ok(
+        r#"template setup {
+            $ checkout
+            log "ready"
+        }
+        stage build {
+            steps {
+                use setup;
+                $ make
+            }
+        }"#,
+    );
+    match &program.items[0] {
+        Item::Template(t) => {
+            assert_eq!(t.name, "setup");
+            assert_eq!(t.steps.len(), 2);
+            assert!(matches!(t.steps[0], Step::Exec(_)));
+            assert!(matches!(t.steps[1], Step::Log(_)));
+        }
+        other => panic!("expected template, got {other:?}"),
+    }
+    match &program.items[1] {
+        Item::Stage(s) => match &s.steps[0] {
+            Step::Use(u) => assert_eq!(u.name, "setup"),
+            other => panic!("expected use step, got {other:?}"),
+        },
+        other => panic!("expected stage, got {other:?}"),
+    }
+}
+
+#[test]
+fn parses_empty_template() {
+    let program = parse_ok("template noop {\n}\n");
+    match &program.items[0] {
+        Item::Template(t) => {
+            assert_eq!(t.name, "noop");
+            assert!(t.steps.is_empty());
+        }
+        other => panic!("expected template, got {other:?}"),
+    }
+}
+
 // ── Expressions ─────────────────────────────────────────────────────────────────
 
 fn first_let_value(src: &str) -> Expr {

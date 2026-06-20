@@ -62,6 +62,9 @@ pub fn execute_step(step: &Step, ctx: &EvalContext) -> Result<()> {
         // `execute_steps` threads. Reached only on a direct single-step call: evaluate the
         // value (so its errors surface) and discard the binding, which has no successors here.
         Step::Let(s) => eval_expr(&s.value, ctx).map(|_| ()),
+        // `use` steps are inlined into their stage before execution (Phase 46); reaching
+        // one here means the template-lowering pass was skipped.
+        Step::Use(_) => unreachable!("`use` steps are inlined before execution"),
     }
 }
 

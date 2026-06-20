@@ -72,6 +72,7 @@ jobs:
           tests/validation_errors.ms
           tests/diagnostics.ms
           tests/plugin/main.ms
+          tests/templates.ms
 
   # Compile the VS Code extension and run its tests, including the integration
   # suite that drives the real language server over stdio — the client/server

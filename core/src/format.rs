@@ -153,7 +153,24 @@ impl Printer<'_> {
             Item::Project(p) => self.project(p),
             Item::Stage(s) => self.stage(s),
             Item::Pipeline(p) => self.pipeline(p),
+            Item::Template(t) => self.template(t),
         }
+    }
+
+    fn template(&mut self, t: &TemplateBlock) {
+        self.emit_leading(&t.span);
+        if t.steps.is_empty() {
+            self.push_line(&format!("template {} {{}}", t.name));
+            self.emit_trailing_standalone(&t.span);
+            return;
+        }
+        self.push_line(&format!("template {} {{", t.name));
+        self.indent += 1;
+        for step in &t.steps {
+            self.step(step);
+        }
+        self.indent -= 1;
+        self.close_block(&t.span);
     }
 
     fn project(&mut self, p: &ProjectBlock) {
@@ -349,6 +366,9 @@ impl Printer<'_> {
             }
             Step::Let(s) => {
                 self.node_line(&s.span, &format!("let {} = {};", s.name, render_expr(&s.value)));
+            }
+            Step::Use(s) => {
+                self.node_line(&s.span, &format!("use {};", s.name));
             }
         }
     }
