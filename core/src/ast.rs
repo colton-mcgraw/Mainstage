@@ -181,6 +181,15 @@ pub struct StageBlock {
     /// `[("arch", "x64")]`). Empty for authored and non-matrix stages. Each binding is
     /// exposed as a built-in string variable inside the stage, alongside `platform`.
     pub matrix_bindings: Vec<MatrixBinding>,
+    /// Declared external-tool requirements from a `requires { … }` block (Phase 53). Each is
+    /// checked before the stage's steps run; a missing or version-mismatched tool fails the
+    /// stage with a user-facing diagnostic. Empty when no `requires` block is present.
+    pub requires: Vec<ToolRequirement>,
+    /// When `true`, the stage runs hermetically (Phase 53): its spawned commands start from a
+    /// cleared environment plus a minimal passthrough (so executables can still be found) and
+    /// any `with_env` overlay in scope — so the stage cannot silently depend on ambient
+    /// environment variables.
+    pub hermetic: bool,
     pub steps: Vec<Step>,
     /// Steps executed when the main `steps` block fails, before failure propagates.
     pub on_failure: Vec<Step>,
@@ -220,6 +229,61 @@ pub struct MatrixBinding {
 pub struct StageDep {
     pub name: String,
     pub span: Span,
+}
+
+/// One entry in a stage's `requires { … }` block (Phase 53): an external program that must
+/// be available before the stage runs, with an optional version constraint. The program is
+/// a literal string (no interpolation), so paths and names containing `-`/`+` are allowed.
+#[derive(Debug, Clone)]
+pub struct ToolRequirement {
+    /// The program name or path to resolve on `PATH`, e.g. `"cargo"` or `"/usr/bin/clang"`.
+    pub program: String,
+    /// An optional version constraint checked against the tool's reported `--version`.
+    pub version: Option<VersionConstraint>,
+    pub span: Span,
+}
+
+/// A version constraint on a [`ToolRequirement`]: a comparison operator and a dotted version
+/// string (e.g. `>= "1.70"`).
+#[derive(Debug, Clone)]
+pub struct VersionConstraint {
+    pub op: VersionOp,
+    pub version: String,
+}
+
+/// The comparison operator in a [`VersionConstraint`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VersionOp {
+    Ge,
+    Gt,
+    Le,
+    Lt,
+    Eq,
+}
+
+impl VersionOp {
+    /// Parse the surface operator token into a [`VersionOp`].
+    pub fn from_token(token: &str) -> Option<Self> {
+        match token {
+            ">=" => Some(VersionOp::Ge),
+            ">" => Some(VersionOp::Gt),
+            "<=" => Some(VersionOp::Le),
+            "<" => Some(VersionOp::Lt),
+            "==" => Some(VersionOp::Eq),
+            _ => None,
+        }
+    }
+
+    /// The canonical surface token for this operator (used by the formatter).
+    pub fn token(self) -> &'static str {
+        match self {
+            VersionOp::Ge => ">=",
+            VersionOp::Gt => ">",
+            VersionOp::Le => "<=",
+            VersionOp::Lt => "<",
+            VersionOp::Eq => "==",
+        }
+    }
 }
 
 // ── Pipeline ──────────────────────────────────────────────────────────────────

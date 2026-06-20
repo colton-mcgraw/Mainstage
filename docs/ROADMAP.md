@@ -868,16 +868,16 @@ can see *why* a stage ran, what depends on it, and where the time went.
 Move builds from "works on my machine" toward reproducible. Output: a build declares the
 tools it needs, can isolate itself from ambient state, and can be checked for determinism.
 
-- [ ] Declared tool requirements — a `requires { … }` stage field or a top-level
+- [x] Declared tool requirements — a `requires { … }` stage field or a top-level
       `tool`/`toolchain` item asserting a program is present and (optionally) a version
       constraint, checked before the stage runs with a clear "missing/mismatched tool"
       diagnostic
-- [ ] Optional per-stage environment isolation (`hermetic: true`): run with a cleared
+- [x] Optional per-stage environment isolation (`hermetic: true`): run with a cleared
       environment plus an explicit passthrough/`with_env` allowlist, so a stage can't
       silently depend on ambient variables
-- [ ] `--check-reproducible` — run a pipeline twice and diff output content hashes,
+- [x] `--check-reproducible` — run a pipeline twice and diff output content hashes,
       reporting the specific non-deterministic outputs (reusing the Phase 50 output hashing)
-- [ ] Input-completeness audit: where the platform allows, warn when a stage reads files
+- [x] Input-completeness audit: where the platform allows, warn when a stage reads files
       outside its declared `inputs` (the most common cause of a stale cache); `docs/` +
       an example
 

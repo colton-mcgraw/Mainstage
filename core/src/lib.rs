@@ -1,6 +1,7 @@
 //! `mainstage_core` — language core: parser, AST, semantic analysis, and evaluator.
 
 pub mod ast;
+pub mod audit;
 pub mod cache;
 pub mod error;
 pub mod eval;
@@ -14,6 +15,7 @@ pub mod runner;
 pub mod sema;
 pub mod source;
 pub mod templates;
+pub mod tools;
 pub mod trivia;
 
 pub use error::{Diagnostic, Error, Result, Span};

@@ -145,10 +145,12 @@ impl Builder {
         let mut outputs = None;
         let mut depends_on = Vec::new();
         let mut matrix = Vec::new();
+        let mut requires = Vec::new();
         let mut allow_failure = false;
         let mut always_run = false;
         let mut run_once = false;
         let mut test = false;
+        let mut hermetic = false;
         let mut steps = Vec::new();
         let mut on_failure = Vec::new();
 
@@ -172,6 +174,13 @@ impl Builder {
                 }
                 Rule::stage_matrix => {
                     matrix = field.into_inner().map(|p| self.build_matrix_dim(p)).collect();
+                }
+                Rule::stage_requires => {
+                    requires = field.into_inner().map(|p| self.build_tool_req(p)).collect();
+                }
+                Rule::stage_hermetic => {
+                    let val = field.into_inner().next().unwrap().as_str();
+                    hermetic = val == "true";
                 }
                 Rule::stage_allow_failure => {
                     let val = field.into_inner().next().unwrap().as_str();
@@ -207,14 +216,31 @@ impl Builder {
             depends_on,
             matrix,
             matrix_bindings: Vec::new(),
+            requires,
             allow_failure,
             always_run,
             run_once,
             test,
+            hermetic,
             steps,
             on_failure,
             span,
         }
+    }
+
+    /// Build one `requires` entry: a program string and an optional `version_op` + version
+    /// string. The version string carries static text (no interpolation), like matrix values.
+    fn build_tool_req(&mut self, pair: Pair<Rule>) -> ToolRequirement {
+        let span = self.span(&pair);
+        let mut inner = pair.into_inner();
+        let program = self.extract_raw_string(inner.next().unwrap());
+        // An optional constraint is the `version_op` token followed by the version string.
+        let version = inner.next().map(|op_pair| {
+            let op = VersionOp::from_token(op_pair.as_str()).expect("grammar restricts version_op");
+            let version = self.extract_raw_string(inner.next().unwrap());
+            VersionConstraint { op, version }
+        });
+        ToolRequirement { program, version, span }
     }
 
     /// Build one `matrix` dimension: an identifier name followed by a bracketed list of

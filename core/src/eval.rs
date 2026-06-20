@@ -247,6 +247,15 @@ pub struct EvalContext {
     /// its message through `Reporter::step_log` and writes it to the per-stage output sink
     /// (or the terminal in the sequential path). `None` (library use) makes `log` a no-op.
     pub reporter: Option<ReporterHandle>,
+    /// When `true`, the currently executing stage is hermetic (Phase 53): spawned commands
+    /// (`$` exec / `expect`) start from a cleared environment plus a minimal passthrough and
+    /// the `with_env` overlay, rather than inheriting the parent process environment. Set per
+    /// stage by the runner from `StageBlock::hermetic`; `false` for ordinary stages.
+    pub hermetic: bool,
+    /// When `true`, the run is auditing input completeness (Phase 53, `--audit-inputs`): the
+    /// runner records files read but not declared and warns about them. Run-global, set by
+    /// the front end; the audit itself happens in the runner, so this is only a signal.
+    pub audit_inputs: bool,
 }
 
 impl EvalContext {
@@ -382,7 +391,34 @@ impl EvalContext {
             // The reporter handle is run-scoped: carry it across every context clone so a
             // `log` step deep inside a stage still routes through the run's reporter.
             reporter: self.reporter.clone(),
+            // Hermeticity is stage-scoped; preserve it so nested `workdir` / `with_env` /
+            // `for` context clones still spawn commands with the cleared environment.
+            hermetic: self.hermetic,
+            // The audit flag is run-scoped; carry it across every clone.
+            audit_inputs: self.audit_inputs,
         }
+    }
+
+    /// Return a child context whose stage runs hermetically (Phase 53). Preserves the stage
+    /// and loop bindings already in scope, like the other step-context builders.
+    pub fn with_hermetic(&self, hermetic: bool) -> Self {
+        let mut child = self.clone_base();
+        child.stage_inputs = self.stage_inputs.clone();
+        child.stage_outputs = self.stage_outputs.clone();
+        child.for_vars = self.for_vars.clone();
+        child.hermetic = hermetic;
+        child
+    }
+
+    /// Return a copy of this context with input auditing enabled (Phase 53). Used by the
+    /// front end to set the run-global flag on the base context before a run; it then
+    /// propagates to every stage / loop context clone.
+    pub fn with_audit_inputs(&self, audit: bool) -> Self {
+        let mut child = self.clone_base();
+        child.stage_inputs = self.stage_inputs.clone();
+        child.stage_outputs = self.stage_outputs.clone();
+        child.audit_inputs = audit;
+        child
     }
 
     /// Return a copy of this context with `reporter` installed, so its `log` steps route
@@ -462,6 +498,8 @@ pub fn eval_program_with_overrides(
         cwd_override: None,
         env_overlay: HashMap::new(),
         reporter: None,
+        hermetic: false,
+        audit_inputs: false,
     };
     let mut errors: Vec<Diagnostic> = Vec::new();
 
@@ -919,6 +957,8 @@ mod tests {
             cwd_override: None,
             env_overlay: HashMap::new(),
             reporter: None,
+            hermetic: false,
+            audit_inputs: false,
         }
     }
 

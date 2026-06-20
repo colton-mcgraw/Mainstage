@@ -85,6 +85,11 @@ pub trait Reporter: Send + Sync {
     /// A `test` stage finished its assertions; `results` lists every `expect` / `assert`
     /// outcome in order, for rendering a pass/fail tally and per-assertion detail.
     fn stage_tests(&self, _out: &mut dyn Write, _stage: &str, _results: &[AssertionResult]) {}
+    /// The input-completeness audit (Phase 53, `--audit-inputs`) found project files the
+    /// stage read but did not declare in its `inputs`. `undeclared` lists them, relative to
+    /// the project root. Emitted only when the audit is active and found something. Default:
+    /// no-op.
+    fn stage_input_audit(&self, _out: &mut dyn Write, _stage: &str, _undeclared: &[PathBuf]) {}
     /// A stage settled (passed, skipped, or failed), with the wall-clock time it took.
     /// Reported in addition to the live markers so a frontend can accumulate per-stage
     /// timings and render a summary; this method itself should not write progress output.
@@ -1263,7 +1268,17 @@ fn run_one_stage(
     let mut buf = Vec::new();
     write_event(reporter, buffered, &mut buf, |r, out| r.stage_start(out, name));
 
-    let step_result = execute_steps(&stage.steps, &exec_ctx);
+    // Input-completeness audit (Phase 53): capture a baseline just before the steps run so
+    // any project file the stage *reads* during execution can be detected afterward.
+    let audit_baseline = base.audit_inputs.then(std::time::SystemTime::now);
+
+    // Declared tool requirements (Phase 53) are checked immediately before the steps run: a
+    // missing or version-mismatched tool fails the stage like any other step error (so a
+    // `try` block swallows it and the stage's `on_failure` fires).
+    let step_result = match crate::tools::check_requirements(&stage.requires) {
+        Ok(()) => execute_steps(&stage.steps, &exec_ctx),
+        Err(e) => Err(e),
+    };
     // A test stage fails when any assertion failed, even if no step errored.
     let test_failed = recorder.as_ref().map(|r| r.failed() > 0).unwrap_or(false);
     let stage_ok = step_result.is_ok() && !test_failed;
@@ -1280,6 +1295,26 @@ fn run_one_stage(
     if let Some(rec) = &recorder {
         let results = rec.results();
         write_event(reporter, buffered, &mut buf, |r, out| r.stage_tests(out, name, &results));
+    }
+
+    // Input-completeness audit (Phase 53): report project files the stage read but did not
+    // declare in its `inputs` — the common cause of a stale cache. Best-effort; relies on
+    // atime tracking the front end probed before the run.
+    if let Some(baseline) = audit_baseline {
+        let declared_inputs =
+            exec_ctx.stage_inputs.as_ref().map(cache::input_paths).unwrap_or_default();
+        let declared_outputs: Vec<PathBuf> = output_paths.iter().map(PathBuf::from).collect();
+        let undeclared = crate::audit::undeclared_reads(
+            project_dir,
+            baseline,
+            &declared_inputs,
+            &declared_outputs,
+        );
+        if !undeclared.is_empty() {
+            write_event(reporter, buffered, &mut buf, |r, out| {
+                r.stage_input_audit(out, name, &undeclared)
+            });
+        }
     }
 
     let elapsed = start.elapsed();
@@ -1450,7 +1485,11 @@ fn build_stage_ctx(
     };
     let inputs = stage.inputs.as_ref().map(|e| eval_expr(e, &with_refs)).transpose()?;
     let outputs = stage.outputs.as_ref().map(|e| eval_expr(e, &with_refs)).transpose()?;
-    Ok(with_refs.with_stage(inputs, outputs))
+    let mut ctx = with_refs.with_stage(inputs, outputs);
+    // Mark the context hermetic so spawned commands start from a cleared environment
+    // (Phase 53). Carried through the per-step `workdir` / `with_env` / `for` clones.
+    ctx.hermetic = stage.hermetic;
+    Ok(ctx)
 }
 
 // ── Topological sort (Kahn's algorithm) ───────────────────────────────────────

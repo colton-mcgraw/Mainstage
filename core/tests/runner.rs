@@ -1629,3 +1629,76 @@ fn explain_unknown_stage_errors() {
     assert!(explain_stage(&program, "nope", &ctx, &analysis).is_err());
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+// ── Phase 53: tool requirements & hermetic execution ────────────────────────────────
+
+#[test]
+fn missing_required_tool_fails_the_stage() {
+    let dir = unique_dir("requires_missing");
+    let d = dir.display();
+    // The stage requires a tool that does not exist, so it must fail before its steps run —
+    // the marker file is never written, and its on_failure fires.
+    let src = format!(
+        r#"
+        default pipeline build {{ stages: [a] }}
+        stage a {{
+            requires {{ "ms_no_such_tool_zzz_53" }}
+            steps {{ write "{d}/ran" content: "x" }}
+            on_failure {{ write "{d}/onfail" content: "x" }}
+        }}
+        "#
+    );
+    let result = run(&src, &dir, None);
+    assert!(result.is_err(), "a missing required tool must fail the pipeline");
+    assert!(!exists(&dir, "ran"), "the stage's steps must not run when a tool is missing");
+    assert!(exists(&dir, "onfail"), "the stage on_failure should fire");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn present_required_tool_lets_the_stage_run() {
+    let dir = unique_dir("requires_present");
+    let d = dir.display();
+    // `cargo` runs these tests, so it is guaranteed present on PATH.
+    let src = format!(
+        r#"
+        default pipeline build {{ stages: [a] }}
+        stage a {{
+            requires {{ "cargo" >= "1.0" }}
+            steps {{ write "{d}/ran" content: "x" }}
+        }}
+        "#
+    );
+    run(&src, &dir, None).expect("a satisfied requirement should let the stage run");
+    assert!(exists(&dir, "ran"));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[cfg(unix)]
+#[test]
+fn hermetic_stage_clears_ambient_environment() {
+    let dir = unique_dir("hermetic");
+    let d = dir.display();
+    // The stage runs hermetically, so an ambient variable set on this process is not visible
+    // to its spawned command, while a `with_env` value is. The command records both to files.
+    unsafe { std::env::set_var("MS_HERMETIC_AMBIENT_53", "leaked") };
+    let src = format!(
+        r#"
+        default pipeline build {{ stages: [a] }}
+        stage a {{
+            hermetic: true
+            steps {{
+                with_env {{ MS_HERMETIC_OVERLAY_53: "set" }} {{
+                    $ sh -c 'printf %s "$MS_HERMETIC_AMBIENT_53" > {d}/ambient; printf %s "$MS_HERMETIC_OVERLAY_53" > {d}/overlay'
+                }}
+            }}
+        }}
+        "#
+    );
+    run(&src, &dir, None).expect("hermetic stage should run");
+    let ambient = std::fs::read_to_string(dir.join("ambient")).unwrap_or_default();
+    let overlay = std::fs::read_to_string(dir.join("overlay")).unwrap_or_default();
+    assert_eq!(ambient, "", "ambient environment must be cleared in a hermetic stage");
+    assert_eq!(overlay, "set", "a with_env value must still reach a hermetic command");
+    let _ = std::fs::remove_dir_all(&dir);
+}

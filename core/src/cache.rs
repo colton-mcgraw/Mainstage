@@ -767,6 +767,32 @@ fn touch(path: &Path) {
     }
 }
 
+// ── Reproducibility hashing (Phase 53) ─────────────────────────────────────────────
+
+/// Compute a single content digest over a declared output path's current contents, or
+/// `None` when the output does not exist (`mainstage --check-reproducible`). A file output
+/// hashes its bytes; a directory output hashes every regular file beneath it, ordered by
+/// relative path so the digest is layout-stable. Reuses the same per-file SHA-256 as the
+/// content-addressed store, so reproducibility and caching agree on what "the same output"
+/// means.
+pub fn output_content_digest(project_dir: &Path, output: &str) -> Option<String> {
+    let base = existing_output_path(output, project_dir)?;
+    let mut files = walk_output_files(&base);
+    files.sort_by(|a, b| a.0.cmp(&b.0));
+
+    let mut outer = Sha256::new();
+    for (rel, abs, _mode) in &files {
+        outer.update(rel.as_bytes());
+        outer.update([0u8]);
+        match std::fs::read(abs) {
+            Ok(bytes) => outer.update(Sha256::digest(&bytes)),
+            Err(_) => outer.update(b"<unreadable>"),
+        }
+        outer.update([0u8]);
+    }
+    Some(hex(&outer.finalize()))
+}
+
 // ── Cache maintenance: stats & gc (Phase 50) ───────────────────────────────────────
 
 /// Aggregate statistics about the content-addressed store, for `mainstage cache stats`.

@@ -9,5 +9,6 @@
 - [Plugin Index](PLUGIN_INDEX.md)
 - [Editor Tooling](TOOLING.md)
 - [Build Graph Query & Explain](INTROSPECTION.md)
+- [Hermeticity & Reproducibility](HERMETICITY.md)
 - [Benchmarks](BENCHMARKS.md)
 - [Roadmap](ROADMAP.md)

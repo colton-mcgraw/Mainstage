@@ -228,6 +228,10 @@ impl Printer<'_> {
             self.push_line(&format!("depends_on: [{names}]"));
             wrote = true;
         }
+        if !s.requires.is_empty() {
+            self.requires_block(&s.requires);
+            wrote = true;
+        }
         if s.allow_failure {
             self.push_line("allow_failure: true");
             wrote = true;
@@ -242,6 +246,10 @@ impl Printer<'_> {
         }
         if s.test {
             self.push_line("test: true");
+            wrote = true;
+        }
+        if s.hermetic {
+            self.push_line("hermetic: true");
             wrote = true;
         }
         if !s.steps.is_empty() {
@@ -273,6 +281,24 @@ impl Printer<'_> {
                 .collect::<Vec<_>>()
                 .join(", ");
             self.push_line(&format!("{}: [{}]", dim.name, values));
+        }
+        self.indent -= 1;
+        self.push_line("}");
+    }
+
+    fn requires_block(&mut self, reqs: &[ToolRequirement]) {
+        self.push_line("requires {");
+        self.indent += 1;
+        for req in reqs {
+            match &req.version {
+                Some(c) => self.push_line(&format!(
+                    "\"{}\" {} \"{}\"",
+                    req.program,
+                    c.op.token(),
+                    c.version
+                )),
+                None => self.push_line(&format!("\"{}\"", req.program)),
+            }
         }
         self.indent -= 1;
         self.push_line("}");
@@ -698,6 +724,15 @@ mod tests {
             fmt(src),
             "stage setup {\n    run_once: true\n\n    steps {\n        $ install\n    }\n}\n"
         );
+    }
+
+    #[test]
+    fn formats_stage_requires_and_hermetic() {
+        let src =
+            "stage b{requires{\"cargo\">=\"1.70\" \"git\"}hermetic:true steps{$ cargo build\n}}";
+        let expected = "stage b {\n    requires {\n        \"cargo\" >= \"1.70\"\n        \"git\"\n    }\n    hermetic: true\n\n    steps {\n        $ cargo build\n    }\n}\n";
+        assert_eq!(fmt(src), expected);
+        assert_idempotent(src);
     }
 
     #[test]

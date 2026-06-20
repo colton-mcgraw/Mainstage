@@ -289,6 +289,25 @@ impl Analyzer {
                 self.error(format!("unknown stage '{}' in depends_on", dep.name), dep.span.clone());
             }
         }
+        // Validate each tool requirement's version constraint (Phase 53): an empty program
+        // name or a version string with no parseable number is a typo worth catching at
+        // analysis time rather than only when the stage runs.
+        for req in &stage.requires {
+            if req.program.trim().is_empty() {
+                self.error("a `requires` entry must name a program", req.span.clone());
+            }
+            if let Some(constraint) = &req.version
+                && crate::tools::parse_version(&constraint.version).is_none()
+            {
+                self.error(
+                    format!(
+                        "version constraint \"{}\" is not a dotted version number (e.g. \"1.70\")",
+                        constraint.version
+                    ),
+                    req.span.clone(),
+                );
+            }
+        }
         self.resolve_steps(&stage.steps, scope, &[], &[]);
         self.resolve_steps(&stage.on_failure, scope, &[], &[]);
         self.matrix_vars.clear();

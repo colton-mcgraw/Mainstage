@@ -96,6 +96,20 @@ pub fn setup(cli: Command) -> Command {
                 .global(true)
                 .help("After a run, report per-stage timings and the critical path"),
         )
+        .arg(
+            Arg::new("check-reproducible")
+                .long("check-reproducible")
+                .action(ArgAction::SetTrue)
+                .global(true)
+                .help("Run the pipeline twice and report outputs that differ between runs"),
+        )
+        .arg(
+            Arg::new("audit-inputs")
+                .long("audit-inputs")
+                .action(ArgAction::SetTrue)
+                .global(true)
+                .help("Warn about files a stage reads but did not declare in its inputs"),
+        )
         // Build-parameter overrides (Phase 49). Repeatable and global, so `-D` may appear
         // before or after the subcommand. Each value overrides a declared `param`.
         .arg(
@@ -296,6 +310,8 @@ pub fn dispatch(matches: &clap::ArgMatches) -> i32 {
     let jobs = matches.get_one::<usize>("jobs").copied();
     let dry_run = matches.get_flag("dry-run");
     let profile = matches.get_flag("profile");
+    let check_reproducible = matches.get_flag("check-reproducible");
+    let audit = matches.get_flag("audit-inputs");
     // Build-parameter overrides are global too (Phase 49); collect them once here.
     let overrides = match collect_overrides(matches) {
         Ok(o) => o,
@@ -309,8 +325,10 @@ pub fn dispatch(matches: &clap::ArgMatches) -> i32 {
             let name = sub.get_one::<String>("name").map(String::as_str);
             if dry_run {
                 cmd_dry_run(file_of(sub), name, flags, &overrides)
+            } else if check_reproducible {
+                cmd_check_reproducible(file_of(sub), name, flags, jobs, &overrides)
             } else {
-                cmd_run(file_of(sub), name, flags, jobs, verbosity, &overrides, profile)
+                cmd_run(file_of(sub), name, flags, jobs, verbosity, &overrides, profile, audit)
             }
         }
         Some(("watch", sub)) => {
@@ -331,7 +349,7 @@ pub fn dispatch(matches: &clap::ArgMatches) -> i32 {
         Some(("profile", sub)) => {
             let name = sub.get_one::<String>("name").map(String::as_str);
             // A `profile` run always reports the breakdown, regardless of the global flag.
-            cmd_run(file_of(sub), name, flags, jobs, verbosity, &overrides, true)
+            cmd_run(file_of(sub), name, flags, jobs, verbosity, &overrides, true, audit)
         }
         Some(("clean", sub)) => cmd_clean(file_of(sub)),
         Some(("cache", sub)) => match sub.subcommand() {
@@ -366,7 +384,10 @@ pub fn dispatch(matches: &clap::ArgMatches) -> i32 {
         }
         // No subcommand: plan or run the default pipeline.
         None if dry_run => cmd_dry_run(file_of(matches), None, flags, &overrides),
-        None => cmd_run(file_of(matches), None, flags, jobs, verbosity, &overrides, profile),
+        None if check_reproducible => {
+            cmd_check_reproducible(file_of(matches), None, flags, jobs, &overrides)
+        }
+        None => cmd_run(file_of(matches), None, flags, jobs, verbosity, &overrides, profile, audit),
         Some((other, _)) => {
             eprintln!("{} unknown command '{}'", style("error:").red().bold(), other);
             2
@@ -442,6 +463,7 @@ fn cmd_run(
     verbosity: Verbosity,
     overrides: &HashMap<String, String>,
     profile: bool,
+    audit: bool,
 ) -> i32 {
     let Some((program, analysis, ctx)) = prepare(file, perms, overrides) else {
         return 1;
@@ -457,12 +479,32 @@ fn cmd_run(
         let _ = ctrlc::set_handler(move || cancel.cancel());
     }
 
-    run_prepared(&program, pipeline, &ctx, &analysis, jobs, verbosity, &cancel, profile)
+    run_prepared(&program, pipeline, &ctx, &analysis, jobs, verbosity, &cancel, profile, audit)
+}
+
+/// Resolve the effective input-audit setting (Phase 53). When `--audit-inputs` is requested,
+/// probe whether the filesystem tracks access times; if not, warn that the audit is inert
+/// (so a clean result is not mistaken for completeness) and disable it.
+fn resolve_audit(requested: bool, ctx: &EvalContext) -> bool {
+    if !requested {
+        return false;
+    }
+    if mainstage_core::audit::atime_supported(&ctx.script_dir) {
+        true
+    } else {
+        eprintln!(
+            "{} input audit unavailable: this filesystem does not track access times \
+             (mounted noatime?); skipping",
+            style("warning:").yellow().bold()
+        );
+        false
+    }
 }
 
 /// Run an already-prepared pipeline against `cancel`, rendering progress at `verbosity`.
 /// Shared by `cmd_run` and `cmd_watch`. When `profile` is set, an end-of-run timing
-/// breakdown and the critical path are printed alongside the usual summary.
+/// breakdown and the critical path are printed alongside the usual summary. When `audit`
+/// is set (and supported), the runner warns about undeclared input reads.
 #[allow(clippy::too_many_arguments)]
 fn run_prepared(
     program: &Program,
@@ -473,6 +515,7 @@ fn run_prepared(
     verbosity: Verbosity,
     cancel: &CancelToken,
     profile: bool,
+    audit: bool,
 ) -> i32 {
     if verbosity != Verbosity::Quiet {
         match pipeline {
@@ -490,7 +533,9 @@ fn run_prepared(
     // `--quiet` and the per-stage buffered output) just like the runner's own markers.
     let reporter: Arc<dyn Reporter> =
         Arc::new(TermReporter::new(verbosity, profile, analysis.dependency_graph.clone()));
-    let run_ctx = ctx.with_reporter(ReporterHandle(reporter.clone()));
+    // Enable the input audit only when supported, so a clean result is meaningful.
+    let audit = resolve_audit(audit, ctx);
+    let run_ctx = ctx.with_reporter(ReporterHandle(reporter.clone())).with_audit_inputs(audit);
     match run_pipeline_cancellable(program, pipeline, &run_ctx, analysis, &*reporter, jobs, cancel)
     {
         Ok(()) => 0,
@@ -499,6 +544,109 @@ fn run_prepared(
         // the per-stage reporter never sees.
         Err(e) => fail(e),
     }
+}
+
+// ── check-reproducible (Phase 53) ─────────────────────────────────────────────────
+
+/// Run the pipeline twice from a clean cache and report declared outputs whose content
+/// differs between the two runs — the non-deterministic ones. Each run starts from a clean
+/// cache so every stage actually executes and overwrites its outputs (rather than being
+/// skipped or restored). Exits non-zero when any output differs or a run fails.
+fn cmd_check_reproducible(
+    file: &str,
+    pipeline: Option<&str>,
+    perms: Permissions,
+    jobs: Option<usize>,
+    overrides: &HashMap<String, String>,
+) -> i32 {
+    let Some((program, analysis, ctx)) = prepare(file, perms, overrides) else {
+        return 1;
+    };
+    let jobs =
+        jobs.unwrap_or_else(|| std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1));
+    let dir = ctx.script_dir.clone();
+
+    // Run the pipeline once from a clean cache, returning `Err` (already reported) on failure.
+    let run_once = |label: &str| -> std::result::Result<(), ()> {
+        if let Err(e) = cache::clean(&dir) {
+            fail(e);
+            return Err(());
+        }
+        println!("{} {label}", style("reproducibility:").bold());
+        let cancel = CancelToken::new();
+        match run_pipeline_cancellable(
+            &program,
+            pipeline,
+            &ctx,
+            &analysis,
+            &mainstage_core::NoopReporter,
+            jobs,
+            &cancel,
+        ) {
+            Ok(()) => Ok(()),
+            Err(e) => {
+                fail(e);
+                Err(())
+            }
+        }
+    };
+
+    if run_once("run 1 of 2…").is_err() {
+        return 1;
+    }
+    // The declared output paths are stable across runs, so resolve them once via the plan.
+    let outputs = match plan_pipeline(&program, pipeline, &ctx, &analysis) {
+        Ok(plan) => {
+            let mut v: Vec<String> = plan
+                .stages()
+                .flat_map(|s| s.outputs.iter().map(|p| p.to_string_lossy().into_owned()))
+                .collect();
+            v.sort();
+            v.dedup();
+            v
+        }
+        Err(e) => return fail(e),
+    };
+    let snapshot1 = hash_outputs(&dir, &outputs);
+
+    if run_once("run 2 of 2…").is_err() {
+        return 1;
+    }
+    let snapshot2 = hash_outputs(&dir, &outputs);
+
+    // An output is non-deterministic when its content digest differs between the two runs —
+    // including an output that appeared in one run but not the other.
+    let nondeterministic: Vec<&String> =
+        outputs.iter().filter(|o| snapshot1.get(*o) != snapshot2.get(*o)).collect();
+
+    println!();
+    if nondeterministic.is_empty() {
+        println!(
+            "{} {} declared output(s) identical across both runs",
+            style("reproducible:").green().bold(),
+            outputs.len()
+        );
+        0
+    } else {
+        println!(
+            "{} {} output(s) differ between runs:",
+            style("not reproducible:").red().bold(),
+            nondeterministic.len()
+        );
+        for out in &nondeterministic {
+            println!("  {} {}", style("✗").red(), out);
+        }
+        1
+    }
+}
+
+/// Hash each declared output's current content into a `path → digest` map (Phase 53).
+/// Outputs absent from the tree are omitted, so a missing output reads as `None`.
+fn hash_outputs(dir: &Path, outputs: &[String]) -> HashMap<String, String> {
+    outputs
+        .iter()
+        .filter_map(|o| cache::output_content_digest(dir, o).map(|d| (o.clone(), d)))
+        .collect()
 }
 
 // ── dry-run ──────────────────────────────────────────────────────────────────────
@@ -639,7 +787,7 @@ fn cmd_watch(
         match prepare(file, perms, overrides) {
             Some((program, analysis, ctx)) => {
                 let _ = run_prepared(
-                    &program, pipeline, &ctx, &analysis, jobs, verbosity, &cancel, false,
+                    &program, pipeline, &ctx, &analysis, jobs, verbosity, &cancel, false, false,
                 );
                 // A Ctrl-C during the run cancels it and ends the watch session.
                 if cancel.is_cancelled() {
@@ -1601,6 +1749,26 @@ impl Reporter for TermReporter {
         }
         let _ =
             writeln!(out, "{} {} {}", style("⊘").yellow(), stage, style("(cancelled)").yellow());
+    }
+
+    fn stage_input_audit(
+        &self,
+        out: &mut dyn Write,
+        _stage: &str,
+        undeclared: &[std::path::PathBuf],
+    ) {
+        if self.quiet() {
+            return;
+        }
+        let _ = writeln!(
+            out,
+            "  {} {} file(s) read but not declared in inputs:",
+            style("audit:").yellow().bold(),
+            undeclared.len()
+        );
+        for p in undeclared {
+            let _ = writeln!(out, "      {} {}", style("?").yellow(), p.display());
+        }
     }
 
     fn stage_tests(&self, out: &mut dyn Write, _stage: &str, results: &[AssertionResult]) {
