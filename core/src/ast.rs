@@ -24,6 +24,13 @@ pub enum Item {
     /// `use <name>;` step with the template's steps and drops the template item *before*
     /// semantic analysis, so the graph, change detection, and scheduler never see it.
     Template(TemplateBlock),
+    /// `include "<path>";` — lexically merges another `.ms` file's items here (Phase 48).
+    /// Lowered away by [`crate::include::expand`] *before* semantic analysis: the include
+    /// is replaced in place by the (recursively expanded) items of the referenced file, so
+    /// the dependency graph, change detection, and the scheduler only ever see one ordinary
+    /// flat `Program`. Included items keep their own file on their spans, so cross-file name
+    /// collisions and `glob` resolution behave per the *originating* file.
+    Include(IncludeDecl),
 }
 
 impl Item {
@@ -36,6 +43,7 @@ impl Item {
             Item::Stage(b) => &b.span,
             Item::Pipeline(b) => &b.span,
             Item::Template(b) => &b.span,
+            Item::Include(d) => &d.span,
         }
     }
 }
@@ -47,6 +55,16 @@ pub struct ImportDecl {
     pub module: String,
     /// The identifier to which the module is bound in scope.
     pub alias: String,
+    pub span: Span,
+}
+
+/// An `include "<path>";` declaration that merges another file's items into the program
+/// (Phase 48). `path` is the raw, non-interpolated string given between the quotes; it is
+/// resolved relative to the directory of the file that contains the `include`.
+#[derive(Debug, Clone)]
+pub struct IncludeDecl {
+    /// The included file path, as written (relative to the including file's directory).
+    pub path: String,
     pub span: Span,
 }
 

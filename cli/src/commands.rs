@@ -846,6 +846,17 @@ fn prepare(file: &str, flag_perms: Permissions) -> Option<(Program, AnalysisResu
             return None;
         }
     };
+    // Flatten `include` items first (Phase 48): merge every included file's items into one
+    // program, resolved relative to each including file, before any later pass — so
+    // template inlining, matrix expansion, analysis, and scheduling all see a single
+    // ordinary `Program` regardless of how many files it was authored across.
+    let program = match mainstage_core::expand_includes(&program) {
+        Ok(p) => p,
+        Err(e) => {
+            fail(e);
+            return None;
+        }
+    };
     // Inline `use` steps with their `template` bodies and drop the templates before any
     // later pass, so every stage sees ordinary steps (Phase 46). Runs before matrix
     // expansion so generated stage variants inherit the already-inlined steps.

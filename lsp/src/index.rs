@@ -91,6 +91,9 @@ impl DocumentIndex {
                     idx.templates.push(TemplateInfo { name: t.name.clone(), span: t.span.clone() })
                 }
                 Item::Pipeline(_) => {}
+                // Includes are flattened away before analysis (Phase 48); a single
+                // document's index does not follow them.
+                Item::Include(_) => {}
             }
         }
         idx

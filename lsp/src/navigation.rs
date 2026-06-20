@@ -42,6 +42,20 @@ pub fn definition(text: &str, pos: Position, program: Option<&Program>) -> Optio
     decl_range(text, &index, &target)
 }
 
+/// When the cursor at `pos` lands inside an `include "<path>";` item, returns that raw
+/// include path (as written, relative to the including file). The server resolves it
+/// against the document's own directory to produce a cross-file go-to-definition target —
+/// jumping into the included file. `None` when the cursor is not on an include.
+pub fn include_target(text: &str, pos: Position, program: Option<&Program>) -> Option<String> {
+    let program = program?;
+    let offset = offset_at(text, pos);
+    program.items.iter().find_map(|item| {
+        let Item::Include(inc) = item else { return None };
+        let (start, end) = span_offsets(text, &inc.span);
+        (start <= offset && offset < end).then(|| inc.path.clone())
+    })
+}
+
 /// Resolve the cursor to the `template` declaration named by a `use <template>;` step, or
 /// `None` when the cursor is not on a `use` argument that names a declared template.
 fn use_definition(text: &str, pos: Position, index: &DocumentIndex) -> Option<Range> {
@@ -222,7 +236,8 @@ pub fn document_symbols(text: &str, program: Option<&Program>) -> Vec<Symbol> {
             // A reusable step template (Phase 46) appears in the outline so `use` targets
             // are discoverable.
             Item::Template(t) => (t.name.clone(), SymbolKind::Template, &t.span, None),
-            Item::Import(_) | Item::Project(_) => continue,
+            // Imports, project blocks, and includes are not outline symbols.
+            Item::Import(_) | Item::Project(_) | Item::Include(_) => continue,
         };
         let full = span_to_range(text, span);
         let selection = name_range(text, span, &name).unwrap_or(full);
@@ -359,7 +374,7 @@ fn collect_occurrences(program: &Program) -> Vec<Occurrence> {
             }
             // A template's steps may reference navigable symbols in interpolations.
             Item::Template(t) => walk_steps(&t.steps, &mut occ),
-            Item::Import(_) => {}
+            Item::Import(_) | Item::Include(_) => {}
         }
     }
     occ
@@ -771,6 +786,21 @@ mod tests {
     #[test]
     fn no_definition_without_a_program() {
         assert!(definition("let x = 1;", Position::new(0, 4), None).is_none());
+    }
+
+    #[test]
+    fn include_target_resolves_when_cursor_is_on_an_include() {
+        let text =
+            "include \"components/build.ms\";\nstage s {\n    steps {\n        $ echo hi\n    }\n}";
+        let program = parse(text);
+        // Cursor inside the include path string.
+        let pos = at(text, "components/build.ms");
+        assert_eq!(
+            include_target(text, pos, Some(&program)).as_deref(),
+            Some("components/build.ms")
+        );
+        // Cursor on the stage name is not an include target.
+        assert!(include_target(text, at(text, "stage"), Some(&program)).is_none());
     }
 
     #[test]

@@ -93,9 +93,11 @@ pub fn expand(program: &Program) -> Result<Program> {
                 items.push(Item::Project(b));
             }
             Item::Import(d) => items.push(Item::Import(d.clone())),
-            // Templates are lowered away before matrix expansion runs (see
-            // `commands.rs::prepare`); this arm only keeps the match total.
+            // Templates (Phase 46) and includes (Phase 48) are both lowered away before
+            // matrix expansion runs (see `commands.rs::prepare`); these arms only keep the
+            // match total.
             Item::Template(t) => items.push(Item::Template(t.clone())),
+            Item::Include(d) => items.push(Item::Include(d.clone())),
         }
     }
 

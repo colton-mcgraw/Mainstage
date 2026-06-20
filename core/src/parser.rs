@@ -66,6 +66,7 @@ impl Builder {
 
     fn build_item(&mut self, pair: Pair<Rule>) -> Item {
         match pair.as_rule() {
+            Rule::include_decl => Item::Include(self.build_include(pair)),
             Rule::import_decl => Item::Import(self.build_import(pair)),
             Rule::let_decl => Item::Let(self.build_let(pair)),
             Rule::project_block => Item::Project(self.build_project(pair)),
@@ -74,6 +75,13 @@ impl Builder {
             Rule::template_block => Item::Template(self.build_template(pair)),
             r => unreachable!("unexpected item rule: {:?}", r),
         }
+    }
+
+    fn build_include(&mut self, pair: Pair<Rule>) -> IncludeDecl {
+        let span = self.span(&pair);
+        // The path is a plain string literal (no interpolation), like an import module path.
+        let path = self.extract_raw_string(pair.into_inner().next().unwrap());
+        IncludeDecl { path, span }
     }
 
     fn build_import(&mut self, pair: Pair<Rule>) -> ImportDecl {

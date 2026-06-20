@@ -8,7 +8,8 @@
 use std::path::Path;
 
 use mainstage_core::{
-    Diagnostic, Error, ModuleRegistry, Source, analyze_with, ast::Program, expand_matrix, parse,
+    Diagnostic, Error, ModuleRegistry, Source, analyze_with, ast::Program, expand_includes,
+    expand_matrix, parse,
 };
 
 /// The outcome of analyzing one document.
@@ -37,10 +38,12 @@ pub fn analyze(text: &str, path: &Path, registry: &ModuleRegistry) -> Analysis {
         }
     };
 
-    // Lower `matrix` stages before analysis so matrix validation and matrix-variable
-    // references surface in the editor exactly as they do in the CLI. The authored
-    // `program` is still returned for navigation/completion, which read the source tree.
-    let diagnostics = match expand_matrix(&program) {
+    // Flatten `include`s, then lower `matrix` stages, before analysis — so include errors
+    // (cycles, unreadable files, cross-file name collisions) and matrix validation surface
+    // in the editor exactly as they do in the CLI. Included files are read from disk; the
+    // unsaved buffer is used for the document itself. The authored `program` is still
+    // returned for navigation/completion, which read the (single-file) source tree.
+    let diagnostics = match expand_includes(&program).and_then(|p| expand_matrix(&p)) {
         Ok(lowered) => {
             analyze_with(&lowered, registry).err().map(diagnostics_of).unwrap_or_default()
         }

@@ -142,6 +142,10 @@ impl Printer<'_> {
 
     fn item(&mut self, item: &Item) {
         match item {
+            Item::Include(d) => {
+                let content = format!("include \"{}\";", d.path);
+                self.node_line(&d.span, &content);
+            }
             Item::Import(d) => {
                 let content = format!("import \"{}\" as {};", d.module, d.alias);
                 self.node_line(&d.span, &content);

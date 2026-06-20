@@ -9,6 +9,7 @@ pipelines first).
 | [`hello/`](hello/) | The smallest useful script: one `stage`, one `default pipeline`, `mkdir` + `write` steps, and `${project.*}` interpolation. |
 | [`static-site/`](static-site/) | `glob` filesets, `for` loops, content-addressed copies via the `hash` module inside interpolation, and a stage that depends on other stages' `outputs`. |
 | [`data-report/`](data-report/) | The read-only standard library — `fs`, `json`, `str`, `env` — plus an `if/else` expression driven by an `env(...)` condition. |
+| [`multi-file/`](multi-file/) | `include` composition: a root script merges one `.ms` file per component into a single flat build graph, with cross-file `depends_on`/`outputs` references and a `glob` resolved against its included file's own directory. |
 | [`plugins/`](plugins/) | External stdio plugins (`greet`, `wordcount`) that add modules without recompiling Mainstage. See [`docs/PLUGINS.md`](../docs/PLUGINS.md). |
 
 The repository root also ships [`main.ms`](../main.ms) — a release-style Rust

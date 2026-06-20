@@ -481,6 +481,18 @@ pub fn eval_condition(condition: &Condition, ctx: &EvalContext) -> Result<bool> 
     Evaluator { ctx }.eval_condition(condition)
 }
 
+/// The directory a `glob` pattern resolves against: the directory of the file the glob was
+/// written in (from its span), or `script_dir` when the span carries no usable parent
+/// directory (a bare filename like `test.ms`, or an in-memory source). For a single-file
+/// build this is exactly `script_dir`; for an included file (Phase 48) it is that file's
+/// own directory, so globs stay relative to the file an author is looking at.
+fn glob_base_dir(span: &Span, script_dir: &Path) -> PathBuf {
+    match span.file.parent() {
+        Some(parent) if !parent.as_os_str().is_empty() => parent.to_path_buf(),
+        _ => script_dir.to_path_buf(),
+    }
+}
+
 // ── General comparison conditions (Phase 41) ───────────────────────────────────
 
 /// Apply a comparison operator to two evaluated values. Operand type compatibility for
@@ -624,9 +636,14 @@ impl<'a> Evaluator<'a> {
     }
 
     fn eval_glob(&self, g: &GlobExpr) -> Result<Value> {
+        // Resolve patterns relative to the directory of the file the glob was written in,
+        // so a glob in an included file (Phase 48) matches files next to *that* file rather
+        // than the root script. Falls back to `script_dir` when the span carries no usable
+        // directory (e.g. a bare "test.ms" path, or an in-memory source).
+        let base = glob_base_dir(&g.span, &self.ctx.script_dir);
         let mut entries: Vec<FileEntry> = Vec::new();
         for pattern in &g.patterns {
-            let full = self.ctx.script_dir.join(pattern);
+            let full = base.join(pattern);
             // glob crate expects forward slashes on all platforms
             let pattern_str = full.to_string_lossy().replace('\\', "/");
             let iter = glob::glob(&pattern_str).map_err(|e| {
