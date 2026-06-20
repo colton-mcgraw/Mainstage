@@ -229,6 +229,10 @@ pub fn document_symbols(text: &str, program: Option<&Program>) -> Vec<Symbol> {
     for item in &program.items {
         let (name, kind, span, detail) = match item {
             Item::Let(d) => (d.name.clone(), SymbolKind::Let, &d.span, None),
+            // A build parameter (Phase 49) appears in the outline with its type as detail.
+            Item::Param(d) => {
+                (d.name.clone(), SymbolKind::Param, &d.span, Some(d.ty.keyword().to_string()))
+            }
             // A stage carries its description and ordering as the outline detail, so a
             // multi-stage build is navigable from the editor's symbol list.
             Item::Stage(s) => (s.name.clone(), SymbolKind::Stage, &s.span, stage_detail(s)),
@@ -275,6 +279,7 @@ pub struct Symbol {
 /// The category of an outline [`Symbol`].
 pub enum SymbolKind {
     Let,
+    Param,
     Stage,
     Pipeline,
     Template,
@@ -306,7 +311,9 @@ fn target_at(text: &str, pos: Position, index: &DocumentIndex) -> Option<Target>
     if index.is_stage(word) {
         return Some(Target::Stage(word.to_string()));
     }
-    if index.lets.iter().any(|l| l.name == word) {
+    // A `let` and a `param` (Phase 49) are both value bindings; a reference to either
+    // resolves the same way, so they share the `Let` target.
+    if index.lets.iter().any(|l| l.name == word) || index.params.iter().any(|p| p.name == word) {
         return Some(Target::Let(word.to_string()));
     }
     if index.module_for_alias(word).is_some() {
@@ -317,11 +324,18 @@ fn target_at(text: &str, pos: Position, index: &DocumentIndex) -> Option<Target>
 
 /// The declaration name range for `target`, searched within its declaring item.
 fn decl_range(text: &str, index: &DocumentIndex, target: &Target) -> Option<Range> {
-    let (span, name) = match target {
-        Target::Let(name) => (&index.lets.iter().find(|l| &l.name == name)?.span, name),
-        Target::Stage(name) => (&index.stages.iter().find(|s| &s.name == name)?.span, name),
-        Target::Alias(name) => (&index.imports.iter().find(|i| &i.alias == name)?.span, name),
-    };
+    let (span, name) =
+        match target {
+            Target::Let(name) => {
+                let span =
+                    index.lets.iter().find(|l| &l.name == name).map(|l| &l.span).or_else(|| {
+                        index.params.iter().find(|p| &p.name == name).map(|p| &p.span)
+                    })?;
+                (span, name)
+            }
+            Target::Stage(name) => (&index.stages.iter().find(|s| &s.name == name)?.span, name),
+            Target::Alias(name) => (&index.imports.iter().find(|i| &i.alias == name)?.span, name),
+        };
     name_range(text, span, name)
 }
 
@@ -355,6 +369,8 @@ fn collect_occurrences(program: &Program) -> Vec<Occurrence> {
     for item in &program.items {
         match item {
             Item::Let(d) => walk_expr(&d.value, &mut occ),
+            // A param's default may reference earlier bindings in interpolations.
+            Item::Param(d) => walk_expr(&d.default, &mut occ),
             Item::Project(p) => {
                 for field in &p.fields {
                     walk_expr(&field.value, &mut occ);
@@ -636,6 +652,25 @@ mod tests {
         let def = definition(text, at_last(text, "name"), Some(&program)).expect("definition");
         // Points at the declared `name` on line 1.
         assert_eq!(def.start, Position::new(0, 4));
+    }
+
+    #[test]
+    fn definition_of_param_reference() {
+        // A reference to a `param` navigates to its declaration, exactly like a `let`.
+        let text = "param target: string = \"release\";\nlet label = target;";
+        let program = parse(text);
+        let def = definition(text, at_last(text, "target"), Some(&program)).expect("definition");
+        assert_eq!(def.start, at(text, "target"));
+    }
+
+    #[test]
+    fn document_symbols_include_params() {
+        let text = "param target: string = \"release\";\nlet name = \"demo\";";
+        let program = parse(text);
+        let symbols = document_symbols(text, Some(&program));
+        let param = symbols.iter().find(|s| s.name == "target").expect("param symbol");
+        assert!(matches!(param.kind, SymbolKind::Param));
+        assert_eq!(param.detail.as_deref(), Some("string"));
     }
 
     #[test]

@@ -4,6 +4,7 @@
 //! terminal output. Every command returns a process exit code (0 = success).
 
 use chrono::{DateTime, Local};
+use std::collections::HashMap;
 use std::io::Write;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
@@ -15,8 +16,8 @@ use mainstage_core::ast::Program;
 use mainstage_core::{
     AnalysisResult, AssertionResult, CancelToken, Diagnostic, Error, EvalContext, LintLevel,
     ModuleRegistry, Permissions, Plan, PlanStatus, Reporter, ReporterHandle, Source, Span,
-    StageOutcome, analyze_with, ast, cache, eval_program_with, lint_plugin, parse,
-    pipeline_input_paths, plan_pipeline, run_pipeline_cancellable,
+    StageOutcome, Value, analyze_with, ast, cache, eval_program_with_overrides, lint_plugin,
+    params_from_manifest, parse, pipeline_input_paths, plan_pipeline, run_pipeline_cancellable,
 };
 
 use crate::scaffold::{self, Lang};
@@ -86,6 +87,17 @@ pub fn setup(cli: Command) -> Command {
                 "Show the planned execution order and which stages would run, without executing",
             ),
         )
+        // Build-parameter overrides (Phase 49). Repeatable and global, so `-D` may appear
+        // before or after the subcommand. Each value overrides a declared `param`.
+        .arg(
+            Arg::new("param")
+                .short('D')
+                .long("param")
+                .value_name("NAME=VALUE")
+                .action(ArgAction::Append)
+                .global(true)
+                .help("Override a declared build parameter (repeatable, e.g. -D release=true)"),
+        )
         .subcommand(
             Command::new("run")
                 .about("Run a named pipeline")
@@ -111,6 +123,11 @@ pub fn setup(cli: Command) -> Command {
                         .action(ArgAction::SetTrue)
                         .help("Show each stage's description: field, when present"),
                 ),
+        )
+        .subcommand(
+            Command::new("params")
+                .about("List declared build parameters and their effective values")
+                .arg(file_arg()),
         )
         .subcommand(Command::new("clean").about("Clear the change-detection cache").arg(file_arg()))
         .subcommand(
@@ -213,23 +230,32 @@ pub fn dispatch(matches: &clap::ArgMatches) -> i32 {
     // `--jobs` is global, so it is read from the top-level matches wherever it appears.
     let jobs = matches.get_one::<usize>("jobs").copied();
     let dry_run = matches.get_flag("dry-run");
+    // Build-parameter overrides are global too (Phase 49); collect them once here.
+    let overrides = match collect_overrides(matches) {
+        Ok(o) => o,
+        Err(msg) => {
+            eprintln!("{} {msg}", style("error:").red().bold());
+            return 2;
+        }
+    };
     match matches.subcommand() {
         Some(("run", sub)) => {
             let name = sub.get_one::<String>("name").map(String::as_str);
             if dry_run {
-                cmd_dry_run(file_of(sub), name, flags)
+                cmd_dry_run(file_of(sub), name, flags, &overrides)
             } else {
-                cmd_run(file_of(sub), name, flags, jobs, verbosity)
+                cmd_run(file_of(sub), name, flags, jobs, verbosity, &overrides)
             }
         }
         Some(("watch", sub)) => {
             let name = sub.get_one::<String>("name").map(String::as_str);
-            cmd_watch(file_of(sub), name, flags, jobs, verbosity)
+            cmd_watch(file_of(sub), name, flags, jobs, verbosity, &overrides)
         }
-        Some(("list", sub)) => cmd_list(file_of(sub), flags, sub.get_flag("describe")),
+        Some(("list", sub)) => cmd_list(file_of(sub), flags, sub.get_flag("describe"), &overrides),
+        Some(("params", sub)) => cmd_params(file_of(sub), flags, &overrides),
         Some(("clean", sub)) => cmd_clean(file_of(sub)),
         Some(("parse", sub)) => cmd_parse(file_of(sub)),
-        Some(("eval", sub)) => cmd_eval(file_of(sub), flags),
+        Some(("eval", sub)) => cmd_eval(file_of(sub), flags, &overrides),
         Some(("modules", sub)) => cmd_modules(file_of(sub), flags),
         Some(("lsp", _)) => cmd_lsp(),
         Some(("plugin", sub)) => match sub.subcommand() {
@@ -251,8 +277,8 @@ pub fn dispatch(matches: &clap::ArgMatches) -> i32 {
             cmd_format(&files, sub.get_flag("check"), sub.get_flag("stdout"))
         }
         // No subcommand: plan or run the default pipeline.
-        None if dry_run => cmd_dry_run(file_of(matches), None, flags),
-        None => cmd_run(file_of(matches), None, flags, jobs, verbosity),
+        None if dry_run => cmd_dry_run(file_of(matches), None, flags, &overrides),
+        None => cmd_run(file_of(matches), None, flags, jobs, verbosity, &overrides),
         Some((other, _)) => {
             eprintln!("{} unknown command '{}'", style("error:").red().bold(), other);
             2
@@ -288,6 +314,26 @@ fn file_of(matches: &clap::ArgMatches) -> &str {
     matches.get_one::<String>("file").map(String::as_str).unwrap_or(DEFAULT_SCRIPT)
 }
 
+/// Parse the repeated `-D NAME=VALUE` flags into a `name → raw value` map (Phase 49). Each
+/// value must contain an `=`; the name is everything before the first one (so a value may
+/// itself contain `=`). A malformed flag is an `Err` the caller renders and exits on.
+fn collect_overrides(matches: &clap::ArgMatches) -> Result<HashMap<String, String>, String> {
+    let mut map = HashMap::new();
+    if let Some(values) = matches.get_many::<String>("param") {
+        for raw in values {
+            match raw.split_once('=') {
+                Some((name, value)) if !name.is_empty() => {
+                    map.insert(name.to_string(), value.to_string());
+                }
+                _ => {
+                    return Err(format!("invalid parameter override '{raw}': expected NAME=VALUE"));
+                }
+            }
+        }
+    }
+    Ok(map)
+}
+
 /// Derive the capabilities granted on the command line. `--allow-all` implies both.
 fn flag_permissions(matches: &clap::ArgMatches) -> Permissions {
     let all = matches.get_flag("allow-all");
@@ -305,8 +351,9 @@ fn cmd_run(
     perms: Permissions,
     jobs: Option<usize>,
     verbosity: Verbosity,
+    overrides: &HashMap<String, String>,
 ) -> i32 {
-    let Some((program, analysis, ctx)) = prepare(file, perms) else {
+    let Some((program, analysis, ctx)) = prepare(file, perms, overrides) else {
         return 1;
     };
 
@@ -364,17 +411,61 @@ fn run_prepared(
 
 /// Show the plan for a pipeline — the dependency waves and, per stage, whether it would
 /// run or be skipped — without executing any steps. The cache is read but never written.
-fn cmd_dry_run(file: &str, pipeline: Option<&str>, perms: Permissions) -> i32 {
-    let Some((program, analysis, ctx)) = prepare(file, perms) else {
+fn cmd_dry_run(
+    file: &str,
+    pipeline: Option<&str>,
+    perms: Permissions,
+    overrides: &HashMap<String, String>,
+) -> i32 {
+    let Some((program, analysis, ctx)) = prepare(file, perms, overrides) else {
         return 1;
     };
 
+    // Surface the effective parameter values up front, so a dry run documents the knobs the
+    // plan was computed under (Phase 49).
+    print_effective_params(&ctx);
     let plan = match plan_pipeline(&program, pipeline, &ctx, &analysis) {
         Ok(p) => p,
         Err(e) => return fail(e),
     };
     print_plan(&plan);
     0
+}
+
+/// Print the resolved build parameters and their effective values, one per line, when any
+/// are declared. Shared by `--dry-run` and `mainstage params`.
+fn print_effective_params(ctx: &EvalContext) {
+    if ctx.params.is_empty() {
+        return;
+    }
+    println!("{}", style("parameters:").bold());
+    for (name, value) in &ctx.params {
+        println!("  {} = {}", style(name).cyan(), render_param_value(value));
+    }
+    println!();
+}
+
+/// Render a resolved parameter [`Value`] for listing: strings are quoted, lists are shown in
+/// bracket form, and scalars print plainly — a compact, unambiguous one-line form.
+fn render_param_value(value: &Value) -> String {
+    match value {
+        Value::String(s) => format!("\"{s}\""),
+        Value::Int(n) => n.to_string(),
+        Value::Bool(b) => b.to_string(),
+        Value::List(items) => {
+            let inner = items.iter().map(render_param_value).collect::<Vec<_>>().join(", ");
+            format!("[{inner}]")
+        }
+        // Parameters never hold filesets, but render defensively rather than panicking.
+        Value::FileSet(entries) => {
+            let inner = entries
+                .iter()
+                .map(|e| format!("\"{}\"", e.path.display()))
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("[{inner}]")
+        }
+    }
 }
 
 /// Render a [`Plan`] as numbered waves of stages, each tagged `run` or `skip`. Stages in
@@ -434,6 +525,7 @@ fn cmd_watch(
     perms: Permissions,
     jobs: Option<usize>,
     verbosity: Verbosity,
+    overrides: &HashMap<String, String>,
 ) -> i32 {
     // A single cancellation token, shared with one Ctrl-C handler installed for the whole
     // watch session: the first Ctrl-C cancels an in-flight run; once idle, it ends watch.
@@ -450,7 +542,7 @@ fn cmd_watch(
         if cancel.is_cancelled() {
             break;
         }
-        match prepare(file, perms) {
+        match prepare(file, perms, overrides) {
             Some((program, analysis, ctx)) => {
                 let _ = run_prepared(&program, pipeline, &ctx, &analysis, jobs, verbosity, &cancel);
                 // A Ctrl-C during the run cancels it and ends the watch session.
@@ -539,10 +631,19 @@ fn wait_for_change(paths: &[std::path::PathBuf], cancel: &CancelToken) -> bool {
 
 // ── list ────────────────────────────────────────────────────────────────────────
 
-fn cmd_list(file: &str, perms: Permissions, describe: bool) -> i32 {
-    let Some((program, _, _)) = prepare(file, perms) else {
+fn cmd_list(
+    file: &str,
+    perms: Permissions,
+    describe: bool,
+    overrides: &HashMap<String, String>,
+) -> i32 {
+    let Some((program, _, ctx)) = prepare(file, perms, overrides) else {
         return 1;
     };
+
+    // Lead the listing with the build's parameters and their effective values, so the
+    // overridable knobs of a build are discoverable alongside its pipelines (Phase 49).
+    print_effective_params(&ctx);
 
     let pipelines: Vec<&ast::PipelineBlock> = program
         .items
@@ -617,6 +718,53 @@ fn stage_names(expr: &ast::Expr) -> Vec<String> {
     }
 }
 
+// ── params ──────────────────────────────────────────────────────────────────────
+
+/// List every declared `param`: its name, declared type, default expression, and the
+/// effective value after applying any `-D` / manifest overrides (Phase 49).
+fn cmd_params(file: &str, perms: Permissions, overrides: &HashMap<String, String>) -> i32 {
+    let Some((program, _, ctx)) = prepare(file, perms, overrides) else {
+        return 1;
+    };
+
+    let params: Vec<&ast::ParamDecl> = program
+        .items
+        .iter()
+        .filter_map(|item| match item {
+            ast::Item::Param(p) => Some(p),
+            _ => None,
+        })
+        .collect();
+
+    if params.is_empty() {
+        println!("no parameters declared in {file}");
+        return 0;
+    }
+
+    // The effective value for each name, resolved during evaluation.
+    let effective: HashMap<&str, &Value> =
+        ctx.params.iter().map(|(n, v)| (n.as_str(), v)).collect();
+
+    for p in params {
+        let value = effective
+            .get(p.name.as_str())
+            .map(|v| render_param_value(v))
+            .unwrap_or_else(|| "<unresolved>".to_string());
+        // A glyph marks parameters whose value came from an override rather than the default.
+        let overridden = overrides.contains_key(&p.name);
+        let tag =
+            if overridden { style(" (overridden)").yellow().to_string() } else { String::new() };
+        println!(
+            "{}: {} = {}{}",
+            style(&p.name).cyan().bold(),
+            style(p.ty.keyword()).dim(),
+            value,
+            tag
+        );
+    }
+    0
+}
+
 // ── clean ───────────────────────────────────────────────────────────────────────
 
 fn cmd_clean(file: &str) -> i32 {
@@ -646,8 +794,8 @@ fn cmd_parse(file: &str) -> i32 {
     }
 }
 
-fn cmd_eval(file: &str, perms: Permissions) -> i32 {
-    match prepare(file, perms) {
+fn cmd_eval(file: &str, perms: Permissions, overrides: &HashMap<String, String>) -> i32 {
+    match prepare(file, perms, overrides) {
         Some((_, _, ctx)) => {
             println!("{ctx:#?}");
             0
@@ -831,7 +979,11 @@ fn cmd_format(files: &[String], check: bool, stdout: bool) -> i32 {
 /// `flag_perms` are the capabilities granted on the command line; they are unioned
 /// with any declared in the manifest `[permissions]` block, so a capability granted
 /// by either source is in effect for the run.
-fn prepare(file: &str, flag_perms: Permissions) -> Option<(Program, AnalysisResult, EvalContext)> {
+fn prepare(
+    file: &str,
+    flag_perms: Permissions,
+    cli_overrides: &HashMap<String, String>,
+) -> Option<(Program, AnalysisResult, EvalContext)> {
     let source = match Source::from_file(file) {
         Ok(s) => s,
         Err(e) => {
@@ -901,7 +1053,17 @@ fn prepare(file: &str, flag_perms: Permissions) -> Option<(Program, AnalysisResu
             return None;
         }
     };
-    let ctx = match eval_program_with(&program, script_dir(file), registry) {
+    // Layer parameter overrides (Phase 49): the manifest `[params]` block supplies defaults,
+    // and command-line `-D` flags take precedence over them.
+    let mut overrides = match params_from_manifest(script_dir(file)) {
+        Ok(m) => m,
+        Err(e) => {
+            fail(e);
+            return None;
+        }
+    };
+    overrides.extend(cli_overrides.iter().map(|(k, v)| (k.clone(), v.clone())));
+    let ctx = match eval_program_with_overrides(&program, script_dir(file), registry, &overrides) {
         Ok(c) => c,
         Err(e) => {
             fail(e);

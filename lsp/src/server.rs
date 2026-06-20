@@ -310,6 +310,7 @@ impl LanguageServer for Backend {
 fn to_document_symbol(symbol: &navigation::Symbol) -> DocumentSymbol {
     let kind = match symbol.kind {
         navigation::SymbolKind::Let => SymbolKind::VARIABLE,
+        navigation::SymbolKind::Param => SymbolKind::CONSTANT,
         navigation::SymbolKind::Stage => SymbolKind::CLASS,
         navigation::SymbolKind::Pipeline => SymbolKind::FUNCTION,
         navigation::SymbolKind::Template => SymbolKind::INTERFACE,

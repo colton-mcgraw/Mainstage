@@ -796,16 +796,16 @@ Replace the `env()`-for-everything idiom with typed, declared build parameters t
 overridable from the command line. Output: `mainstage -D release=true run ci` instead of
 exporting environment variables.
 
-- [ ] `param <ident>: <type> = <default>;` top-level item (`string` / `int` / `bool` /
+- [x] `param <ident>: <type> = <default>;` top-level item (`string` / `int` / `bool` /
       `list`), resolved at load time in declaration order alongside `let` and referenceable
       anywhere a `let` is
-- [ ] `-D <name>=<value>` / `--param <name>=<value>` CLI flags (and an optional manifest
+- [x] `-D <name>=<value>` / `--param <name>=<value>` CLI flags (and an optional manifest
       `[params]` block) to override defaults, with typed parsing and precise diagnostics on
       an unknown name or a type mismatch
-- [ ] `sema.rs` validation (unique names, default's type matches the declared type,
+- [x] `sema.rs` validation (unique names, default's type matches the declared type,
       forward-reference rule); `eval.rs` wiring (thread the resolved param set through
       `EvalContext` / `clone_base` / test helpers)
-- [ ] Surface parameters and their effective values in `mainstage list`, `--dry-run`, and a
+- [x] Surface parameters and their effective values in `mainstage list`, `--dry-run`, and a
       `mainstage params` listing; LSP completion and hover; `format.rs` + LSP exhaustive
       arms; docs in `docs/GRAMMAR.md` and an example
 

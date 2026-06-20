@@ -826,6 +826,7 @@ mod tests {
                 .iter()
                 .map(|(k, v)| (k.to_string(), Value::String(v.to_string())))
                 .collect(),
+            params: Vec::new(),
             project_fields: HashMap::new(),
             for_vars: HashMap::new(),
             matrix_vars: HashMap::new(),
@@ -978,6 +979,7 @@ mod tests {
             script_dir: std::env::temp_dir(),
             platform: "linux".to_string(),
             let_values: vec![("p".to_string(), Value::String(tmp.display().to_string()))],
+            params: Vec::new(),
             project_fields: HashMap::new(),
             for_vars: HashMap::new(),
             matrix_vars: HashMap::new(),
@@ -1143,6 +1145,7 @@ mod tests {
             script_dir: std::env::temp_dir(),
             platform: "linux".to_string(),
             let_values: vec![("p".to_string(), Value::String(tmp.display().to_string()))],
+            params: Vec::new(),
             project_fields: HashMap::new(),
             for_vars: HashMap::new(),
             matrix_vars: HashMap::new(),

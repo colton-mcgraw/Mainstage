@@ -4,11 +4,12 @@
 //! script directory, covering `let`/`project` evaluation, string interpolation,
 //! `glob`/`fileset`, and `if/else` conditional resolution.
 
+use std::collections::HashMap;
 use std::path::PathBuf;
 
 use mainstage_core::{
     Error, EvalContext, ModuleRegistry, Permissions, Source, Value, eval_program,
-    eval_program_with, parse,
+    eval_program_with, eval_program_with_overrides, parse,
 };
 
 /// Parse `src` and evaluate it relative to `script_dir`, asserting success.
@@ -464,4 +465,92 @@ fn http_get_denied_without_net_capability() {
     )
     .expect_err("http.get must be denied without the net capability");
     assert!(format!("{err}").contains("permission denied"), "got: {err}");
+}
+
+// ── Params (Phase 49) ─────────────────────────────────────────────────────────────
+
+/// Parse `src` and evaluate it with the given parameter overrides.
+fn eval_with_overrides(
+    src: &str,
+    overrides: &HashMap<String, String>,
+) -> Result<EvalContext, Error> {
+    let program = parse(&Source::from_str("test.ms", src)).expect("parse should succeed");
+    eval_program_with_overrides(
+        &program,
+        &PathBuf::from("."),
+        ModuleRegistry::standard(),
+        overrides,
+    )
+}
+
+#[test]
+fn param_default_resolves_when_no_override() {
+    let ctx = eval(
+        r#"
+        param target: string = "release";
+        param jobs: int = 4;
+        let label = "${target}-${jobs}";
+        "#,
+    );
+    assert!(matches!(let_val(&ctx, "target"), Value::String(s) if s == "release"));
+    assert!(matches!(let_val(&ctx, "jobs"), Value::Int(4)));
+    assert!(matches!(let_val(&ctx, "label"), Value::String(s) if s == "release-4"));
+    // The resolved params are also exposed in declaration order on `ctx.params`.
+    assert_eq!(ctx.params.len(), 2);
+    assert_eq!(ctx.params[0].0, "target");
+}
+
+#[test]
+fn override_replaces_the_default() {
+    let overrides = HashMap::from([
+        ("target".to_string(), "debug".to_string()),
+        ("jobs".to_string(), "8".to_string()),
+    ]);
+    let ctx = eval_with_overrides(
+        r#"
+        param target: string = "release";
+        param jobs: int = 4;
+        "#,
+        &overrides,
+    )
+    .expect("overrides should apply");
+    assert!(matches!(let_val(&ctx, "target"), Value::String(s) if s == "debug"));
+    assert!(matches!(let_val(&ctx, "jobs"), Value::Int(8)));
+}
+
+#[test]
+fn bool_and_list_overrides_parse_by_type() {
+    let overrides = HashMap::from([
+        ("release".to_string(), "true".to_string()),
+        ("features".to_string(), "a,b,c".to_string()),
+    ]);
+    let ctx = eval_with_overrides(
+        r#"
+        param release: bool = false;
+        param features: list = [];
+        "#,
+        &overrides,
+    )
+    .expect("typed overrides should parse");
+    assert!(matches!(let_val(&ctx, "release"), Value::Bool(true)));
+    match let_val(&ctx, "features") {
+        Value::List(items) => assert_eq!(items.len(), 3),
+        other => panic!("expected list, got {other:?}"),
+    }
+}
+
+#[test]
+fn override_with_a_type_mismatch_is_an_error() {
+    let overrides = HashMap::from([("jobs".to_string(), "lots".to_string())]);
+    let err = eval_with_overrides(r#"param jobs: int = 4;"#, &overrides)
+        .expect_err("a non-integer override must be rejected");
+    assert!(format!("{err}").contains("not an integer"), "got: {err}");
+}
+
+#[test]
+fn unknown_override_name_is_an_error() {
+    let overrides = HashMap::from([("nope".to_string(), "x".to_string())]);
+    let err = eval_with_overrides(r#"param jobs: int = 4;"#, &overrides)
+        .expect_err("an override naming no param must be rejected");
+    assert!(format!("{err}").contains("unknown parameter 'nope'"), "got: {err}");
 }

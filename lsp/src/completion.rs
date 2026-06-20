@@ -163,6 +163,10 @@ fn expression_completions(text: &str, program: Option<&Program>) -> Vec<Completi
         for l in &idx.lets {
             items.push(simple_item(&l.name, CompletionItemKind::VARIABLE));
         }
+        // Build parameters (Phase 49) are referenceable anywhere a `let` is.
+        for p in &idx.params {
+            items.push(simple_item(&p.name, CompletionItemKind::CONSTANT));
+        }
         for s in &idx.stages {
             items.push(simple_item(&s.name, CompletionItemKind::CLASS));
         }

@@ -84,6 +84,31 @@ fn validation_errors_example_is_rejected() {
     }
 }
 
+#[test]
+fn params_example_resolves_defaults_and_overrides() {
+    use mainstage_core::eval_program_with_overrides;
+    use std::collections::HashMap;
+
+    let dir = examples_dir().parent().unwrap().join("examples/params");
+    let source = Source::from_file(dir.join("main.ms")).expect("params example should exist");
+    let program = parse(&source).expect("params example should parse");
+    let registry = ModuleRegistry::with_plugins(&dir).unwrap();
+    analyze_with(&program, &registry).expect("params example should analyze");
+
+    // With no overrides the declared defaults resolve, and `profile` follows `release`.
+    let ctx = eval_program_with_overrides(&program, &dir, registry.clone(), &HashMap::new())
+        .expect("defaults should evaluate");
+    assert!(matches!(let_val(&ctx.params, "release"), Value::Bool(false)));
+    assert!(matches!(let_val(&ctx.let_values, "profile"), Value::String(s) if s == "debug"));
+
+    // A `-D release=true` override flips the boolean and the derived `profile`.
+    let overrides = HashMap::from([("release".to_string(), "true".to_string())]);
+    let ctx = eval_program_with_overrides(&program, &dir, registry, &overrides)
+        .expect("overrides should evaluate");
+    assert!(matches!(let_val(&ctx.params, "release"), Value::Bool(true)));
+    assert!(matches!(let_val(&ctx.let_values, "profile"), Value::String(s) if s == "release"));
+}
+
 /// The plugin example shells out to `tests/plugin/greet.sh`; gate it on unix, which
 /// is where the POSIX-shell plugin and the execute bit are meaningful.
 #[cfg(unix)]

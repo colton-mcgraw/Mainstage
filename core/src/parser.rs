@@ -69,6 +69,7 @@ impl Builder {
             Rule::include_decl => Item::Include(self.build_include(pair)),
             Rule::import_decl => Item::Import(self.build_import(pair)),
             Rule::let_decl => Item::Let(self.build_let(pair)),
+            Rule::param_decl => Item::Param(self.build_param(pair)),
             Rule::project_block => Item::Project(self.build_project(pair)),
             Rule::stage_block => Item::Stage(self.build_stage(pair)),
             Rule::pipeline_block => Item::Pipeline(self.build_pipeline(pair)),
@@ -98,6 +99,22 @@ impl Builder {
         let name = inner.next().unwrap().as_str().to_string();
         let value = self.build_expr(inner.next().unwrap());
         LetDecl { name, value, span }
+    }
+
+    fn build_param(&mut self, pair: Pair<Rule>) -> ParamDecl {
+        let span = self.span(&pair);
+        let mut inner = pair.into_inner();
+        let name = inner.next().unwrap().as_str().to_string();
+        let ty = match inner.next().unwrap().as_str() {
+            "string" => ParamType::String,
+            "int" => ParamType::Int,
+            "bool" => ParamType::Bool,
+            "list" => ParamType::List,
+            // The `param_type` grammar rule admits only these four spellings.
+            other => unreachable!("unexpected param type: {other:?}"),
+        };
+        let default = self.build_expr(inner.next().unwrap());
+        ParamDecl { name, ty, default, span }
     }
 
     // ── Project ───────────────────────────────────────────────────────────────

@@ -79,6 +79,67 @@ fn declared_module_resolves() {
     );
 }
 
+// ── Params (Phase 49) ─────────────────────────────────────────────────────────────
+
+#[test]
+fn param_resolves_and_is_referenceable_like_a_let() {
+    analyze_ok(
+        r#"
+        param target: string = "release";
+        let label = "build-${target}";
+        "#,
+    );
+}
+
+#[test]
+fn param_default_type_must_match_declared_type() {
+    let diags = analyze_err(r#"param jobs: int = "four";"#);
+    assert!(has_msg(&diags, "declared int but its default produces string"));
+}
+
+#[test]
+fn param_default_may_reference_an_earlier_binding() {
+    analyze_ok(
+        r#"
+        let base = "rel";
+        param target: string = "${base}-x";
+        "#,
+    );
+}
+
+#[test]
+fn param_forward_reference_errors() {
+    let diags = analyze_err(
+        r#"
+        param a: string = b;
+        let b = "x";
+        "#,
+    );
+    assert!(has_msg(&diags, "forward reference"));
+}
+
+#[test]
+fn duplicate_param_name_errors() {
+    let diags = analyze_err(
+        r#"
+        param a: int = 1;
+        param a: int = 2;
+        "#,
+    );
+    assert!(has_msg(&diags, "param 'a' is already defined"));
+}
+
+#[test]
+fn param_and_let_share_one_namespace() {
+    let diags = analyze_err(
+        r#"
+        let a = "x";
+        param a: int = 1;
+        "#,
+    );
+    assert!(has_msg(&diags, "param 'a' is already defined"));
+}
+
 // ── Module-call validation ────────────────────────────────────────────────────────
 
 #[test]

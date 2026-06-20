@@ -34,6 +34,13 @@
           }
         },
         {
+          "match": "\\b(param)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": { "name": "keyword.declaration.mainstage" },
+            "2": { "name": "variable.other.mainstage" }
+          }
+        },
+        {
           "match": "\\b(for)\\s+([A-Za-z_][A-Za-z0-9_]*)",
           "captures": {
             "1": { "name": "keyword.control.mainstage" },
@@ -76,7 +83,7 @@
         },
         {
           "name": "keyword.declaration.mainstage",
-          "match": "\\b(import|as|let|default|pipeline|stage|project)\\b"
+          "match": "\\b(import|as|let|param|default|pipeline|stage|project)\\b"
         },
         {
           "name": "keyword.other.block.mainstage",
