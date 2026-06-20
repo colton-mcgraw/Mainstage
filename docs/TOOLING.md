@@ -72,21 +72,22 @@ or [Open VSX](https://open-vsx.org/extension/colton-mcgraw/mainstage) (search fo
 "Mainstage", or run `code --install-extension colton-mcgraw.mainstage`). It registers the
 `.ms` language and manages the language server for you.
 
-The extension needs no configuration when a `mainstage` or `mainstage-lsp` binary is
-installed. On activation it locates the server in this order:
+**No configuration and no separate CLI install are needed:** the extension bundles a
+per-platform `mainstage-lsp` binary, and the Marketplace serves the build matching your
+OS and architecture. Because the extension declares `extensionKind: ["workspace"]`, in a
+remote container, WSL, or SSH session it runs — and the bundled server runs — on the
+remote side, where the project and build live, so the binary's architecture always
+matches.
 
-1. the `mainstage.server.path` setting, if set;
-2. `mainstage-lsp` or `mainstage` on your `PATH`;
-3. `mainstage-lsp` or `mainstage` in a common install location (`~/.local/bin`,
-   `~/.cargo/bin`, `/usr/local/bin`, `/opt/homebrew/bin`).
-
-A `mainstage` binary is launched as `mainstage lsp`; a dedicated `mainstage-lsp`
-binary is launched directly. If no binary is found, the extension links to the
-[install instructions](../README.md#installation). Point `mainstage.server.path` at a
-specific executable to override discovery.
+To use a different server (a development build or a system install), set
+`mainstage.server.path` to a `mainstage` or `mainstage-lsp` executable; a `mainstage`
+binary is then launched as `mainstage lsp` and a `mainstage-lsp` binary directly. If the
+installed VSIX has no binary for the current platform, the extension links to the
+[install instructions](../README.md#installation) and the `mainstage.server.path`
+setting.
 
 The extension source lives in [`editors/vscode/`](../editors/vscode/); see its README
-to build and run it from source.
+to build, bundle the server, and run it from source.
 
 #### Neovim (built-in LSP)
 

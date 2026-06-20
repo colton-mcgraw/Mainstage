@@ -2,8 +2,12 @@
 .gitignore
 .vscodeignore
 src/**
+scripts/**
 out/test/**
 tsconfig.json
 **/*.map
 **/*.ts
 .github/**
+
+# Keep the bundled server binary in the package (it lives in server/).
+!server/**

@@ -1,26 +1,106 @@
 name: Publish VS Code Extension
 
 # Packages the VS Code extension and publishes it to the Visual Studio
-# Marketplace and Open VSX on each version tag. Requires two repository secrets:
+# Marketplace and Open VSX on each version tag. The extension bundles the
+# `mainstage-lsp` server, so it is built and published per-platform: each
+# platform-specific VSIX ships the matching server binary and works with no
+# manual configuration, including in remote containers and WSL.
+#
+# Requires two repository secrets:
 #   VSCE_PAT  - Visual Studio Marketplace personal access token
 #   OVSX_PAT  - Open VSX access token
-# A manual run packages and uploads the .vsix artifact without publishing
+# A manual run packages and uploads the .vsix artifacts without publishing
 # (useful for verifying a build before tagging a release).
 on:
   push:
     tags: ["v*"]
   workflow_dispatch:
 
-defaults:
-  run:
-    working-directory: editors/vscode
-
 jobs:
+  # Build one platform-specific VSIX per target. Each job cross-compiles (or
+  # natively builds) `mainstage-lsp`, copies it into `editors/vscode/server/`,
+  # and runs `vsce package --target <vsce-target>`.
+  package:
+    name: package (${{ matrix.vsce-target }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            rust-target: x86_64-unknown-linux-gnu
+            vsce-target: linux-x64
+          - os: ubuntu-24.04-arm
+            rust-target: aarch64-unknown-linux-gnu
+            vsce-target: linux-arm64
+          - os: windows-latest
+            rust-target: x86_64-pc-windows-msvc
+            vsce-target: win32-x64
+          - os: macos-latest
+            rust-target: x86_64-apple-darwin
+            vsce-target: darwin-x64
+          - os: macos-latest
+            rust-target: aarch64-apple-darwin
+            vsce-target: darwin-arm64
+    defaults:
+      run:
+        working-directory: editors/vscode
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust (stable)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust-target }}
+
+      - name: Cache cargo registry and build artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build language server
+        working-directory: .
+        run: cargo build -p mainstage_lsp --bin mainstage-lsp --release --locked --target ${{ matrix.rust-target }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: editors/vscode/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Compile
+        run: npm run compile
+
+      - name: Bundle the server binary
+        run: npm run copy-server
+        env:
+          MAINSTAGE_PROFILE: release
+          MAINSTAGE_TARGET: ${{ matrix.rust-target }}
+
+      - name: Package extension
+        run: npx vsce package --target ${{ matrix.vsce-target }} --out mainstage-${{ matrix.vsce-target }}.vsix
+
+      - name: Upload .vsix artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: mainstage-vsix-${{ matrix.vsce-target }}
+          path: editors/vscode/mainstage-${{ matrix.vsce-target }}.vsix
+          if-no-files-found: error
+
+  # Publish each platform-specific VSIX. Runs only after every target packaged
+  # successfully, and only when the matching token secret is set — otherwise the
+  # step is skipped (not failed), so the run stays green and the artifacts above
+  # are still available for a manual upload.
   publish:
-    name: package and publish
+    name: publish
+    needs: package
     runs-on: ubuntu-latest
-    # Exposed at job level so the publish steps can gate on token presence in
-    # their `if` (step-level `env` is not visible to that step's own `if`).
+    if: startsWith(github.ref, 'refs/tags/')
+    defaults:
+      run:
+        working-directory: editors/vscode
     env:
       VSCE_PAT: ${{ secrets.VSCE_PAT }}
       OVSX_PAT: ${{ secrets.OVSX_PAT }}
@@ -37,27 +117,23 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Compile
-        run: npm run compile
-
-      - name: Package extension
-        run: npx vsce package --out mainstage.vsix
-
-      - name: Upload .vsix artifact
-        uses: actions/upload-artifact@v4
+      - name: Download all VSIX artifacts
+        uses: actions/download-artifact@v4
         with:
-          name: mainstage-vsix
-          path: editors/vscode/mainstage.vsix
-          if-no-files-found: error
+          pattern: mainstage-vsix-*
+          path: editors/vscode/dist
+          merge-multiple: true
 
-      # Publishing only happens for tag pushes, and only when the matching token
-      # secret is set — otherwise the step is skipped (not failed), so the run
-      # stays green and the .vsix artifact above is still available for a manual
-      # upload to the Marketplace.
       - name: Publish to Visual Studio Marketplace
-        if: startsWith(github.ref, 'refs/tags/') && env.VSCE_PAT != ''
-        run: npx vsce publish --packagePath mainstage.vsix
+        if: env.VSCE_PAT != ''
+        run: |
+          for vsix in dist/*.vsix; do
+            npx vsce publish --packagePath "$vsix"
+          done
 
       - name: Publish to Open VSX
-        if: startsWith(github.ref, 'refs/tags/') && env.OVSX_PAT != ''
-        run: npx ovsx publish mainstage.vsix
+        if: env.OVSX_PAT != ''
+        run: |
+          for vsix in dist/*.vsix; do
+            npx ovsx publish "$vsix"
+          done

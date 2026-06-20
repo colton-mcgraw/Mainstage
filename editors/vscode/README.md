@@ -27,35 +27,27 @@ exactly — the same parser, analyzer, and module registry power both.
 
 ## Requirements
 
-The extension needs the Mainstage language server. It works with **no manual
-configuration** when a `mainstage` or `mainstage-lsp` binary is installed and
-discoverable. On activation it looks, in order, for:
+**None — the language server is bundled.** The extension ships a per-platform
+`mainstage-lsp` binary inside the VSIX, so it works out of the box with no CLI
+install and no configuration. The Marketplace and Open VSX serve the build that
+matches your OS and architecture (and, in a remote container, WSL, or SSH
+session, the remote's OS and architecture).
 
-1. the `mainstage.server.path` setting, if set;
-2. `mainstage-lsp` or `mainstage` on your `PATH`;
-3. `mainstage-lsp` or `mainstage` in a common install location
-   (`~/.local/bin`, `~/.cargo/bin`, `/usr/local/bin`, `/opt/homebrew/bin`).
+To use a different server — a development build, or a system install — set
+`mainstage.server.path` to a `mainstage` or `mainstage-lsp` executable. A
+`mainstage` binary is launched as `mainstage lsp`; a `mainstage-lsp` binary is
+launched directly.
 
-A `mainstage` binary is launched as `mainstage lsp`; a dedicated `mainstage-lsp`
-binary is launched directly.
-
-Install the CLI with any method from the
-[project README](https://github.com/colton-mcgraw/mainstage#installation), e.g.:
-
-```sh
-curl -fsSL https://raw.githubusercontent.com/colton-mcgraw/mainstage/main/install.sh | sh
-# or
-cargo install mainstage
-```
-
-If no binary is found, the extension shows a notification linking to the install
-instructions.
+If the extension did not include a binary for your platform (e.g. a generic
+VSIX installed manually), it shows a notification linking to the
+[install instructions](https://github.com/colton-mcgraw/mainstage#installation)
+and the `mainstage.server.path` setting.
 
 ## Settings
 
 | Setting | Description |
 | --- | --- |
-| `mainstage.server.path` | Absolute path to the `mainstage` or `mainstage-lsp` executable. Leave empty to auto-discover. |
+| `mainstage.server.path` | Absolute path to a `mainstage` or `mainstage-lsp` executable to use instead of the bundled server. Leave empty to use the bundled server. |
 | `mainstage.server.arguments` | Extra arguments passed to the server after the `lsp` subcommand. |
 | `mainstage.trace.server` | Trace the LSP traffic (`off`, `messages`, `verbose`) for debugging. |
 
@@ -72,11 +64,29 @@ npm run compile # type-check and emit to out/
 npm test        # run the test suite
 ```
 
+### Packaging with the bundled server
+
+Each published VSIX bundles a `mainstage-lsp` binary under `server/`. To build a
+package locally, compile the server, copy it in, then package:
+
+```sh
+cargo build -p mainstage_lsp --bin mainstage-lsp --release
+npm run copy-server                 # copies target/release/mainstage-lsp → server/
+npx vsce package --target $(node -p "process.platform")-... --out mainstage.vsix
+```
+
+`copy-server` reads `MAINSTAGE_PROFILE` (default `release`) and, for cross
+builds, `MAINSTAGE_TARGET` (a cargo target triple → reads from
+`target/<triple>/<profile>/`). The CI workflow (`.github/workflows/vscode-extension.yml`)
+builds one platform-specific VSIX per supported target this way.
+
+### The test suite
+
 The suite has two parts:
 
-- **Resolver unit tests** (`src/test/resolver.test.ts`) — cover server
-  discovery and the `mainstage` vs `mainstage-lsp` launch logic with an
-  injected host, so no real binary or `vscode` runtime is needed.
+- **Resolver unit tests** (`src/test/resolver.test.ts`) — cover the bundled-vs.
+  -configured server resolution and the `mainstage` vs `mainstage-lsp` launch
+  logic with an injected host, so no real binary or `vscode` runtime is needed.
 - **Server integration tests** (`src/test/server.test.ts`) — spawn the real
   language server and drive it over stdio with the same
   `vscode-languageserver-protocol` stack the client uses, asserting that

@@ -4,6 +4,12 @@ import { posix, win32 } from "node:path";
 export interface ResolvedServer {
   command: string;
   args: string[];
+  /**
+   * Whether `command` is the server binary bundled inside the extension (as
+   * opposed to a user-configured path). The caller uses this to decide whether
+   * to repair the executable bit, which VSIX extraction can drop.
+   */
+  bundled: boolean;
 }
 
 /**
@@ -12,27 +18,27 @@ export interface ResolvedServer {
  * `vscode`, no real filesystem). `extension.ts` supplies the real values.
  */
 export interface ResolverHost {
-  /** `process.platform` of the host. */
+  /** `process.platform` of the host the extension runs on. */
   platform: NodeJS.Platform;
-  /** The raw `PATH` environment variable, or `undefined` when unset. */
-  pathVar: string | undefined;
-  /** The user's home directory (`os.homedir()`). */
-  home: string;
-  /** Whether `file` exists and is executable on this host. */
-  isExecutable: (file: string) => boolean;
+  /** The extension's install directory (`context.extensionPath`). */
+  extensionPath: string;
+  /** Whether `file` exists on disk. */
+  fileExists: (file: string) => boolean;
 }
 
 /**
- * Resolve the language server command without requiring any manual setup.
+ * Resolve the language server command with no manual setup required.
  *
  * Precedence:
- *   1. `configuredPath` (the `mainstage.server.path` setting), if non-empty.
- *   2. A `mainstage-lsp`, then `mainstage`, binary found on `PATH`.
- *   3. The same, in a common install location.
+ *   1. `configuredPath` (the `mainstage.server.path` setting), if non-empty —
+ *      an explicit escape hatch for development or a system install.
+ *   2. The server binary bundled inside the extension (`server/mainstage-lsp`),
+ *      shipped per-platform in the VSIX so the extension works out of the box.
  *
- * A `mainstage` binary is launched as `mainstage lsp`; a dedicated
- * `mainstage-lsp` binary is launched directly. `extraArgs` are appended in
- * every case.
+ * A configured `mainstage` binary is launched as `mainstage lsp`; a configured
+ * `mainstage-lsp` binary — and the bundled one — speak LSP directly. `extraArgs`
+ * are appended in every case. Returns `undefined` when nothing is configured and
+ * no bundled binary is present for this platform.
  */
 export function resolveServer(
   configuredPath: string,
@@ -41,18 +47,16 @@ export function resolveServer(
 ): ResolvedServer | undefined {
   const configured = configuredPath.trim();
   if (configured) {
-    return { command: configured, args: [...subcommandFor(configured), ...extraArgs] };
+    return {
+      command: configured,
+      args: [...subcommandFor(configured), ...extraArgs],
+      bundled: false,
+    };
   }
 
-  // Prefer the dedicated server binary, then the CLI's `lsp` subcommand.
-  const lsp = findOnPath("mainstage-lsp", host) ?? findInInstallDirs("mainstage-lsp", host);
-  if (lsp) {
-    return { command: lsp, args: [...extraArgs] };
-  }
-
-  const cli = findOnPath("mainstage", host) ?? findInInstallDirs("mainstage", host);
-  if (cli) {
-    return { command: cli, args: ["lsp", ...extraArgs] };
+  const bundled = bundledServerPath(host);
+  if (host.fileExists(bundled)) {
+    return { command: bundled, args: [...extraArgs], bundled: true };
   }
 
   return undefined;
@@ -68,67 +72,18 @@ export function subcommandFor(command: string): string[] {
   return /^mainstage(\.(exe|cmd))?$/i.test(base) ? ["lsp"] : [];
 }
 
-/** Candidate filenames for an executable `name` on the given platform. */
-export function executableNames(name: string, platform: NodeJS.Platform): string[] {
-  return platform === "win32" ? [`${name}.exe`, `${name}.cmd`, name] : [name];
+/** The bundled server's filename on the given platform. */
+export function serverBinaryName(platform: NodeJS.Platform): string {
+  return platform === "win32" ? "mainstage-lsp.exe" : "mainstage-lsp";
 }
 
 /**
- * The `node:path` variant matching the host's platform, so PATH splitting and
- * joining follow the host's conventions (`;`/`\` on Windows, `:`/`/` elsewhere)
- * rather than whatever OS the editor extension happens to run on.
+ * The path where the per-platform server binary is bundled inside the
+ * extension. Packaging copies the matching `mainstage-lsp` into `server/`.
  */
-function pathModule(host: ResolverHost): typeof posix {
-  return host.platform === "win32" ? win32 : posix;
-}
-
-/** The first executable named `name` found across the entries of `PATH`. */
-export function findOnPath(name: string, host: ResolverHost): string | undefined {
-  if (!host.pathVar) {
-    return undefined;
-  }
-  for (const dir of host.pathVar.split(pathModule(host).delimiter)) {
-    if (!dir) {
-      continue;
-    }
-    const found = firstExecutable(dir, name, host);
-    if (found) {
-      return found;
-    }
-  }
-  return undefined;
-}
-
-/** The first executable named `name` found in a common install location. */
-export function findInInstallDirs(name: string, host: ResolverHost): string | undefined {
-  const { join } = pathModule(host);
-  const dirs =
-    host.platform === "win32"
-      ? [join(host.home, ".cargo", "bin")]
-      : [
-          join(host.home, ".local", "bin"),
-          join(host.home, ".cargo", "bin"),
-          "/usr/local/bin",
-          "/opt/homebrew/bin",
-          "/usr/bin",
-        ];
-
-  for (const dir of dirs) {
-    const found = firstExecutable(dir, name, host);
-    if (found) {
-      return found;
-    }
-  }
-  return undefined;
-}
-
-function firstExecutable(dir: string, name: string, host: ResolverHost): string | undefined {
-  const { join } = pathModule(host);
-  for (const candidate of executableNames(name, host.platform)) {
-    const full = join(dir, candidate);
-    if (host.isExecutable(full)) {
-      return full;
-    }
-  }
-  return undefined;
+export function bundledServerPath(host: ResolverHost): string {
+  // Join with the host's own `path` conventions so the path is correct whether
+  // the extension host is Windows (`\`) or POSIX (`/`).
+  const { join } = host.platform === "win32" ? win32 : posix;
+  return join(host.extensionPath, "server", serverBinaryName(host.platform));
 }

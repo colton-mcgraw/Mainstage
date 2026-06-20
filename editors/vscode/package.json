@@ -2,7 +2,7 @@
   "name": "mainstage",
   "displayName": "Mainstage",
   "description": "Language support for Mainstage (.ms) build scripts: diagnostics, completion, hover, signature help, navigation, and formatting via the Mainstage language server.",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "publisher": "colton-mcgraw",
   "license": "SEE LICENSE IN LICENSE.md",
   "icon": "images/icon.png",
@@ -38,6 +38,9 @@
   "activationEvents": [
     "onLanguage:mainstage"
   ],
+  "extensionKind": [
+    "workspace"
+  ],
   "contributes": {
     "languages": [
       {
@@ -64,7 +67,7 @@
         "mainstage.server.path": {
           "type": "string",
           "default": "",
-          "markdownDescription": "Absolute path to the `mainstage` or `mainstage-lsp` executable. When empty, the extension auto-discovers a binary on your `PATH` and in common install locations (`~/.local/bin`, `~/.cargo/bin`).",
+          "markdownDescription": "Absolute path to a `mainstage` or `mainstage-lsp` executable to use instead of the server bundled with the extension. Leave empty to use the bundled server. A `mainstage` binary is launched as `mainstage lsp`; a `mainstage-lsp` binary is launched directly.",
           "scope": "machine-overridable"
         },
         "mainstage.server.arguments": {
@@ -102,6 +105,7 @@
     "watch": "tsc -watch -p ./",
     "pretest": "npm run compile",
     "test": "node --test out/test/*.test.js",
+    "copy-server": "node scripts/copy-server.js",
     "package": "vsce package --out mainstage.vsix",
     "publish:vsce": "vsce publish",
     "publish:ovsx": "ovsx publish"

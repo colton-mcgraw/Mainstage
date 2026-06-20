@@ -4,6 +4,29 @@ All notable changes to the Mainstage VS Code extension are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 the project uses [Semantic Versioning](https://semver.org/).
 
+## [1.1.0] - 2026-06-19
+
+### Changed
+
+- **The language server is now bundled with the extension.** Each published VSIX
+  is platform-specific and ships a matching `mainstage-lsp` binary, so the
+  extension works out of the box with no CLI install and no configuration —
+  including in remote containers, WSL, and over SSH. Server auto-discovery on
+  `PATH` and in common install locations has been removed; set
+  `mainstage.server.path` to override the bundled server with a custom build.
+- Declared `extensionKind: ["workspace"]` so the extension runs on the workspace
+  side in remote setups, where the build and project files live and where the
+  bundled binary's architecture matches.
+
+### Added
+
+- Activation logging of the host platform/architecture, remote name, and the
+  resolved server path, to make remote and WSL start-up failures diagnosable.
+- The bundled server is marked executable on activation when VSIX extraction
+  drops the exec bit (a common cause of `EACCES` on POSIX remotes).
+- A clearer notification when no server binary matches the current platform,
+  pointing at the install instructions and `mainstage.server.path`.
+
 ## [1.0.0] - 2026-06-14
 
 ### Added

@@ -700,3 +700,12 @@ runs are authored once and inlined, complementing `matrix` (which parameterizes 
       sharing a template across two stages
 
 ---
+
+### Phase 47: LSP Editor Integration Improvments
+
+Make the LSP server integration more ergonomic. Output: a VS Code extension that works out of the box and a generic LSP client that is easy to configure.
+
+- [x] Remove auto discover and instead bundle the `mainstage lsp` binary with the VS Code extension so it works without manual configuration.
+- [x] Improved VS Code extension stability when running in VS Code remote containers or WSL, including better error handling and logging.
+
+---

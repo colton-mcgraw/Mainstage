@@ -1,3 +1,5 @@
 node_modules/
 out/
 *.vsix
+# The bundled server binary is copied in at package time, never committed.
+server/
