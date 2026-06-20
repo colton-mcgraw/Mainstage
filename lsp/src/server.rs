@@ -162,6 +162,7 @@ impl LanguageServer for Backend {
 
     async fn initialized(&self, _params: InitializedParams) {
         self.client.log_message(MessageType::INFO, "mainstage language server initialized").await;
+        self.client.log_message(MessageType::INFO, format!("version - {}", env!("CARGO_PKG_VERSION").to_string())).await;
     }
 
     async fn shutdown(&self) -> RpcResult<()> {
