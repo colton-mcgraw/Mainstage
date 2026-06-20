@@ -14,10 +14,12 @@
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::io::Write;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
+
+use serde::Serialize;
 
 use crate::{
     ast::*,
@@ -469,6 +471,387 @@ fn dependency_waves(
         waves[level[stage.as_str()]].push(stage.clone());
     }
     waves
+}
+
+// ── Graph query / explain / profile (Phase 52) ─────────────────────────────────────
+
+/// One stage in a [`StageGraph`]: its direct dependencies and direct dependents, both
+/// restricted to the graph's stage set (so an edge to a stage outside the queried
+/// pipeline does not appear).
+#[derive(Clone, Debug, Serialize)]
+pub struct StageNode {
+    pub name: String,
+    /// Stages this one directly depends on — they must complete first.
+    pub depends_on: Vec<String>,
+    /// Stages that directly depend on this one — its reverse edges.
+    pub dependents: Vec<String>,
+}
+
+/// The stage dependency graph projected for inspection by `mainstage query` (Phase 52):
+/// forward edges (`depends_on`) and reverse edges (`dependents`), restricted either to a
+/// single pipeline's members or to every declared stage. Nodes are listed in topological
+/// order, so a dependency always precedes its dependents. Reads only the
+/// [`AnalysisResult`] — no execution and no cache access.
+#[derive(Clone, Debug, Serialize)]
+pub struct StageGraph {
+    /// The pipeline the graph was filtered to, or `None` when it spans every declared stage.
+    pub pipeline: Option<String>,
+    pub nodes: Vec<StageNode>,
+}
+
+impl StageGraph {
+    /// Render the graph as a Graphviz DOT digraph. Edges point in execution order
+    /// (`dependency -> stage`), so `dot -Tpng` lays the build out left-to-right. Isolated
+    /// stages are emitted as bare nodes so they are not dropped.
+    pub fn to_dot(&self) -> String {
+        let mut s = String::from("digraph mainstage {\n  rankdir=LR;\n  node [shape=box];\n");
+        for node in &self.nodes {
+            s.push_str(&format!("  {};\n", dot_quote(&node.name)));
+            for dep in &node.depends_on {
+                s.push_str(&format!("  {} -> {};\n", dot_quote(dep), dot_quote(&node.name)));
+            }
+        }
+        s.push_str("}\n");
+        s
+    }
+
+    /// Render the graph as pretty-printed JSON for external tooling.
+    pub fn to_json(&self) -> String {
+        serde_json::to_string_pretty(self).unwrap_or_else(|_| "{}".to_string())
+    }
+}
+
+/// Quote a stage name for DOT output. Matrix variants contain `[`/`]` (e.g.
+/// `kernel[arm64]`), so names are always quoted, with `"` and `\` escaped.
+fn dot_quote(name: &str) -> String {
+    format!("\"{}\"", name.replace('\\', "\\\\").replace('"', "\\\""))
+}
+
+/// Build the [`StageGraph`] for `pipeline_name` (or, when `None`, every declared stage).
+///
+/// Reads the dependency graph the analyzer already built. The edge set is restricted to
+/// the chosen stages, so a dependency on a stage outside the queried pipeline is omitted.
+/// Returns an error for an unknown pipeline or a cyclic graph (the latter normally caught
+/// during analysis).
+pub fn query_graph(
+    program: &Program,
+    pipeline_name: Option<&str>,
+    ctx: &EvalContext,
+    analysis: &AnalysisResult,
+) -> Result<StageGraph> {
+    let (pipeline, stage_names) = match pipeline_name {
+        Some(_) => {
+            let pipeline = find_pipeline(program, pipeline_name)?;
+            (Some(pipeline.name.clone()), pipeline_stage_names(pipeline, ctx)?)
+        }
+        None => (None, all_stage_names(program)),
+    };
+
+    // Topological order; also validates the stage set and rejects cycles.
+    let sorted = toposort(&stage_names, &analysis.dependency_graph)?;
+    let stage_set: HashSet<&str> = sorted.iter().map(String::as_str).collect();
+    // `build_dag` gives the reverse adjacency, already restricted to in-set edges.
+    let (_, reverse_adj) = build_dag(&sorted, &analysis.dependency_graph);
+
+    let nodes = sorted
+        .iter()
+        .map(|name| {
+            let mut depends_on: Vec<String> = analysis
+                .dependency_graph
+                .get(name)
+                .into_iter()
+                .flatten()
+                .filter(|d| stage_set.contains(d.as_str()))
+                .cloned()
+                .collect();
+            depends_on.sort();
+            depends_on.dedup();
+            let mut dependents = reverse_adj.get(name).cloned().unwrap_or_default();
+            dependents.sort();
+            dependents.dedup();
+            StageNode { name: name.clone(), depends_on, dependents }
+        })
+        .collect();
+
+    Ok(StageGraph { pipeline, nodes })
+}
+
+/// Every stage declared in `program`, in source order.
+fn all_stage_names(program: &Program) -> Vec<String> {
+    program
+        .items
+        .iter()
+        .filter_map(|item| match item {
+            Item::Stage(s) => Some(s.name.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Why a stage would run on its next invocation.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum RunReason {
+    /// Never cached — `always_run`, a `test` stage, or a stage with no declared inputs
+    /// (the Phase 7 "always runs" default). Carries a short human-readable label.
+    Uncacheable(&'static str),
+    /// No prior successful run is recorded for the stage in the cache.
+    NeverRun,
+    /// One or more input files changed since the last recorded run.
+    InputsChanged,
+}
+
+/// Why a stage would be skipped (its steps would not re-run) on its next invocation.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum SkipReason {
+    /// Inputs unchanged and every declared output still present — a local cache hit.
+    UpToDate,
+    /// Inputs unchanged but some declared outputs are missing; they would be restored from
+    /// the content-addressed output store rather than re-running the steps (Phase 50).
+    RestoredFromCache,
+}
+
+/// The verdict for a single stage: whether it would run, and why.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ExplainVerdict {
+    Run(RunReason),
+    Skip(SkipReason),
+}
+
+/// Why a stage ran or was skipped, computed against the current cache and tree state
+/// (`mainstage explain`, Phase 52). Mirrors the runner's own change-detection decision —
+/// the same [`change_detection_inputs`] reconciliation and [`cache::Freshness`]
+/// classification — so the explanation always matches what a run would actually do.
+#[derive(Clone, Debug)]
+pub struct Explanation {
+    pub stage: String,
+    pub verdict: ExplainVerdict,
+    /// Input files whose content changed since the last recorded run. Empty for an
+    /// uncacheable or never-run stage (the verdict reason covers those).
+    pub changed_inputs: Vec<PathBuf>,
+    /// Declared outputs currently missing from the tree.
+    pub missing_outputs: Vec<PathBuf>,
+    /// Whether a rerun would be *incremental* (per-output, Phase 38): a prior run exists,
+    /// every declared output is present, and only a subset of inputs changed — so the
+    /// unchanged `for file in inputs` iterations would be skipped rather than the whole
+    /// stage re-run.
+    pub incremental: bool,
+    /// Direct dependencies and dependents across the whole program, for context.
+    pub depends_on: Vec<String>,
+    pub dependents: Vec<String>,
+}
+
+/// Explain why `stage_name` would run or be skipped on its next invocation, reading the
+/// change-detection cache and the current state of the tree (Phase 52).
+pub fn explain_stage(
+    program: &Program,
+    stage_name: &str,
+    ctx: &EvalContext,
+    analysis: &AnalysisResult,
+) -> Result<Explanation> {
+    let stage = find_stage(program, stage_name)
+        .ok_or_else(|| runner_err(format!("no stage named '{stage_name}'")))?;
+
+    // Resolve every stage's declared outputs in dependency order so that this stage's
+    // `inputs: [<dep>.outputs]` references resolve exactly as they would during a run.
+    let resolved_outputs = resolve_all_outputs(program, ctx, analysis)?;
+    let stage_ctx = build_stage_ctx(stage, ctx, &resolved_outputs)?;
+
+    let project_dir = ctx.script_dir.clone();
+    let cache = Cache::load(&project_dir);
+    let run_cache = cache::RunFileCache::new();
+
+    // Direct edges across the whole program (not restricted to a pipeline), for context.
+    let mut depends_on: Vec<String> =
+        analysis.dependency_graph.get(stage_name).cloned().unwrap_or_default();
+    depends_on.sort();
+    depends_on.dedup();
+    let mut dependents: Vec<String> = analysis
+        .dependency_graph
+        .iter()
+        .filter(|(_, deps)| deps.iter().any(|d| d == stage_name))
+        .map(|(name, _)| name.clone())
+        .collect();
+    dependents.sort();
+    dependents.dedup();
+
+    let output_paths =
+        stage_ctx.stage_outputs.as_ref().map(cache::output_paths).unwrap_or_default();
+    let missing_outputs: Vec<PathBuf> = output_paths
+        .iter()
+        .filter(|o| !cache::output_exists(o, &project_dir))
+        .map(PathBuf::from)
+        .collect();
+
+    let make = |verdict, changed_inputs, incremental| Explanation {
+        stage: stage_name.to_string(),
+        verdict,
+        changed_inputs,
+        missing_outputs: missing_outputs.clone(),
+        incremental,
+        depends_on: depends_on.clone(),
+        dependents: dependents.clone(),
+    };
+
+    // Reconcile the caching knobs exactly as the runner does. `None` means the stage is
+    // never cached and always runs.
+    let Some(inputs_val) = change_detection_inputs(stage, &stage_ctx.stage_inputs) else {
+        let reason = if stage.always_run {
+            "always_run"
+        } else if stage.test {
+            "test stage"
+        } else {
+            "no declared inputs"
+        };
+        return Ok(make(ExplainVerdict::Run(RunReason::Uncacheable(reason)), Vec::new(), false));
+    };
+
+    let has_entry = cache.has_entry(stage_name);
+    let prior = cache.input_meta(stage_name);
+    let fp = cache::fingerprint_inputs(&inputs_val, &prior, &run_cache);
+
+    // Inputs that changed versus the last run (only meaningful when a prior run exists).
+    let changed_inputs: Vec<PathBuf> = if has_entry {
+        let unchanged = fp.unchanged_since(&prior);
+        let mut paths = cache::input_paths(&inputs_val);
+        paths.sort();
+        paths.dedup();
+        paths.into_iter().filter(|p| !unchanged.contains(p)).collect()
+    } else {
+        Vec::new()
+    };
+
+    // Per-output (incremental) rebuilds only actually happen inside a `for … in inputs`
+    // loop, where the executor skips the unchanged iterations (Phase 38). Without such a
+    // loop the whole stage re-runs even when only one input changed, so gate the claim on
+    // its presence to keep the explanation honest.
+    let outputs_present =
+        !output_paths.is_empty() && cache::all_outputs_exist(&output_paths, &project_dir);
+    let incremental =
+        has_entry && outputs_present && !changed_inputs.is_empty() && iterates_inputs(&stage.steps);
+
+    let verdict = match cache.freshness(stage_name, fp.digest(), &project_dir) {
+        cache::Freshness::Fresh => ExplainVerdict::Skip(SkipReason::UpToDate),
+        cache::Freshness::Restorable(_) => ExplainVerdict::Skip(SkipReason::RestoredFromCache),
+        cache::Freshness::Stale if has_entry => ExplainVerdict::Run(RunReason::InputsChanged),
+        cache::Freshness::Stale => ExplainVerdict::Run(RunReason::NeverRun),
+    };
+
+    Ok(make(verdict, changed_inputs, incremental))
+}
+
+/// Whether any step (recursing into `if` / `for` / `try` / `workdir` / `with_env` blocks)
+/// is a `for <var> in inputs { … }` loop — the construct that per-output incremental
+/// change detection (Phase 38) optimizes. Used by `explain` to report whether a rerun
+/// would actually be incremental rather than whole-stage.
+fn iterates_inputs(steps: &[Step]) -> bool {
+    steps.iter().any(|step| match step {
+        Step::For(f) => {
+            matches!(&f.iterable, Expr::Ident(i) if i.name == "inputs") || iterates_inputs(&f.steps)
+        }
+        Step::If(i) => iterates_inputs(&i.then_steps) || iterates_inputs(&i.else_steps),
+        Step::Try(t) => iterates_inputs(&t.steps),
+        Step::Workdir(w) => iterates_inputs(&w.steps),
+        Step::WithEnv(w) => iterates_inputs(&w.steps),
+        _ => false,
+    })
+}
+
+/// Resolve the declared `outputs` of every stage in dependency order, accumulating them so
+/// each stage's `<dep>.outputs` references resolve. Used by `explain` to build a single
+/// stage's context the way a real run would.
+fn resolve_all_outputs(
+    program: &Program,
+    ctx: &EvalContext,
+    analysis: &AnalysisResult,
+) -> Result<HashMap<String, Value>> {
+    let sorted = toposort(&all_stage_names(program), &analysis.dependency_graph)?;
+    let mut resolved: HashMap<String, Value> = HashMap::new();
+    for name in &sorted {
+        let stage = find_stage(program, name)
+            .ok_or_else(|| runner_err(format!("stage '{name}' not declared")))?;
+        let stage_ctx = build_stage_ctx(stage, ctx, &resolved)?;
+        if let Some(v) = stage_ctx.stage_outputs.clone() {
+            resolved.insert(name.clone(), v);
+        }
+    }
+    Ok(resolved)
+}
+
+/// Compute the critical path through the stage dependency graph given each stage's
+/// measured wall-clock duration (`mainstage profile` / `--profile`, Phase 52): the chain
+/// of stages with the greatest cumulative duration, returned in execution order
+/// (dependency first). Only stages present in `durations` are considered, and edges to
+/// stages outside that set are ignored — so a partial run still profiles cleanly. Ties
+/// break on stage name for determinism. Returns an empty path when `durations` is empty.
+pub fn critical_path(
+    dep_graph: &HashMap<String, Vec<String>>,
+    durations: &HashMap<String, Duration>,
+) -> Vec<String> {
+    // Memoized longest path ending at `node`, scored as `(total nanos, stage count)` with
+    // the predecessor on that path. The stage count breaks ties so a graph with equal (or
+    // zero) durations still reports the full dependency chain rather than a single node. The
+    // graph is acyclic (analysis rejects cycles), so the recursion terminates; the memo also
+    // makes it linear in the number of edges.
+    type Score = (u128, usize);
+    fn visit(
+        node: &str,
+        dep_graph: &HashMap<String, Vec<String>>,
+        durations: &HashMap<String, Duration>,
+        memo: &mut HashMap<String, (Score, Option<String>)>,
+    ) -> Score {
+        if let Some((score, _)) = memo.get(node) {
+            return *score;
+        }
+        let own = durations.get(node).map(|d| d.as_nanos()).unwrap_or(0);
+        // Only consider dependencies that were themselves timed this run.
+        let mut deps: Vec<&String> = dep_graph
+            .get(node)
+            .into_iter()
+            .flatten()
+            .filter(|d| durations.contains_key(d.as_str()))
+            .collect();
+        deps.sort();
+        let (mut best, mut best_pred): (Score, Option<String>) = ((0, 0), None);
+        for dep in deps {
+            let score = visit(dep, dep_graph, durations, memo);
+            if score > best {
+                best = score;
+                best_pred = Some(dep.clone());
+            }
+        }
+        let score = (best.0 + own, best.1 + 1);
+        memo.insert(node.to_string(), (score, best_pred));
+        score
+    }
+
+    let mut names: Vec<&String> = durations.keys().collect();
+    names.sort();
+    let mut memo: HashMap<String, (Score, Option<String>)> = HashMap::new();
+    for n in &names {
+        visit(n, dep_graph, durations, &mut memo);
+    }
+
+    // Pick the endpoint with the greatest score (cumulative duration, then chain length;
+    // ties fall to name order).
+    let mut end: Option<String> = None;
+    let mut best: Score = (0, 0);
+    for n in &names {
+        let score = memo[n.as_str()].0;
+        if end.is_none() || score > best {
+            best = score;
+            end = Some((*n).clone());
+        }
+    }
+
+    // Walk predecessors back to the start, then reverse into execution order.
+    let mut path = Vec::new();
+    let mut cur = end;
+    while let Some(name) = cur {
+        cur = memo[&name].1.clone();
+        path.push(name);
+    }
+    path.reverse();
+    path
 }
 
 // ── Scheduler ────────────────────────────────────────────────────────────────────
@@ -1229,5 +1612,41 @@ mod tests {
     fn dependency_waves_empty() {
         let waves = dependency_waves(&[], &HashMap::new());
         assert!(waves.is_empty());
+    }
+
+    // ── Phase 52: critical path ──────────────────────────────────────────────────
+
+    fn durations(pairs: &[(&str, u64)]) -> HashMap<String, Duration> {
+        pairs.iter().map(|(n, ms)| (n.to_string(), Duration::from_millis(*ms))).collect()
+    }
+
+    #[test]
+    fn critical_path_picks_longest_chain() {
+        // Diamond a → {b, c} → d. b is slower than c, so the path runs a → b → d.
+        let g = graph(&[("a", &[]), ("b", &["a"]), ("c", &["a"]), ("d", &["b", "c"])]);
+        let d = durations(&[("a", 10), ("b", 50), ("c", 5), ("d", 10)]);
+        assert_eq!(critical_path(&g, &d), names(&["a", "b", "d"]));
+    }
+
+    #[test]
+    fn critical_path_ignores_untimed_stages() {
+        // Only a subset ran this invocation; edges to untimed stages are ignored.
+        let g = graph(&[("a", &[]), ("b", &["a"]), ("c", &["b"])]);
+        let d = durations(&[("a", 10), ("c", 30)]); // b never ran
+        // c's only timed predecessor chain is itself (b is skipped), so path is just [c].
+        assert_eq!(critical_path(&g, &d), names(&["c"]));
+    }
+
+    #[test]
+    fn critical_path_handles_zero_durations() {
+        // All-zero timings must still yield a path (deterministic by name), not an empty one.
+        let g = graph(&[("a", &[]), ("b", &["a"])]);
+        let d = durations(&[("a", 0), ("b", 0)]);
+        assert_eq!(critical_path(&g, &d), names(&["a", "b"]));
+    }
+
+    #[test]
+    fn critical_path_empty_when_no_durations() {
+        assert!(critical_path(&HashMap::new(), &HashMap::new()).is_empty());
     }
 }

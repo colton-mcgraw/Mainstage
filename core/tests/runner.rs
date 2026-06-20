@@ -1444,3 +1444,188 @@ fn use_of_undefined_template_is_rejected() {
     let err = expand_templates(&program).expect_err("an undefined template must be rejected");
     assert!(format!("{err}").contains("undefined template 'missing'"), "got: {err}");
 }
+
+// ── Phase 52: graph query & explain ────────────────────────────────────────────────
+
+use mainstage_core::{ExplainVerdict, RunReason, SkipReason, explain_stage, query_graph};
+
+/// Parse → analyze → eval the source against `dir`, returning the pieces the introspection
+/// commands consume.
+fn prepared(
+    src: &str,
+    dir: &Path,
+) -> (mainstage_core::ast::Program, mainstage_core::AnalysisResult, mainstage_core::EvalContext) {
+    let program = parse(&Source::from_str("test.ms", src)).expect("parse should succeed");
+    let analysis = analyze(&program).expect("analysis should succeed");
+    let ctx = eval_program(&program, dir).expect("eval should succeed");
+    (program, analysis, ctx)
+}
+
+/// A diamond-plus-fan-out fixture: `gen` feeds `a` and `b` (fan-out); both feed `combine`
+/// (diamond join). Every stage writes its declared output so a real run populates the cache.
+fn diamond_src(dir: &Path) -> String {
+    let d = dir.display();
+    format!(
+        r#"
+        project {{ name: "demo" version: "1.0" }}
+        default pipeline build {{ stages: [gen, a, b, combine] }}
+        stage gen {{ outputs: ["{d}/gen.txt"] steps {{ write "{d}/gen.txt" content: "seed" }} }}
+        stage a {{ inputs: [gen.outputs] outputs: ["{d}/a.txt"] steps {{ write "{d}/a.txt" content: "a" }} }}
+        stage b {{ inputs: [gen.outputs] outputs: ["{d}/b.txt"] steps {{ write "{d}/b.txt" content: "b" }} }}
+        stage combine {{ inputs: [a.outputs, b.outputs] outputs: ["{d}/c.txt"] steps {{ write "{d}/c.txt" content: "c" }} }}
+        "#
+    )
+}
+
+#[test]
+fn query_graph_reports_forward_and_reverse_edges() {
+    let dir = unique_dir("query_edges");
+    let src = diamond_src(&dir);
+    let (program, analysis, ctx) = prepared(&src, &dir);
+
+    let graph = query_graph(&program, None, &ctx, &analysis).expect("query should succeed");
+    assert_eq!(graph.pipeline, None);
+
+    let node = |name: &str| graph.nodes.iter().find(|n| n.name == name).expect("node present");
+
+    // gen is a root depended on by a and b.
+    assert!(node("gen").depends_on.is_empty());
+    assert_eq!(node("gen").dependents, vec!["a".to_string(), "b".to_string()]);
+    // combine is the join: depends on a and b, depended on by nothing.
+    assert_eq!(node("combine").depends_on, vec!["a".to_string(), "b".to_string()]);
+    assert!(node("combine").dependents.is_empty());
+    // Topological order: gen precedes a/b precede combine.
+    let pos = |name: &str| graph.nodes.iter().position(|n| n.name == name).unwrap();
+    assert!(pos("gen") < pos("a") && pos("a") < pos("combine"));
+    assert!(pos("gen") < pos("b") && pos("b") < pos("combine"));
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn query_graph_filters_by_pipeline() {
+    // A pipeline containing only `gen` and `a` must drop edges to stages outside it.
+    let dir = unique_dir("query_filter");
+    let d = dir.display();
+    let src = format!(
+        r#"
+        default pipeline only {{ stages: [gen, a] }}
+        stage gen {{ outputs: ["{d}/gen.txt"] steps {{ write "{d}/gen.txt" content: "x" }} }}
+        stage a {{ inputs: [gen.outputs] steps {{ }} }}
+        stage b {{ inputs: [gen.outputs] steps {{ }} }}
+        "#
+    );
+    let (program, analysis, ctx) = prepared(&src, &dir);
+
+    let graph = query_graph(&program, Some("only"), &ctx, &analysis).expect("query");
+    assert_eq!(graph.pipeline.as_deref(), Some("only"));
+    assert_eq!(graph.nodes.len(), 2, "only the pipeline's two stages appear");
+    let gen_node = graph.nodes.iter().find(|n| n.name == "gen").unwrap();
+    // `b` is out of the pipeline, so it is not listed as a dependent of `gen`.
+    assert_eq!(gen_node.dependents, vec!["a".to_string()]);
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn query_graph_dot_and_json_export() {
+    let dir = unique_dir("query_export");
+    let src = diamond_src(&dir);
+    let (program, analysis, ctx) = prepared(&src, &dir);
+    let graph = query_graph(&program, None, &ctx, &analysis).expect("query");
+
+    let dot = graph.to_dot();
+    assert!(dot.starts_with("digraph mainstage {"));
+    assert!(dot.contains("\"gen\" -> \"a\";"));
+    assert!(dot.contains("\"a\" -> \"combine\";"));
+
+    let json = graph.to_json();
+    assert!(json.contains("\"name\": \"gen\""));
+    assert!(json.contains("\"dependents\""));
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn explain_reports_never_run_then_up_to_date() {
+    let dir = unique_dir("explain_verdicts");
+    let src = diamond_src(&dir);
+
+    // Before any run: a cacheable stage has no recorded entry.
+    {
+        let (program, analysis, ctx) = prepared(&src, &dir);
+        let exp = explain_stage(&program, "a", &ctx, &analysis).expect("explain");
+        assert_eq!(exp.verdict, ExplainVerdict::Run(RunReason::NeverRun));
+        assert_eq!(exp.depends_on, vec!["gen".to_string()]);
+        assert_eq!(exp.dependents, vec!["combine".to_string()]);
+    }
+
+    // Run the pipeline to populate the cache.
+    run(&src, &dir, None).expect("pipeline should succeed");
+
+    // After a successful run with outputs present: the stage is up to date.
+    {
+        let (program, analysis, ctx) = prepared(&src, &dir);
+        let exp = explain_stage(&program, "a", &ctx, &analysis).expect("explain");
+        assert_eq!(exp.verdict, ExplainVerdict::Skip(SkipReason::UpToDate));
+        assert!(exp.changed_inputs.is_empty());
+    }
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn explain_detects_changed_inputs_and_restorable_outputs() {
+    let dir = unique_dir("explain_changed");
+    let src = diamond_src(&dir);
+    run(&src, &dir, None).expect("pipeline should succeed");
+
+    // Mutate gen's output (which is a's input) → a would re-run on changed input.
+    std::fs::write(dir.join("gen.txt"), "mutated").unwrap();
+    {
+        let (program, analysis, ctx) = prepared(&src, &dir);
+        let exp = explain_stage(&program, "a", &ctx, &analysis).expect("explain");
+        assert_eq!(exp.verdict, ExplainVerdict::Run(RunReason::InputsChanged));
+        assert!(exp.changed_inputs.iter().any(|p| p.ends_with("gen.txt")));
+    }
+
+    // Restore gen.txt and re-run so the cache is fresh again, then delete a's output:
+    // a is unchanged but its output is missing, so it is restorable from the CAS.
+    std::fs::write(dir.join("gen.txt"), "seed").unwrap();
+    run(&src, &dir, None).expect("re-run should succeed");
+    std::fs::remove_file(dir.join("a.txt")).unwrap();
+    {
+        let (program, analysis, ctx) = prepared(&src, &dir);
+        let exp = explain_stage(&program, "a", &ctx, &analysis).expect("explain");
+        assert_eq!(exp.verdict, ExplainVerdict::Skip(SkipReason::RestoredFromCache));
+        assert!(exp.missing_outputs.iter().any(|p| p.ends_with("a.txt")));
+    }
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn explain_marks_always_run_uncacheable() {
+    let dir = unique_dir("explain_always");
+    let d = dir.display();
+    let src = format!(
+        r#"
+        default pipeline build {{ stages: [boot] }}
+        stage boot {{ always_run: true steps {{ write "{d}/boot" content: "x" }} }}
+        "#
+    );
+    let (program, analysis, ctx) = prepared(&src, &dir);
+    let exp = explain_stage(&program, "boot", &ctx, &analysis).expect("explain");
+    assert_eq!(exp.verdict, ExplainVerdict::Run(RunReason::Uncacheable("always_run")));
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn explain_unknown_stage_errors() {
+    let dir = unique_dir("explain_unknown");
+    let src = diamond_src(&dir);
+    let (program, analysis, ctx) = prepared(&src, &dir);
+    assert!(explain_stage(&program, "nope", &ctx, &analysis).is_err());
+    let _ = std::fs::remove_dir_all(&dir);
+}

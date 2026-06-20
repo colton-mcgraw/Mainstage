@@ -216,6 +216,12 @@ impl Cache {
         );
     }
 
+    /// Whether `stage` has a recorded entry from a previous successful run. Used by
+    /// `mainstage explain` to distinguish a never-run stage from one whose inputs changed.
+    pub fn has_entry(&self, stage: &str) -> bool {
+        self.stages.contains_key(stage)
+    }
+
     /// Snapshot the per-file fast-path metadata recorded for `stage` on its last run.
     /// Empty when the stage has no entry or the entry predates Phase 25.
     pub fn input_meta(&self, stage: &str) -> InputMeta {
@@ -533,7 +539,7 @@ pub fn all_outputs_exist(outputs: &[String], project_dir: &Path) -> bool {
 
 /// An output is present if its path exists as written, or relative to the project
 /// root — covering both absolute paths and project-relative declarations.
-fn output_exists(output: &str, project_dir: &Path) -> bool {
+pub fn output_exists(output: &str, project_dir: &Path) -> bool {
     let p = Path::new(output);
     p.exists() || project_dir.join(p).exists()
 }

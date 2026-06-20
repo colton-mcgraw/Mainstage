@@ -851,14 +851,14 @@ that has never built the project pulls finished outputs instead of recomputing t
 Make the dependency graph and the change-detection decisions inspectable. Output: an author
 can see *why* a stage ran, what depends on it, and where the time went.
 
-- [ ] `mainstage query` — print the stage dependency graph and its reverse edges, filtered
+- [x] `mainstage query` — print the stage dependency graph and its reverse edges, filtered
       by pipeline, with DOT and JSON export for external tooling, reading `AnalysisResult`
-- [ ] `mainstage explain <stage>` — why the stage ran or was skipped on the last run: which
+- [x] `mainstage explain <stage>` — why the stage ran or was skipped on the last run: which
       input changed, which output was missing, a whole-stage vs. per-output decision, a
       local hit, or a CAS/remote restore (reading the `change_detection_inputs` decision)
-- [ ] `mainstage profile` / a `--profile` flag — per-stage timings and the critical path,
+- [x] `mainstage profile` / a `--profile` flag — per-stage timings and the critical path,
       building on the Phase 27 end-of-run timing summary
-- [ ] Tests over a fixture graph (diamond + fan-out) asserting query output and explain
+- [x] Tests over a fixture graph (diamond + fan-out) asserting query output and explain
       verdicts; a `docs/` page
 
 ---
