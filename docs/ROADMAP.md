@@ -816,14 +816,14 @@ exporting environment variables.
 Make change detection *restore* outputs, not just skip stages. Output: outputs survive a
 `mainstage clean`, a branch switch, or a fresh checkout without re-running the stage.
 
-- [ ] Extend `cache.rs` to record each declared output's content hash at a successful run,
+- [x] Extend `cache.rs` to record each declared output's content hash at a successful run,
       and store output blobs in a local content-addressed store under `.mainstage/cache/`
       keyed by digest (new fields default in — old `cache.json` still loads)
-- [ ] On a cache hit whose outputs are *missing* from the tree, restore them from the CAS
+- [x] On a cache hit whose outputs are *missing* from the tree, restore them from the CAS
       instead of re-running the stage; fall back to a full rebuild when a blob is absent
-- [ ] `mainstage cache gc` (prune unreferenced blobs) and `mainstage cache stats` (size /
+- [x] `mainstage cache gc` (prune unreferenced blobs) and `mainstage cache stats` (size /
       hit-rate reporting); a configurable size ceiling with LRU eviction
-- [ ] Reuse the Phase 25 mtime+size fast path and parallel hashing for output digests;
+- [x] Reuse the Phase 25 mtime+size fast path and parallel hashing for output digests;
       benchmark restore-from-CAS vs. rebuild against the Phase 23 baselines
 
 ---

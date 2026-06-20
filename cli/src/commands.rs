@@ -129,7 +129,30 @@ pub fn setup(cli: Command) -> Command {
                 .about("List declared build parameters and their effective values")
                 .arg(file_arg()),
         )
-        .subcommand(Command::new("clean").about("Clear the change-detection cache").arg(file_arg()))
+        .subcommand(
+            Command::new("clean")
+                .about("Clear the change-detection cache and content-addressed output store")
+                .arg(file_arg()),
+        )
+        .subcommand(
+            Command::new("cache")
+                .about("Inspect and maintain the content-addressed output cache")
+                .subcommand_required(true)
+                .arg_required_else_help(true)
+                .subcommand(
+                    Command::new("stats")
+                        .about("Show output-cache size and restore hit-rate")
+                        .arg(file_arg()),
+                )
+                .subcommand(
+                    Command::new("gc")
+                        .about("Prune unreferenced blobs; optionally evict to a size ceiling")
+                        .arg(file_arg())
+                        .arg(Arg::new("max-size").long("max-size").value_name("SIZE").help(
+                            "Evict least-recently-used blobs until under SIZE (e.g. 500MB, 2G)",
+                        )),
+                ),
+        )
         .subcommand(
             Command::new("parse")
                 .about("Parse a .ms file and print its AST (debug tool)")
@@ -254,6 +277,14 @@ pub fn dispatch(matches: &clap::ArgMatches) -> i32 {
         Some(("list", sub)) => cmd_list(file_of(sub), flags, sub.get_flag("describe"), &overrides),
         Some(("params", sub)) => cmd_params(file_of(sub), flags, &overrides),
         Some(("clean", sub)) => cmd_clean(file_of(sub)),
+        Some(("cache", sub)) => match sub.subcommand() {
+            Some(("stats", args)) => cmd_cache_stats(file_of(args)),
+            Some(("gc", args)) => cmd_cache_gc(file_of(args), args.get_one::<String>("max-size")),
+            _ => {
+                eprintln!("{} expected `cache stats` or `cache gc`", style("error:").red().bold());
+                2
+            }
+        },
         Some(("parse", sub)) => cmd_parse(file_of(sub)),
         Some(("eval", sub)) => cmd_eval(file_of(sub), flags, &overrides),
         Some(("modules", sub)) => cmd_modules(file_of(sub), flags),
@@ -771,11 +802,94 @@ fn cmd_clean(file: &str) -> i32 {
     let dir = script_dir(file);
     match cache::clean(dir) {
         Ok(()) => {
-            println!("{} change-detection cache", style("cleared").bold());
+            println!("{} change-detection cache and output store", style("cleared").bold());
             0
         }
         Err(e) => fail(e),
     }
+}
+
+// ── cache (output cache maintenance, Phase 50) ─────────────────────────────────────
+
+fn cmd_cache_stats(file: &str) -> i32 {
+    let stats = cache::stats(script_dir(file));
+    println!("{}", style("output cache").bold());
+    println!(
+        "  {} blob(s), {} on disk ({} referenced)",
+        stats.blob_count,
+        format_bytes(stats.total_bytes),
+        stats.referenced
+    );
+    let attempts = stats.hits + stats.misses;
+    let rate = if attempts == 0 {
+        "n/a".to_string()
+    } else {
+        format!("{:.0}%", (stats.hits as f64 / attempts as f64) * 100.0)
+    };
+    println!("  restores: {} hit, {} miss (hit-rate {rate})", stats.hits, stats.misses);
+    0
+}
+
+fn cmd_cache_gc(file: &str, max_size: Option<&String>) -> i32 {
+    let max_bytes = match max_size.map(|s| parse_size(s)) {
+        Some(Ok(n)) => Some(n),
+        Some(Err(msg)) => {
+            eprintln!("{} {msg}", style("error:").red().bold());
+            return 2;
+        }
+        None => None,
+    };
+    match cache::gc(script_dir(file), max_bytes) {
+        Ok(report) => {
+            println!(
+                "{} {} blob(s), {} pruned",
+                style("collected").bold(),
+                report.pruned_count,
+                format_bytes(report.pruned_bytes)
+            );
+            if report.evicted_count > 0 {
+                println!(
+                    "  evicted {} blob(s), {} to honor the size ceiling",
+                    report.evicted_count,
+                    format_bytes(report.evicted_bytes)
+                );
+            }
+            println!("  {} remaining", format_bytes(report.remaining_bytes));
+            0
+        }
+        Err(e) => fail(e),
+    }
+}
+
+/// Parse a human-friendly byte size: a plain integer, or one with a `K`/`M`/`G`/`T` suffix
+/// (decimal, 1000-based) — optionally with a trailing `B` (e.g. `500MB`, `2G`, `1048576`).
+fn parse_size(s: &str) -> Result<u64, String> {
+    let t = s.trim();
+    let upper = t.to_ascii_uppercase();
+    let digits = upper.trim_end_matches('B');
+    let (num, mult) = match digits.chars().last() {
+        Some('K') => (&digits[..digits.len() - 1], 1_000u64),
+        Some('M') => (&digits[..digits.len() - 1], 1_000_000),
+        Some('G') => (&digits[..digits.len() - 1], 1_000_000_000),
+        Some('T') => (&digits[..digits.len() - 1], 1_000_000_000_000),
+        _ => (digits, 1),
+    };
+    num.trim()
+        .parse::<u64>()
+        .map(|n| n.saturating_mul(mult))
+        .map_err(|_| format!("invalid size '{s}': expected a number, optionally suffixed K/M/G/T"))
+}
+
+/// Render a byte count compactly with a decimal-SI suffix (`B`, `KB`, `MB`, `GB`).
+fn format_bytes(bytes: u64) -> String {
+    const UNITS: [&str; 4] = ["B", "KB", "MB", "GB"];
+    let mut value = bytes as f64;
+    let mut unit = 0;
+    while value >= 1000.0 && unit < UNITS.len() - 1 {
+        value /= 1000.0;
+        unit += 1;
+    }
+    if unit == 0 { format!("{bytes} B") } else { format!("{value:.1} {}", UNITS[unit]) }
 }
 
 // ── parse / eval (debug) ─────────────────────────────────────────────────────────
@@ -1222,6 +1336,19 @@ impl Reporter for TermReporter {
         let _ = writeln!(out, "{} {} {}", style("•").dim(), stage, style("(up to date)").dim());
     }
 
+    fn stage_restored(&self, out: &mut dyn Write, stage: &str) {
+        if self.quiet() {
+            return;
+        }
+        let _ = writeln!(
+            out,
+            "{} {} {}",
+            style("↻").cyan(),
+            stage,
+            style("(restored from cache)").dim()
+        );
+    }
+
     fn stage_passed(&self, out: &mut dyn Write, stage: &str) {
         // In verbose mode the pass marker is emitted by `stage_finished` with the elapsed
         // time appended; here we only render it for the normal (non-verbose) case.
@@ -1368,6 +1495,9 @@ impl TermReporter {
                 StageOutcome::Failed => (style("✗").red(), String::new()),
                 StageOutcome::Skipped => {
                     (style("•").dim(), format!("  {}", style("(up to date)").dim()))
+                }
+                StageOutcome::Restored => {
+                    (style("↻").cyan(), format!("  {}", style("(restored from cache)").dim()))
                 }
             };
             let _ = writeln!(

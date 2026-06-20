@@ -51,12 +51,18 @@ covered sizes are:
 | `run_pipeline`      | cold end-to-end run, every stage executes (cache cleared)       | Phase 24    |
 | `run_pipeline_warm` | warm run, every stage hits the skip-check (cache populated)     | Phase 25    |
 | `run_pipeline_warm_large` | warm run over large input files — exposes the fast path   | Phase 25    |
+| `run_pipeline_restore` | outputs deleted, cache + CAS kept — stages restore from the store | Phase 50 |
 | `run_pipeline_incremental_edit` | one input edited, `for`-loop re-runs only that file | Phase 38    |
 | `run_pipeline_incremental_full` | same fixture, cache cleared — every iteration re-runs | Phase 38    |
 
 The Phase 38 pair shares a single-stage `for file in inputs { copy … }` fixture
 (`f<N>_k<KiB>`: N input files of KiB each), so the only difference is whether the
 cache lets unchanged files' iterations be skipped.
+
+`run_pipeline_restore` reuses the `run_pipeline` specs (`SMALL`, `MEDIUM`): with the
+content-addressed store primed, deleting the outputs makes each stage restore them from
+the CAS rather than re-running its steps. Read it against `run_pipeline` (a cold rebuild
+of the same shape) — the gap is the Phase 50 restore win.
 
 ## Baseline
 

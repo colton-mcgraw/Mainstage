@@ -38,6 +38,9 @@ pub enum StageOutcome {
     Passed,
     /// The stage was skipped because its inputs were unchanged and outputs present.
     Skipped,
+    /// The stage's inputs were unchanged but its outputs were missing, so they were restored
+    /// from the content-addressed output cache instead of re-running the steps (Phase 50).
+    Restored,
     /// The stage's steps failed (whether or not the failure was tolerated).
     Failed,
 }
@@ -61,6 +64,9 @@ pub trait Reporter: Send + Sync {
     fn stage_start(&self, _out: &mut dyn Write, _stage: &str) {}
     /// A stage was skipped because its inputs are unchanged and outputs present.
     fn stage_skipped(&self, _out: &mut dyn Write, _stage: &str) {}
+    /// A stage's missing outputs were restored from the content-addressed cache instead of
+    /// re-running its steps (Phase 50). Default: no-op.
+    fn stage_restored(&self, _out: &mut dyn Write, _stage: &str) {}
     /// A stage finished successfully.
     fn stage_passed(&self, _out: &mut dyn Write, _stage: &str) {}
     /// A stage failed; `allow_failure` indicates whether the failure is tolerated.
@@ -385,10 +391,11 @@ pub fn plan_pipeline(
             Some(inputs_val) => {
                 let prior = cache.input_meta(name);
                 let fp = cache::fingerprint_inputs(&inputs_val, &prior, &run_cache);
-                if cache.is_fresh(name, fp.digest(), &project_dir) {
-                    PlanStatus::Skip
-                } else {
-                    PlanStatus::Run
+                // A `Restorable` stage avoids re-running its steps (its outputs come from the
+                // CAS), so the plan groups it with `Fresh` as a skip rather than a run.
+                match cache.freshness(name, fp.digest(), &project_dir) {
+                    cache::Freshness::Stale => PlanStatus::Run,
+                    _ => PlanStatus::Skip,
                 }
             }
             // `always_run`, or a plain no-inputs stage (Phase 7 default): always runs.
@@ -812,13 +819,33 @@ fn run_one_stage(
     let output_paths = stage_outputs_value.as_ref().map(cache::output_paths).unwrap_or_default();
 
     if let Some(fp) = &fingerprint {
-        let fresh = cache.lock().unwrap().is_fresh(name, fp.digest(), project_dir);
-        if fresh {
-            emit(reporter, |r, out| r.stage_skipped(out, name));
-            emit(reporter, |r, out| {
-                r.stage_finished(out, name, StageOutcome::Skipped, start.elapsed())
-            });
-            return StageRun::Done { outputs: stage_outputs_value, success: true };
+        // Bind the classification to a local so the cache lock is released before the arms
+        // run (the restore arm re-locks to bump a counter — holding it here would deadlock).
+        let freshness = cache.lock().unwrap().freshness(name, fp.digest(), project_dir);
+        match freshness {
+            cache::Freshness::Fresh => {
+                emit(reporter, |r, out| r.stage_skipped(out, name));
+                emit(reporter, |r, out| {
+                    r.stage_finished(out, name, StageOutcome::Skipped, start.elapsed())
+                });
+                return StageRun::Done { outputs: stage_outputs_value, success: true };
+            }
+            // Inputs unchanged but outputs missing: restore them from the content-addressed
+            // store instead of re-running the steps (Phase 50). A missing blob makes restore
+            // fail, and the stage falls through to a full rebuild below. The lock is released
+            // before the restore I/O and re-taken only to bump the hit/miss counter.
+            cache::Freshness::Restorable(snapshot) => {
+                if cache::restore_outputs(project_dir, &snapshot) {
+                    cache.lock().unwrap().note_cas_hit();
+                    emit(reporter, |r, out| r.stage_restored(out, name));
+                    emit(reporter, |r, out| {
+                        r.stage_finished(out, name, StageOutcome::Restored, start.elapsed())
+                    });
+                    return StageRun::Done { outputs: stage_outputs_value, success: true };
+                }
+                cache.lock().unwrap().note_cas_miss();
+            }
+            cache::Freshness::Stale => {}
         }
     }
 
@@ -878,7 +905,18 @@ fn run_one_stage(
         // Record the stage as up-to-date for the next run, persisting per-file metadata so
         // the next run can take the fast path. (A test stage has no fingerprint.)
         if let Some(fp) = fingerprint {
-            cache.lock().unwrap().update_fingerprint(name, fp, output_paths);
+            cache.lock().unwrap().update_fingerprint(name, fp, output_paths.clone());
+            // Snapshot the produced outputs into the content-addressed store so a later run
+            // with matching inputs can restore them rather than rebuild (Phase 50). Done
+            // outside the lock (it hashes and writes files); best-effort, so a store failure
+            // (empty snapshot) just leaves the stage un-restorable. Skipped when the stage
+            // declares no outputs.
+            if !output_paths.is_empty() {
+                let snapshot = cache::store_outputs(project_dir, &output_paths);
+                if !snapshot.is_empty() {
+                    cache.lock().unwrap().set_output_records(name, snapshot);
+                }
+            }
         }
         // For a test stage the tally summary is its pass marker, so skip the plain ✓ line.
         if !stage.test {

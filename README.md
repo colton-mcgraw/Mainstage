@@ -100,18 +100,25 @@ mainstage list          # lists all pipelines and their stages
 | `mainstage run <name>` | Run a named pipeline. |
 | `mainstage watch [name]` | Run the pipeline, then re-run it whenever its inputs change. |
 | `mainstage list` | List all pipelines and their stages. |
+| `mainstage params` | List declared build parameters and their effective values. |
 | `mainstage modules` | List available modules and their method signatures. |
 | `mainstage format [FILES...]` | Format scripts to canonical style (`--check` for CI, `--stdout` to preview). |
 | `mainstage plugin new <name>` | Scaffold a working stdio plugin skeleton (`--lang python\|shell`). |
 | `mainstage plugin check <path>` | Lint a plugin against the protocol before publishing. |
 | `mainstage lsp` | Run the language server over stdio (for editor integration). |
 | `mainstage parse <file>` | Print the parsed AST (debug tool). |
-| `mainstage clean` | Clear the change-detection cache. |
+| `mainstage clean` | Clear the change-detection cache and output store. |
+| `mainstage cache stats` | Show output-cache size and restore hit-rate. |
+| `mainstage cache gc [--max-size SIZE]` | Prune unreferenced blobs; evict LRU to a size ceiling. |
 
 `run`, `watch`, `list`, and `clean` (and the bare `mainstage`) read `main.ms` in the
 current directory by default; pass `-f, --file <FILE>` to point at a different script.
 Change detection persists per project in `.mainstage/cache.json` next to the script — a
 stage is skipped when its `inputs` are unchanged and its declared `outputs` still exist.
+A successful run also snapshots each stage's `outputs` into a content-addressed store under
+`.mainstage/cache/`; if the inputs are unchanged but the outputs were deleted, they are
+**restored** from the store instead of rebuilt. Override build parameters with `-D
+<name>=<value>`.
 
 ### Output control
 
