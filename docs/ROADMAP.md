@@ -732,6 +732,8 @@ and the parallel scheduler keep seeing one flat, ordinary `Program`; exhaustive 
 compile error until it is fully wired; and the on-disk cache format (`cache.rs`,
 `.mainstage/cache.json`) stays backward compatible (new fields default in).
 
+**To future agents** : Backward compatibility can be ignored! The user base is small and early, so breaking changes are cheap. The design decisions below reflect the current state of the codebase and the trade-offs it presents; if a later phase reveals a better way to do something, feel free to break compatibility and change course. Including the previously mentioned caching; a breaking change to the cache format is not only acceptable but likely necessary to implement a content-addressed output store (Phase 50), so the Phase 50 design decision reflects the ideal end state, not the incremental steps to get there.
+
 **Design decisions:**
 
 - **Composition is lexical inclusion, not a package manager.** An `include` merges the
