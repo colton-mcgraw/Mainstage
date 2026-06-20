@@ -84,7 +84,7 @@ expect_fail   = { "fails" }
 expect_output = { "output" ~ match_op ~ string }
 expect_timeout= { "timeout" ~ int_lit }
 assert_step   = { "assert" ~ expr ~ match_op ~ string }
-match_op      = { "contains" | "equals" }
+match_op      = { "not_contains" | "starts_with" | "ends_with" | "matches" | "contains" | "equals" }
 
 // ── Expressions ───────────────────────────────────────────────────────────────
 // Order resolves ambiguity: more-specific alternatives first.

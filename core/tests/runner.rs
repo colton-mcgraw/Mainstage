@@ -1061,6 +1061,85 @@ fn expect_output_contains_stops_early_on_timeout() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+#[test]
+fn assert_richer_matchers_pass_and_fail() {
+    // Phase 45: not_contains / starts_with / ends_with / matches over `assert`. The first
+    // four hold; the last two deliberately fail, so the stage tallies 4 passed, 2 failed.
+    let dir = unique_dir("assert_matchers");
+    let src = r#"
+        project { name: "demo" version: "1.2.0" }
+        default pipeline check { stages: [unit] }
+        stage unit {
+            test: true
+            steps {
+                assert "${project.version}" starts_with "1."
+                assert "${project.version}" ends_with ".0"
+                assert "${project.name}" not_contains "debug"
+                assert "${project.version}" matches "1.*.0"
+                assert "${project.version}" ends_with ".9"
+                assert "${project.name}" matches "demo-*"
+            }
+        }
+    "#;
+
+    let (result, cap) = run_with_capture(src, &dir);
+    assert!(result.is_err(), "two assertions fail, so the pipeline fails");
+    let stages = cap.stages.lock().unwrap();
+    assert_eq!(stages[0].1, 4, "four matchers held");
+    assert_eq!(stages[0].2, 2, "the ends_with and matches mismatches failed");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+// A boot-smoke that asserts an error marker is *absent* from captured output, plus the
+// `starts_with` / `ends_with` / `matches` output matchers. Gated on unix for `echo`.
+#[cfg(unix)]
+#[test]
+fn expect_output_richer_matchers() {
+    let dir = unique_dir("expect_matchers");
+    let src = r#"
+        default pipeline check { stages: [unit] }
+        stage unit {
+            test: true
+            steps {
+                // Boot smoke: the output must NOT contain an error marker.
+                expect output not_contains "ERROR" $ echo booting... ready
+                expect output starts_with "booting" $ echo booting... ready
+                expect output ends_with "ready" $ echo booting... ready
+                expect output matches "booting*ready" $ echo booting... ready
+            }
+        }
+    "#;
+
+    let (result, cap) = run_with_capture(src, &dir);
+    result.expect("all richer output expectations should hold");
+    assert_eq!(cap.stages.lock().unwrap()[0], ("unit".to_string(), 4, 0, Vec::new()));
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[cfg(unix)]
+#[test]
+fn expect_output_not_contains_records_failure() {
+    // `not_contains` must fail when the marker IS present (the inverse of `contains`).
+    let dir = unique_dir("expect_not_contains_fail");
+    let src = r#"
+        default pipeline check { stages: [unit] }
+        stage unit {
+            test: true
+            steps {
+                expect output not_contains "ERROR" $ echo fatal ERROR occurred
+            }
+        }
+    "#;
+
+    let (result, cap) = run_with_capture(src, &dir);
+    assert!(result.is_err(), "the marker is present, so not_contains fails");
+    assert_eq!(cap.stages.lock().unwrap()[0].2, 1, "the not_contains check failed");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 // An `expect` / `assert` outside a test stage is a hard assertion: a failure fails the stage.
 #[test]
 fn assert_outside_test_stage_hard_fails() {

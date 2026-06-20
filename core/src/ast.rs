@@ -651,4 +651,14 @@ pub enum MatchOp {
     Contains,
     /// The actual value equals the expected value (compared after trimming).
     Equals,
+    /// The actual value does **not** contain the expected value as a substring — the
+    /// negation of [`MatchOp::Contains`], for asserting a marker's *absence*.
+    NotContains,
+    /// The actual value begins with the expected value as a prefix.
+    StartsWith,
+    /// The actual value ends with the expected value as a suffix.
+    EndsWith,
+    /// The actual value matches the expected value as an anchored glob pattern (`*`, `?`,
+    /// `[…]` — the whole value must match, like `glob`'s path patterns). No regex dependency.
+    Matches,
 }

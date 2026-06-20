@@ -676,11 +676,11 @@ Allow `let` inside step blocks so derived values are named once. Output: multi-p
 Round out the Phase 39 test harness. Output: smoke tests can assert the *absence* of a marker
 and match on prefixes/suffixes/patterns.
 
-- [ ] Extend `match_op` with `not_contains`, `starts_with`, `ends_with`, and `matches`
+- [x] Extend `match_op` with `not_contains`, `starts_with`, `ends_with`, and `matches`
       (anchored glob-style; reuse an existing matcher rather than adding a regex dependency)
-- [ ] Wire through `expect_output` and `assert_step` in AST / parser / `sema` / `executor`
-- [ ] `format.rs` / LSP arms; docs in `docs/GRAMMAR.md` / `docs/MODULES.md`
-- [ ] Tests: each matcher passing and failing, plus a boot-smoke example asserting an error
+- [x] Wire through `expect_output` and `assert_step` in AST / parser / `sema` / `executor`
+- [x] `format.rs` / LSP arms; docs in `docs/GRAMMAR.md` / `docs/MODULES.md`
+- [x] Tests: each matcher passing and failing, plus a boot-smoke example asserting an error
       marker is absent from captured output
 
 ---

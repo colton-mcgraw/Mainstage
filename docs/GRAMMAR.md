@@ -819,13 +819,17 @@ stage release {
 Runs a command (the greedy `$` exec line, with the usual `${…}` interpolation) and asserts something about how it ran:
 
 ```text
-expect ok                          [timeout <n>] $ <command>   // exits 0
-expect fails                       [timeout <n>] $ <command>   // exits non-zero
-expect output contains "<string>"  [timeout <n>] $ <command>   // combined stdout/stderr contains the string
-expect output equals "<string>"    [timeout <n>] $ <command>   // combined output (trimmed) equals the string
+expect ok                              [timeout <n>] $ <command>   // exits 0
+expect fails                           [timeout <n>] $ <command>   // exits non-zero
+expect output contains "<string>"      [timeout <n>] $ <command>   // combined stdout/stderr contains the string
+expect output not_contains "<string>"  [timeout <n>] $ <command>   // output does NOT contain the string
+expect output equals "<string>"        [timeout <n>] $ <command>   // combined output (trimmed) equals the string
+expect output starts_with "<string>"   [timeout <n>] $ <command>   // trimmed output begins with the string
+expect output ends_with "<string>"     [timeout <n>] $ <command>   // trimmed output ends with the string
+expect output matches "<glob>"         [timeout <n>] $ <command>   // trimmed output matches the anchored glob
 ```
 
-The expected string in an `output` check supports interpolation. The optional `timeout <n>` (seconds) kills the command if it does not finish in time; for `output contains` the command is also stopped **early** as soon as the marker appears, so a long-running boot-smoke process need not run out the full timeout.
+The expected string in an `output` check supports interpolation. The optional `timeout <n>` (seconds) kills the command if it does not finish in time; for `output contains` the command is also stopped **early** as soon as the marker appears, so a long-running boot-smoke process need not run out the full timeout. The `contains` / `not_contains` matchers scan the raw captured output; the "shape" matchers (`equals`, `starts_with`, `ends_with`, `matches`) compare against the output with surrounding whitespace trimmed, so a trailing newline does not defeat them. `matches` is an **anchored glob** (`*`, `?`, `[…]` — the whole value must match, like `glob`'s path patterns); it adds no regex dependency.
 
 ```mainstage
 stage smoke {
@@ -836,17 +840,23 @@ stage smoke {
         expect fails $ ./build/cli --no-such-flag
         // Boot the image, scrape the serial log for a marker, give up after 30s.
         expect output contains "Boot OK" timeout 30 $ qemu-system-x86_64 -kernel build/os.bin -nographic
+        // A boot-smoke that must NOT print an error marker.
+        expect output not_contains "ERROR" timeout 30 $ qemu-system-x86_64 -kernel build/os.bin -nographic
     }
 }
 ```
 
 #### `assert` — Compare Two Values
 
-Compares an evaluated value against an expected string. Both `equals` (exact, after trimming) and `contains` (substring) are available, and the expected value supports interpolation:
+Compares an evaluated value against an expected string. The expected value supports interpolation, and the matcher is one of:
 
 ```text
-assert <expr> equals   "<string>"
-assert <expr> contains "<string>"
+assert <expr> equals       "<string>"   // exact, after trimming
+assert <expr> contains     "<string>"   // substring
+assert <expr> not_contains "<string>"   // not a substring
+assert <expr> starts_with  "<string>"   // prefix
+assert <expr> ends_with    "<string>"   // suffix
+assert <expr> matches      "<glob>"     // anchored glob (`*`, `?`, `[…]`)
 ```
 
 ```mainstage
@@ -855,6 +865,9 @@ stage unit {
     steps {
         assert "${project.name}" equals "demo"
         assert "${project.version}" contains "1.2"
+        assert "${project.version}" starts_with "1."
+        assert "${project.version}" matches "1.*.0"
+        assert "${project.name}" not_contains "debug"
     }
 }
 ```
@@ -1097,7 +1110,7 @@ expect_check    = "ok"
                 | "fails"
                 | "output" match_op string ;
 assert_step     = "assert" expr match_op string ;
-match_op        = "contains" | "equals" ;
+match_op        = "not_contains" | "starts_with" | "ends_with" | "matches" | "contains" | "equals" ;
 
 (* Expressions *)
 expr            = string

@@ -456,6 +456,10 @@ fn render_match_op(op: MatchOp) -> &'static str {
     match op {
         MatchOp::Contains => "contains",
         MatchOp::Equals => "equals",
+        MatchOp::NotContains => "not_contains",
+        MatchOp::StartsWith => "starts_with",
+        MatchOp::EndsWith => "ends_with",
+        MatchOp::Matches => "matches",
     }
 }
 
