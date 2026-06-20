@@ -322,6 +322,20 @@ impl EvalContext {
         child
     }
 
+    /// Return a child context with the block-scoped binding `name = value` added (Phase 44).
+    /// The binding joins the `let` environment so subsequent steps in the block resolve it;
+    /// because the child is a fresh clone, the binding falls out of scope when the block ends
+    /// (and is re-evaluated per iteration inside a `for` loop). Preserves the stage and loop
+    /// bindings already in scope.
+    pub fn with_local_let(&self, name: String, value: Value) -> Self {
+        let mut child = self.clone_base();
+        child.stage_inputs = self.stage_inputs.clone();
+        child.stage_outputs = self.stage_outputs.clone();
+        child.for_vars = self.for_vars.clone();
+        child.let_values.push((name, value));
+        child
+    }
+
     /// Return a context where `failed_stage` resolves to `stage_name` (for pipeline on_failure).
     pub fn with_failed_stage(&self, stage_name: String) -> Self {
         let mut child = self.clone_base();

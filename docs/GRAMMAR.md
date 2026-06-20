@@ -665,6 +665,31 @@ stage compile {
 | `file.ext`  | Extension without leading dot                | `"rs"`                     |
 | `file.dir`  | Parent directory path                        | `"src"`                    |
 
+### `let` — Block-Scoped Binding
+
+Names a derived value once for the steps that **follow** it within the same block, so a multi-path stage or a `for`-loop body stops repeating an interpolated expression. It uses the same surface syntax as a top-level [`let`](#let), but is scoped to its enclosing block: the binding is visible to later steps in that block (and to nested blocks), and falls out of scope when the block ends. Inside a `for` loop the binding is re-evaluated each iteration.
+
+```text
+let <ident> = <expr>;
+```
+
+```mainstage
+stage compile {
+    inputs: sources
+
+    steps {
+        for file in inputs {
+            // Named once, used twice — and recomputed per file.
+            let obj = "obj/${file.stem}.o";
+            $ gcc -c "${file.path}" -o "${obj}"
+            log "compiled ${obj}"
+        }
+    }
+}
+```
+
+Shadowing a name already in scope — a top-level `let`, an enclosing block-scoped `let`, or the enclosing `for`-loop variable — is a semantic error, so every binding reads unambiguously. A local `let` may reference any top-level binding and any local declared earlier in the same scope; referencing one declared later is an "undefined name" error.
+
 ### `try` — Tolerate a Failing Step
 
 Runs a block of steps but does **not** propagate a failure: if a step inside the block fails, the remaining steps in the block are skipped and the stage continues as though the block had succeeded. This is the native, checkable replacement for the `$ sh -c "… || true"` idiom — a best-effort step whose failure is acceptable.
@@ -1035,7 +1060,8 @@ pipeline_field  = "input"      ":" expr         ","?
                 | "on_success" "{" step*        "}" ;
 
 (* Steps *)
-step            = exec_step
+step            = let_step
+                | exec_step
                 | copy_step
                 | move_step
                 | mkdir_step
@@ -1057,6 +1083,7 @@ move_step       = "move" expr "to" expr ;
 mkdir_step      = "mkdir" expr ;
 delete_step     = "delete" expr ;
 write_step      = "write" expr "content" ":" string ;
+let_step        = "let" ident "=" expr ";" ;
 log_step        = "log" string ;
 fail_step       = "fail" string ;
 if_step         = "if" condition "{" step* "}" ( "else" "{" step* "}" )? ;

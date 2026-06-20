@@ -443,6 +443,9 @@ pub enum Step {
     Log(LogStep),
     /// `fail "<reason>"` — fail the enclosing stage deliberately with a diagnostic.
     Fail(FailStep),
+    /// `let <ident> = <expr>;` — a block-scoped binding visible to the steps that follow
+    /// it within the same block (Phase 44).
+    Let(LetStep),
 }
 
 impl Step {
@@ -464,6 +467,7 @@ impl Step {
             Step::Assert(s) => &s.span,
             Step::Log(s) => &s.span,
             Step::Fail(s) => &s.span,
+            Step::Let(s) => &s.span,
         }
     }
 }
@@ -627,6 +631,16 @@ pub struct LogStep {
 #[derive(Debug, Clone)]
 pub struct FailStep {
     pub reason: StringExpr,
+    pub span: Span,
+}
+
+/// `let <ident> = <expr>;` — a block-scoped local binding (Phase 44). It names a derived
+/// value once for the steps that follow it in the same block. Inside a `for` loop body the
+/// binding is re-evaluated per iteration. Shadowing an outer binding is a semantic error.
+#[derive(Debug, Clone)]
+pub struct LetStep {
+    pub name: String,
+    pub value: Expr,
     pub span: Span,
 }
 

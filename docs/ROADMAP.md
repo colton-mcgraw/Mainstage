@@ -659,14 +659,14 @@ and assert invariants without `$ echo` or a sentinel non-zero command.
 Allow `let` inside step blocks so derived values are named once. Output: multi-path stages and
 `for` loop bodies stop repeating interpolated expressions.
 
-- [ ] Permit `let <ident> = <expr>;` as a step; scope the binding to the remainder of its
+- [x] Permit `let <ident> = <expr>;` as a step; scope the binding to the remainder of its
       enclosing block (including per-iteration inside `for`)
-- [ ] `sema.rs`: extend name resolution into step scopes with the top-level forward-reference
+- [x] `sema.rs`: extend name resolution into step scopes with the top-level forward-reference
       rule; report shadowing of an outer binding as a semantic error with both spans
-- [ ] `eval.rs` / `executor.rs`: maintain a scoped binding environment while executing a block;
+- [x] `eval.rs` / `executor.rs`: maintain a scoped binding environment while executing a block;
       ensure `EvalContext` field additions update `eval_program_with`, `clone_base`, and the
       test helpers
-- [ ] `format.rs` / LSP (completion of locals in scope, go-to-definition) arms; tests for
+- [x] `format.rs` / LSP (completion of locals in scope, go-to-definition) arms; tests for
       scoping, shadowing errors, and a `for`-loop-local binding
 
 ---

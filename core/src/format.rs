@@ -347,6 +347,9 @@ impl Printer<'_> {
             Step::Fail(s) => {
                 self.node_line(&s.span, &format!("fail {}", render_string(&s.reason)));
             }
+            Step::Let(s) => {
+                self.node_line(&s.span, &format!("let {} = {};", s.name, render_expr(&s.value)));
+            }
         }
     }
 
@@ -692,6 +695,15 @@ mod tests {
     fn formats_log_and_fail_steps() {
         let src = "stage s{steps{log \"building ${project.name}\"\nfail  \"nope\"}}";
         let expected = "stage s {\n    steps {\n        log \"building ${project.name}\"\n        fail \"nope\"\n    }\n}\n";
+        assert_eq!(fmt(src), expected);
+        assert_idempotent(src);
+    }
+
+    #[test]
+    fn formats_block_scoped_local_let() {
+        let src =
+            "stage s{steps{let   x  =  \"${project.name}-rc\";\nwrite \"o\" content: \"${x}\"}}";
+        let expected = "stage s {\n    steps {\n        let x = \"${project.name}-rc\";\n        write \"o\" content: \"${x}\"\n    }\n}\n";
         assert_eq!(fmt(src), expected);
         assert_idempotent(src);
     }

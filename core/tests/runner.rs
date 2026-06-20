@@ -1199,6 +1199,68 @@ fn committed_diagnostics_example_runs_green() {
         .expect("the committed diagnostics example should run green");
 }
 
+// ── Block-scoped local `let` (Phase 44) ───────────────────────────────────────────
+
+#[test]
+fn local_let_binds_per_iteration_in_a_for_loop() {
+    // A `let` inside a `for` body is re-evaluated each iteration; the derived output path
+    // must therefore differ per file. Two source files yield two distinct outputs.
+    let dir = unique_dir("local_let_for");
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(dir.join("src/a.txt"), "a").unwrap();
+    std::fs::write(dir.join("src/b.txt"), "b").unwrap();
+    let d = dir.display();
+    let src = format!(
+        r#"
+        default pipeline build {{ stages: [gen] }}
+        stage gen {{
+            always_run: true
+            steps {{
+                for f in glob("src/*.txt") {{
+                    let out = "{d}/out/${{f.stem}}.done";
+                    write out content: "built ${{f.name}}"
+                }}
+            }}
+        }}
+        "#
+    );
+
+    run(&src, &dir, None).expect("per-iteration local bindings should drive distinct outputs");
+    assert_eq!(std::fs::read_to_string(dir.join("out/a.done")).unwrap(), "built a.txt");
+    assert_eq!(std::fs::read_to_string(dir.join("out/b.done")).unwrap(), "built b.txt");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn local_let_chains_and_is_visible_to_nested_blocks() {
+    let dir = unique_dir("local_let_chain");
+    let d = dir.display();
+    let src = format!(
+        r#"
+        project {{ name: "demo" }}
+        default pipeline build {{ stages: [s] }}
+        stage s {{
+            always_run: true
+            steps {{
+                let base = "release-${{project.name}}";
+                let tag = "${{base}}-final";
+                if env("MS_PHASE44_UNSET") {{
+                    write "{d}/never" content: "x"
+                }} else {{
+                    write "{d}/tag.txt" content: "${{tag}}"
+                }}
+            }}
+        }}
+        "#
+    );
+
+    run(&src, &dir, None).expect("chained locals visible in a nested block should resolve");
+    assert_eq!(std::fs::read_to_string(dir.join("tag.txt")).unwrap(), "release-demo-final");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn fail_inside_if_fails_only_when_the_branch_runs() {
     let dir = unique_dir("fail_if");

@@ -19,9 +19,23 @@ use crate::{
 // ── Public API ─────────────────────────────────────────────────────────────────
 
 /// Execute a sequence of steps in order, stopping at the first failure.
+///
+/// A `let <ident> = <expr>;` step (Phase 44) binds a name for the steps that *follow* it
+/// within this block: it extends the context lazily so each subsequent step — and any
+/// nested block — resolves the binding. The extended context is local to this call, so the
+/// binding falls out of scope when the block ends (and is rebuilt per iteration of a `for`).
 pub fn execute_steps(steps: &[Step], ctx: &EvalContext) -> Result<()> {
+    // `extended` holds the context once a local `let` has added a binding; until then we run
+    // against the caller's `ctx` directly, cloning only when a block actually binds a local.
+    let mut extended: Option<EvalContext> = None;
     for step in steps {
-        execute_step(step, ctx)?;
+        let cur = extended.as_ref().unwrap_or(ctx);
+        if let Step::Let(l) = step {
+            let value = eval_expr(&l.value, cur)?;
+            extended = Some(cur.with_local_let(l.name.clone(), value));
+        } else {
+            execute_step(step, cur)?;
+        }
     }
     Ok(())
 }
@@ -44,6 +58,10 @@ pub fn execute_step(step: &Step, ctx: &EvalContext) -> Result<()> {
         Step::Assert(s) => assert_step(s, ctx),
         Step::Log(s) => log_step(s, ctx),
         Step::Fail(s) => fail_step(s, ctx),
+        // A local `let` only affects the steps that follow it within its block, which
+        // `execute_steps` threads. Reached only on a direct single-step call: evaluate the
+        // value (so its errors surface) and discard the binding, which has no successors here.
+        Step::Let(s) => eval_expr(&s.value, ctx).map(|_| ()),
     }
 }
 
@@ -1345,5 +1363,72 @@ mod tests {
             },
             span: span(),
         })
+    }
+
+    // ── block-scoped local `let` (Phase 44) ────────────────────────────────────
+
+    /// A `let <name> = "<text>";` step binding a string literal.
+    fn local_let(name: &str, text: &str) -> Step {
+        Step::Let(LetStep { name: name.to_string(), value: str_expr(text), span: span() })
+    }
+
+    #[test]
+    fn local_let_is_visible_to_following_steps() {
+        // let msg = "phase44"; write "<dir>/out.txt" content: "${msg}"
+        let dir = unique_dir("local_let");
+        let mut ctx = ctx_with(&[]);
+        ctx.script_dir = dir.clone();
+        let target = dir.join("out.txt");
+        let write_using_local = Step::Write(WriteStep {
+            path: str_expr(target.to_str().unwrap()),
+            content: StringExpr {
+                parts: vec![StringPart::Interpolation(Box::new(Expr::Ident(IdentExpr {
+                    name: "msg".to_string(),
+                    span: span(),
+                })))],
+                span: span(),
+            },
+            span: span(),
+        });
+        execute_steps(&[local_let("msg", "phase44"), write_using_local], &ctx)
+            .expect("a following step should see the local binding");
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), "phase44");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn local_let_does_not_leak_out_of_the_block() {
+        // The caller's context is untouched: a local bound inside `execute_steps` is not
+        // visible to a sibling step list run against the same `ctx`.
+        let ctx = ctx_with(&[]);
+        execute_steps(&[local_let("scoped", "x")], &ctx).expect("inner block succeeds");
+        // Evaluating `scoped` against the original ctx must fail — the binding fell out of scope.
+        let ident = Expr::Ident(IdentExpr { name: "scoped".to_string(), span: span() });
+        assert!(eval_expr(&ident, &ctx).is_err(), "the local must not leak into the outer scope");
+    }
+
+    #[test]
+    fn local_let_shadows_an_earlier_local_via_reverse_lookup() {
+        // sema forbids shadowing, but the evaluator's reverse `let` lookup must still resolve
+        // the most-recent binding so a re-bound name reads as its latest value.
+        let dir = unique_dir("local_let_rebind");
+        let mut ctx = ctx_with(&[]);
+        ctx.script_dir = dir.clone();
+        let target = dir.join("v.txt");
+        let write_v = Step::Write(WriteStep {
+            path: str_expr(target.to_str().unwrap()),
+            content: StringExpr {
+                parts: vec![StringPart::Interpolation(Box::new(Expr::Ident(IdentExpr {
+                    name: "v".to_string(),
+                    span: span(),
+                })))],
+                span: span(),
+            },
+            span: span(),
+        });
+        execute_steps(&[local_let("v", "first"), local_let("v", "second"), write_v], &ctx)
+            .expect("rebinding then reading succeeds");
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), "second");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

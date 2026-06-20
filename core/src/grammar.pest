@@ -47,7 +47,7 @@ pipeline_on_success = { "on_success" ~ "{" ~ step* ~ "}" }
 
 // ── Steps ─────────────────────────────────────────────────────────────────────
 
-step        = _{ exec_step | copy_step | move_step | mkdir_step | delete_step | write_step | log_step | fail_step | if_step | for_step | try_step | workdir_step | with_env_step | expect_step | assert_step }
+step        = _{ let_step | exec_step | copy_step | move_step | mkdir_step | delete_step | write_step | log_step | fail_step | if_step | for_step | try_step | workdir_step | with_env_step | expect_step | assert_step }
 // Compound-atomic so horizontal whitespace is consumed explicitly (prevents
 // WHITESPACE from swallowing the newline that terminates the exec line).
 exec_step   = ${ "$" ~ (" " | "\t")* ~ exec_line }
@@ -61,6 +61,9 @@ write_step  = { "write" ~ expr ~ "content" ~ ":" ~ string }
 // `fail` deliberately fails the enclosing stage with the given reason.
 log_step    = { "log" ~ string }
 fail_step   = { "fail" ~ string }
+// Block-scoped binding (Phase 44): same surface syntax as a top-level `let`, but scoped to
+// the steps that follow it within the enclosing block.
+let_step    = { "let" ~ ident ~ "=" ~ expr ~ ";" }
 if_step     = { "if" ~ condition ~ then_block ~ ("else" ~ else_block)? }
 then_block  = { "{" ~ step* ~ "}" }
 else_block  = { "{" ~ step* ~ "}" }

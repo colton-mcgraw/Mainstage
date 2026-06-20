@@ -268,6 +268,7 @@ impl Builder {
             Rule::assert_step => Step::Assert(self.build_assert_step(pair)),
             Rule::log_step => Step::Log(self.build_log_step(pair)),
             Rule::fail_step => Step::Fail(self.build_fail_step(pair)),
+            Rule::let_step => Step::Let(self.build_let_step(pair)),
             r => unreachable!("unexpected step rule: {:?}", r),
         }
     }
@@ -387,6 +388,14 @@ impl Builder {
         let span = self.span(&pair);
         let reason = self.build_string(pair.into_inner().next().unwrap());
         FailStep { reason, span }
+    }
+
+    fn build_let_step(&mut self, pair: Pair<Rule>) -> LetStep {
+        let span = self.span(&pair);
+        let mut inner = pair.into_inner();
+        let name = inner.next().unwrap().as_str().to_string();
+        let value = self.build_expr(inner.next().unwrap());
+        LetStep { name, value, span }
     }
 
     fn build_expect_step(&mut self, pair: Pair<Rule>) -> ExpectStep {
