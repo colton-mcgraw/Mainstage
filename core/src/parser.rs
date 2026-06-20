@@ -738,6 +738,10 @@ fn parse_match_op(s: &str) -> MatchOp {
     match s {
         "contains" => MatchOp::Contains,
         "equals" => MatchOp::Equals,
+        "not_contains" => MatchOp::NotContains,
+        "starts_with" => MatchOp::StartsWith,
+        "ends_with" => MatchOp::EndsWith,
+        "matches" => MatchOp::Matches,
         _ => unreachable!("unexpected match_op: {}", s),
     }
 }

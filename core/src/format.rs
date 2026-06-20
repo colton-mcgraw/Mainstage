@@ -456,6 +456,10 @@ fn render_match_op(op: MatchOp) -> &'static str {
     match op {
         MatchOp::Contains => "contains",
         MatchOp::Equals => "equals",
+        MatchOp::NotContains => "not_contains",
+        MatchOp::StartsWith => "starts_with",
+        MatchOp::EndsWith => "ends_with",
+        MatchOp::Matches => "matches",
     }
 }
 
@@ -705,6 +709,18 @@ mod tests {
             "stage s{steps{let   x  =  \"${project.name}-rc\";\nwrite \"o\" content: \"${x}\"}}";
         let expected = "stage s {\n    steps {\n        let x = \"${project.name}-rc\";\n        write \"o\" content: \"${x}\"\n    }\n}\n";
         assert_eq!(fmt(src), expected);
+        assert_idempotent(src);
+    }
+
+    #[test]
+    fn formats_richer_assertion_matchers() {
+        let src = "stage u{test:true steps{assert \"x\" not_contains \"y\"\nassert \"x\" starts_with \"a\"\nassert \"x\" ends_with \"z\"\nassert \"x\" matches \"x*\"\nexpect output not_contains \"ERR\" $ run\n}}";
+        let out = fmt(src);
+        assert!(out.contains("assert \"x\" not_contains \"y\""), "got: {out}");
+        assert!(out.contains("assert \"x\" starts_with \"a\""), "got: {out}");
+        assert!(out.contains("assert \"x\" ends_with \"z\""), "got: {out}");
+        assert!(out.contains("assert \"x\" matches \"x*\""), "got: {out}");
+        assert!(out.contains("expect output not_contains \"ERR\" $ run"), "got: {out}");
         assert_idempotent(src);
     }
 

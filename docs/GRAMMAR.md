@@ -819,13 +819,12 @@ stage release {
 Runs a command (the greedy `$` exec line, with the usual `${…}` interpolation) and asserts something about how it ran:
 
 ```text
-expect ok                          [timeout <n>] $ <command>   // exits 0
-expect fails                       [timeout <n>] $ <command>   // exits non-zero
-expect output contains "<string>"  [timeout <n>] $ <command>   // combined stdout/stderr contains the string
-expect output equals "<string>"    [timeout <n>] $ <command>   // combined output (trimmed) equals the string
+expect ok                              [timeout <n>] $ <command>   // exits 0
+expect fails                           [timeout <n>] $ <command>   // exits non-zero
+expect output <matcher> "<string>"     [timeout <n>] $ <command>   // scrape combined stdout/stderr
 ```
 
-The expected string in an `output` check supports interpolation. The optional `timeout <n>` (seconds) kills the command if it does not finish in time; for `output contains` the command is also stopped **early** as soon as the marker appears, so a long-running boot-smoke process need not run out the full timeout.
+The `output` check compares the command's combined stdout/stderr (trimmed) against the string using a **matcher** (see below); the string supports interpolation. The optional `timeout <n>` (seconds) kills the command if it does not finish in time; for `output contains` the command is also stopped **early** as soon as the marker appears, so a long-running boot-smoke process need not run out the full timeout.
 
 ```mainstage
 stage smoke {
@@ -836,17 +835,18 @@ stage smoke {
         expect fails $ ./build/cli --no-such-flag
         // Boot the image, scrape the serial log for a marker, give up after 30s.
         expect output contains "Boot OK" timeout 30 $ qemu-system-x86_64 -kernel build/os.bin -nographic
+        // A boot-smoke can also assert a marker is *absent* from the captured log.
+        expect output not_contains "panic" timeout 30 $ qemu-system-x86_64 -kernel build/os.bin -nographic
     }
 }
 ```
 
 #### `assert` — Compare Two Values
 
-Compares an evaluated value against an expected string. Both `equals` (exact, after trimming) and `contains` (substring) are available, and the expected value supports interpolation:
+Compares an evaluated value against an expected string using a **matcher**; the expected value supports interpolation:
 
 ```text
-assert <expr> equals   "<string>"
-assert <expr> contains "<string>"
+assert <expr> <matcher> "<string>"
 ```
 
 ```mainstage
@@ -855,9 +855,27 @@ stage unit {
     steps {
         assert "${project.name}" equals "demo"
         assert "${project.version}" contains "1.2"
+        assert "${artifact}" ends_with ".tar.gz"
+        assert "${log}" not_contains "ERROR"
+        assert "${project.version}" matches "1.*.*"
     }
 }
 ```
+
+#### Matchers
+
+The same set of matchers is shared by `expect output` and `assert`:
+
+| Matcher        | Holds when the value …                                                        |
+|----------------|-------------------------------------------------------------------------------|
+| `equals`       | equals the expected string exactly (the `expect output` value is trimmed)     |
+| `contains`     | contains the expected string as a substring                                   |
+| `not_contains` | does **not** contain the expected string — e.g. asserting an error is absent  |
+| `starts_with`  | begins with the expected string                                               |
+| `ends_with`    | ends with the expected string                                                 |
+| `matches`      | matches the expected **anchored glob** pattern (`*` / `?` wildcards) in full  |
+
+`matches` reuses the glob engine (the same one behind [`glob(...)`](#glob)): the whole value must match the pattern, so `matches "v*.*.*"` accepts `v1.2.3` but not `1.2.3`. An invalid glob pattern fails the step with a diagnostic.
 
 When run, a test stage prints each assertion's result and a `--quiet`-aware summary line (`tests: N passed` / `tests: M failed, N passed`); the run's exit code is non-zero if any assertion failed.
 
@@ -1097,7 +1115,8 @@ expect_check    = "ok"
                 | "fails"
                 | "output" match_op string ;
 assert_step     = "assert" expr match_op string ;
-match_op        = "contains" | "equals" ;
+match_op        = "contains" | "equals" | "not_contains"
+                | "starts_with" | "ends_with" | "matches" ;
 
 (* Expressions *)
 expr            = string

@@ -84,7 +84,8 @@ expect_fail   = { "fails" }
 expect_output = { "output" ~ match_op ~ string }
 expect_timeout= { "timeout" ~ int_lit }
 assert_step   = { "assert" ~ expr ~ match_op ~ string }
-match_op      = { "contains" | "equals" }
+// Order: `not_contains` before `contains` (longer, more specific) so the prefix doesn't win.
+match_op      = { "not_contains" | "contains" | "equals" | "starts_with" | "ends_with" | "matches" }
 
 // ── Expressions ───────────────────────────────────────────────────────────────
 // Order resolves ambiguity: more-specific alternatives first.

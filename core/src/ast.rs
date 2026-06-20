@@ -651,4 +651,13 @@ pub enum MatchOp {
     Contains,
     /// The actual value equals the expected value (compared after trimming).
     Equals,
+    /// The actual value does *not* contain the expected value as a substring.
+    NotContains,
+    /// The actual value begins with the expected value.
+    StartsWith,
+    /// The actual value ends with the expected value.
+    EndsWith,
+    /// The actual value matches the expected value as an anchored glob pattern (the whole
+    /// value must match; `*` and `?` are wildcards). Reuses the `glob` crate's matcher.
+    Matches,
 }

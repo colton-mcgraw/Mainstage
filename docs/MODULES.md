@@ -406,8 +406,10 @@ stage unit {
 }
 ```
 
-`expect` can also assert a non-zero exit (`fails`), match captured output
-(`output contains` / `output equals`), and take a `timeout <seconds>` for boot-smoke
-checks. A failed assertion fails the stage (and the run's exit code) but does not stop the
-other assertions in the stage. See [GRAMMAR.md](GRAMMAR.md#test-harness) for the full
-syntax and the [`tests/testing.ms`](../tests/testing.ms) example.
+`expect` can also assert a non-zero exit (`fails`), scrape captured output with any of the
+shared matchers (`output contains` / `equals` / `not_contains` / `starts_with` / `ends_with`
+/ `matches`), and take a `timeout <seconds>` for boot-smoke checks — including asserting an
+error marker is *absent* with `output not_contains`. A failed assertion fails the stage (and
+the run's exit code) but does not stop the other assertions in the stage. See
+[GRAMMAR.md](GRAMMAR.md#test-harness) for the full syntax and the matcher table, and the
+[`tests/testing.ms`](../tests/testing.ms) example.

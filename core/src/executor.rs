@@ -259,15 +259,9 @@ fn fail_step(s: &FailStep, ctx: &EvalContext) -> Result<()> {
 fn assert_step(s: &AssertStep, ctx: &EvalContext) -> Result<()> {
     let actual = eval_expr(&s.actual, ctx)?.display_string();
     let expected = eval_string_expr(&s.expected, ctx)?;
-    let passed = match s.op {
-        MatchOp::Equals => actual == expected,
-        MatchOp::Contains => actual.contains(&expected),
-    };
+    let passed = match_op_eval(s.op, &actual, &expected, &s.span)?;
     let description = format!("assert \"{actual}\" {} \"{expected}\"", match_op_word(s.op));
-    let detail = (!passed).then(|| match s.op {
-        MatchOp::Equals => format!("expected \"{expected}\", got \"{actual}\""),
-        MatchOp::Contains => format!("\"{actual}\" does not contain \"{expected}\""),
-    });
+    let detail = (!passed).then(|| assert_failure_detail(s.op, &actual, &expected));
     record_assertion(ctx, &s.span, description, passed, detail)
 }
 
@@ -329,18 +323,11 @@ fn expect_step(s: &ExpectStep, ctx: &EvalContext) -> Result<()> {
         }
         ExpectCheck::Output { op, expected } => {
             let want = eval_string_expr(expected, ctx)?;
-            let ok = match op {
-                MatchOp::Contains => output.contains(&want),
-                MatchOp::Equals => output.trim() == want,
-            };
-            let detail = (!ok).then(|| match op {
-                MatchOp::Contains => {
-                    format!("output did not contain \"{want}\"{}", output_snippet(&output))
-                }
-                MatchOp::Equals => {
-                    format!("expected output \"{want}\", got \"{}\"", output.trim())
-                }
-            });
+            // Match against the trimmed output so positional matchers (`starts_with` /
+            // `ends_with` / `matches`) and `equals` are not defeated by a trailing newline.
+            let actual = output.trim();
+            let ok = match_op_eval(*op, actual, &want, &s.span)?;
+            let detail = (!ok).then(|| expect_failure_detail(*op, &output, &want));
             (ok, detail)
         }
     };
@@ -382,10 +369,62 @@ fn eval_string_expr(s: &StringExpr, ctx: &EvalContext) -> Result<String> {
     }
 }
 
+/// Evaluate a [`MatchOp`] over `actual` / `expected`. `Matches` compiles `expected` as an
+/// anchored glob pattern (reusing the `glob` crate — no regex dependency); an invalid
+/// pattern fails the step with a diagnostic carrying `span`.
+fn match_op_eval(op: MatchOp, actual: &str, expected: &str, span: &Span) -> Result<bool> {
+    Ok(match op {
+        MatchOp::Equals => actual == expected,
+        MatchOp::Contains => actual.contains(expected),
+        MatchOp::NotContains => !actual.contains(expected),
+        MatchOp::StartsWith => actual.starts_with(expected),
+        MatchOp::EndsWith => actual.ends_with(expected),
+        MatchOp::Matches => glob::Pattern::new(expected)
+            .map_err(|e| step_err(format!("invalid glob pattern \"{expected}\": {e}"), span))?
+            .matches(actual),
+    })
+}
+
+/// The failure detail for a failed `assert` comparison.
+fn assert_failure_detail(op: MatchOp, actual: &str, expected: &str) -> String {
+    match op {
+        MatchOp::Equals => format!("expected \"{expected}\", got \"{actual}\""),
+        MatchOp::Contains => format!("\"{actual}\" does not contain \"{expected}\""),
+        MatchOp::NotContains => format!("\"{actual}\" unexpectedly contains \"{expected}\""),
+        MatchOp::StartsWith => format!("\"{actual}\" does not start with \"{expected}\""),
+        MatchOp::EndsWith => format!("\"{actual}\" does not end with \"{expected}\""),
+        MatchOp::Matches => format!("\"{actual}\" does not match pattern \"{expected}\""),
+    }
+}
+
+/// The failure detail for a failed `expect output` comparison, with a bounded output snippet.
+fn expect_failure_detail(op: MatchOp, output: &str, want: &str) -> String {
+    match op {
+        MatchOp::Equals => format!("expected output \"{want}\", got \"{}\"", output.trim()),
+        MatchOp::Contains => format!("output did not contain \"{want}\"{}", output_snippet(output)),
+        MatchOp::NotContains => {
+            format!("output unexpectedly contained \"{want}\"{}", output_snippet(output))
+        }
+        MatchOp::StartsWith => {
+            format!("output does not start with \"{want}\"{}", output_snippet(output))
+        }
+        MatchOp::EndsWith => {
+            format!("output does not end with \"{want}\"{}", output_snippet(output))
+        }
+        MatchOp::Matches => {
+            format!("output does not match pattern \"{want}\"{}", output_snippet(output))
+        }
+    }
+}
+
 fn match_op_word(op: MatchOp) -> &'static str {
     match op {
         MatchOp::Contains => "contains",
         MatchOp::Equals => "equals",
+        MatchOp::NotContains => "not_contains",
+        MatchOp::StartsWith => "starts_with",
+        MatchOp::EndsWith => "ends_with",
+        MatchOp::Matches => "matches",
     }
 }
 
@@ -1430,5 +1469,40 @@ mod tests {
             .expect("rebinding then reading succeeds");
         assert_eq!(std::fs::read_to_string(&target).unwrap(), "second");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // ── richer assertion matchers (Phase 45) ───────────────────────────────────
+
+    #[test]
+    fn match_op_eval_covers_every_matcher() {
+        let sp = span();
+        let m = |op, a, e| match_op_eval(op, a, e, &sp).unwrap();
+
+        assert!(m(MatchOp::Equals, "abc", "abc"));
+        assert!(!m(MatchOp::Equals, "abc", "ab"));
+
+        assert!(m(MatchOp::Contains, "abcdef", "cde"));
+        assert!(!m(MatchOp::Contains, "abcdef", "xyz"));
+
+        assert!(m(MatchOp::NotContains, "abcdef", "xyz"));
+        assert!(!m(MatchOp::NotContains, "abcdef", "cde"));
+
+        assert!(m(MatchOp::StartsWith, "release-1.0", "release"));
+        assert!(!m(MatchOp::StartsWith, "release-1.0", "debug"));
+
+        assert!(m(MatchOp::EndsWith, "app.tar.gz", ".gz"));
+        assert!(!m(MatchOp::EndsWith, "app.tar.gz", ".zip"));
+
+        // `matches` is an anchored glob: the whole value must match the pattern.
+        assert!(m(MatchOp::Matches, "v1.2.3", "v*.*.*"));
+        assert!(m(MatchOp::Matches, "foo", "f?o"));
+        assert!(!m(MatchOp::Matches, "v1.2.3", "v*.*.*.*"));
+        assert!(!m(MatchOp::Matches, "prefix-then-end", "then"), "anchored: no partial match");
+    }
+
+    #[test]
+    fn match_op_matches_rejects_an_invalid_glob_pattern() {
+        // An unmatched `[` is an invalid glob; the matcher surfaces a step error.
+        assert!(match_op_eval(MatchOp::Matches, "abc", "a[bc", &span()).is_err());
     }
 }

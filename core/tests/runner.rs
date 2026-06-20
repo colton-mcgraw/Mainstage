@@ -1282,3 +1282,58 @@ fn fail_inside_if_fails_only_when_the_branch_runs() {
 
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+// ── Richer assertion matchers (Phase 45) ──────────────────────────────────────────
+
+#[test]
+fn assert_matchers_pass_and_fail() {
+    let dir = unique_dir("assert_matchers");
+    // Four matchers hold; the final `starts_with` does not. The harness tallies them all.
+    let src = r#"
+        default pipeline check { stages: [unit] }
+        stage unit {
+            test: true
+            steps {
+                assert "release-demo" starts_with "release"
+                assert "app.tar.gz" ends_with ".gz"
+                assert "all good" not_contains "ERROR"
+                assert "v1.2.3" matches "v*.*.*"
+                assert "release-demo" starts_with "debug"
+            }
+        }
+    "#;
+
+    let (result, cap) = run_with_capture(src, &dir);
+    assert!(result.is_err(), "the failing matcher must fail the pipeline");
+    let stages = cap.stages.lock().unwrap();
+    assert_eq!(stages[0].1, 4, "four matchers pass");
+    assert_eq!(stages[0].2, 1, "the starts_with mismatch fails");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+// `expect` runs real commands; gate it on unix where `echo` exists.
+#[cfg(unix)]
+#[test]
+fn expect_output_not_contains_is_a_boot_smoke_guard() {
+    let dir = unique_dir("not_contains");
+    // Boot-smoke style: the run is healthy only when no error marker appears in the output.
+    let src = r#"
+        default pipeline check { stages: [unit] }
+        stage unit {
+            test: true
+            steps {
+                expect output not_contains "ERROR" $ echo boot sequence complete
+                expect output not_contains "ERROR" $ echo ERROR disk failure
+            }
+        }
+    "#;
+
+    let (result, cap) = run_with_capture(src, &dir);
+    assert!(result.is_err(), "the command emitting the marker fails not_contains");
+    let stages = cap.stages.lock().unwrap();
+    assert_eq!(stages[0].1, 1, "the clean run passes");
+    assert_eq!(stages[0].2, 1, "the run containing ERROR fails the absence check");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}

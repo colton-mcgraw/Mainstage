@@ -17,7 +17,7 @@ default pipeline check {
     stages: [unit]
 }
 
-// All assertions here hold, so the stage reports "tests: 3 passed".
+// All assertions here hold, so the stage reports every matcher passing.
 stage unit {
     test: true
 
@@ -26,5 +26,10 @@ stage unit {
         assert "${project.name}" equals "demo"
         assert "${project.version}" contains "1.2"
         assert "release-${project.name}" equals "release-demo"
+        // The richer matchers (Phase 45): prefix / suffix, absence, and anchored glob.
+        assert "release-${project.name}" starts_with "release-"
+        assert "${project.name}.tar.gz" ends_with ".gz"
+        assert "${project.version}" not_contains "-rc"
+        assert "${project.version}" matches "1.*.*"
     }
 }
