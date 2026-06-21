@@ -20,6 +20,11 @@ the project uses [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- A live run-status bar item: the extension watches the `.mainstage/status.json`
+  file the CLI writes during a run and shows the currently running stage, its
+  elapsed time, and latest output line (`running… : <line>`, `cached`,
+  `restored`, `failed : <error>`). Toggle it with the `mainstage.showStatusBar`
+  setting.
 - Activation logging of the host platform/architecture, remote name, and the
   resolved server path, to make remote and WSL start-up failures diagnosable.
 - The bundled server is marked executable on activation when VSIX extraction
