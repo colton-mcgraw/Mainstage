@@ -47,6 +47,12 @@ While Mainstage is pre-`1.0.0`, breaking changes may land in minor releases; onc
   highlighting and zero-config language-server discovery, a tag-triggered workflow
   publishing it to the Visual Studio Marketplace and Open VSX, and documented LSP
   setup for Neovim and Helix.
+- **Run status & feedback** — the runner records each run to a `.mainstage/status.json`
+  file (per-stage status, timings, and the live last output line); the `mainstage ui`
+  HUD shows each stage's elapsed time and latest output (`running… : <line>`, `cached`,
+  `restored`, `failed : <error>`); a new `mainstage status` command renders the last
+  run's table; and the VS Code extension watches the file to show the running stage in
+  its status bar (`mainstage.showStatusBar`).
 - **Docs & onboarding** — a [Getting Started](docs/GETTING_STARTED.md) guide, a
   runnable [examples gallery](examples/) (`hello`, `static-site`, `data-report`)
   beyond `main.ms`, an mdBook documentation site rendering `docs/` (published to

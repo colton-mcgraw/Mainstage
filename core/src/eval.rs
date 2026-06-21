@@ -92,15 +92,49 @@ impl Value {
 /// atomically, so the output of concurrently-running stages never interleaves on the
 /// terminal. When no sink is present (the sequential `--jobs 1` path), steps stream
 /// their output live as before.
-#[derive(Debug, Default)]
+#[derive(Default)]
 pub struct OutputSink {
     buf: Mutex<Vec<u8>>,
+    /// Optional live hook: called with each *complete* line (no trailing newline) as soon as
+    /// it is captured, so a frontend can surface a running stage's latest output. Installed
+    /// by the runner from the run's reporter; absent for plain library/sequential use. The
+    /// remainder after the last newline is held in `pending` until its line completes.
+    on_line: Option<OutputLineSink>,
+    pending: Mutex<Vec<u8>>,
+}
+
+/// The live per-line callback carried by an [`OutputSink`]. Factored into a type alias to
+/// keep `clippy::type_complexity` quiet.
+pub type OutputLineSink = Box<dyn Fn(&str) + Send + Sync>;
+
+impl std::fmt::Debug for OutputSink {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("OutputSink").field("buf", &self.buf).finish_non_exhaustive()
+    }
 }
 
 impl OutputSink {
-    /// Append raw bytes (typically a child process's captured stdout/stderr).
+    /// A sink with a live per-line callback (see [`OutputSink::on_line`]).
+    pub fn with_line_sink(on_line: OutputLineSink) -> Self {
+        Self { on_line: Some(on_line), ..Self::default() }
+    }
+
+    /// Append raw bytes (typically a child process's captured stdout/stderr). When a live
+    /// line callback is installed, each newly completed line is forwarded to it.
     pub fn write(&self, bytes: &[u8]) {
         self.buf.lock().unwrap().extend_from_slice(bytes);
+        if let Some(cb) = &self.on_line {
+            let mut pending = self.pending.lock().unwrap();
+            pending.extend_from_slice(bytes);
+            // Emit every complete line, keeping the trailing partial line buffered.
+            while let Some(nl) = pending.iter().position(|&b| b == b'\n') {
+                let line: Vec<u8> = pending.drain(..=nl).collect();
+                // Strip the trailing '\n' (and a '\r' for CRLF) before reporting.
+                let end = line.len().saturating_sub(1);
+                let end = if end > 0 && line[end - 1] == b'\r' { end - 1 } else { end };
+                cb(&String::from_utf8_lossy(&line[..end]));
+            }
+        }
     }
 
     /// Drain and return everything captured so far.
@@ -925,6 +959,26 @@ mod tests {
     use crate::error::Span;
     use std::collections::HashSet;
     use std::path::PathBuf;
+    use std::sync::Arc as StdArc;
+
+    #[test]
+    fn output_sink_emits_complete_lines_only() {
+        let lines: StdArc<Mutex<Vec<String>>> = StdArc::new(Mutex::new(Vec::new()));
+        let captured = lines.clone();
+        let sink = OutputSink::with_line_sink(Box::new(move |l| {
+            captured.lock().unwrap().push(l.to_string())
+        }));
+
+        // A partial line is held until its newline arrives; CRLF is trimmed too.
+        sink.write(b"hello");
+        assert!(lines.lock().unwrap().is_empty(), "partial line must not emit");
+        sink.write(b" world\r\nsecond\n");
+        sink.write(b"third"); // still pending, no trailing newline
+
+        assert_eq!(*lines.lock().unwrap(), vec!["hello world".to_string(), "second".to_string()]);
+        // The full byte stream is still captured for the atomic flush.
+        assert_eq!(sink.take(), b"hello world\r\nsecond\nthird");
+    }
 
     fn dummy_span() -> Span {
         Span {

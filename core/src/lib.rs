@@ -14,14 +14,16 @@ pub mod parser;
 pub mod runner;
 pub mod sema;
 pub mod source;
+pub mod status;
 pub mod templates;
 pub mod tools;
 pub mod trivia;
 
 pub use error::{Diagnostic, Error, Result, Span};
 pub use eval::{
-    AssertionResult, EvalContext, FileEntry, OutputSink, ReporterHandle, TestRecorder, Value,
-    eval_condition, eval_expr, eval_program, eval_program_with, eval_program_with_overrides,
+    AssertionResult, EvalContext, FileEntry, OutputLineSink, OutputSink, ReporterHandle,
+    TestRecorder, Value, eval_condition, eval_expr, eval_program, eval_program_with,
+    eval_program_with_overrides,
 };
 pub use executor::{execute_step, execute_steps};
 pub use format::format;
@@ -34,12 +36,13 @@ pub use modules::{
 pub use parser::parse;
 pub use runner::{
     CancelToken, ExplainVerdict, Explanation, NoopReporter, Plan, PlanStatus, PlannedStage,
-    Reporter, RunReason, SkipReason, StageGraph, StageNode, StageOutcome, critical_path,
-    explain_stage, pipeline_input_paths, plan_pipeline, query_graph, run_pipeline,
+    Reporter, RunReason, SkipReason, StageGraph, StageNode, StageOutcome, TeeReporter,
+    critical_path, explain_stage, pipeline_input_paths, plan_pipeline, query_graph, run_pipeline,
     run_pipeline_cancellable, run_pipeline_reported, run_pipeline_reported_jobs,
 };
 pub use sema::{AnalysisResult, analyze, analyze_with};
 pub use source::Source;
+pub use status::{RunState, RunStatus, StageState, StageStatus, StatusRecorder};
 pub use templates::expand as expand_templates;
 pub use trivia::{
     Comment, CommentKind, NodeTrivia, SyntaxToken, TokenKind, TriviaMap, attach as attach_trivia,

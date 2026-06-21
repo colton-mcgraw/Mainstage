@@ -62,6 +62,13 @@ pub trait Reporter: Send + Sync {
     /// the stage's buffer like any other event, so it participates in the per-stage atomic
     /// flush; a frontend honors `--quiet` here by writing nothing. Default: no-op.
     fn step_log(&self, _out: &mut dyn Write, _message: &str) {}
+    /// A running stage produced a complete line of command output (stdout or stderr),
+    /// delivered live as it is captured rather than at the stage's atomic flush. Used by a
+    /// frontend that wants to surface "what the stage is doing right now" (the live HUD's
+    /// per-stage tail, the persisted run-state file). Only fired when the stage's output is
+    /// buffered (the parallel runner, or a frontend that forces buffering); a single-worker
+    /// streaming run inherits the terminal and reports no lines here. Default: no-op.
+    fn stage_output_line(&self, _stage: &str, _line: &str) {}
     /// A stage is about to execute its steps.
     fn stage_start(&self, _out: &mut dyn Write, _stage: &str) {}
     /// A stage was skipped because its inputs are unchanged and outputs present.
@@ -132,6 +139,89 @@ pub trait Reporter: Send + Sync {
 /// A [`Reporter`] that does nothing — the default used by [`run_pipeline`].
 pub struct NoopReporter;
 impl Reporter for NoopReporter {}
+
+/// A [`Reporter`] that forwards every event to two inner reporters in turn.
+///
+/// Lets a frontend compose its own reporter with a side-channel one — e.g. the CLI's
+/// terminal reporter together with the run-state
+/// [`StatusRecorder`](crate::status::StatusRecorder) — without either having to know about
+/// the other. `wants_buffered` is the OR of the two (so capture is enabled if *either* wants
+/// it), and `flush_block` is delivered to both.
+pub struct TeeReporter<A, B> {
+    a: A,
+    b: B,
+}
+
+impl<A: Reporter, B: Reporter> TeeReporter<A, B> {
+    /// Compose `a` and `b`; events fire on `a` first, then `b`.
+    pub fn new(a: A, b: B) -> Self {
+        Self { a, b }
+    }
+}
+
+impl<A: Reporter, B: Reporter> Reporter for TeeReporter<A, B> {
+    fn step_log(&self, out: &mut dyn Write, message: &str) {
+        self.a.step_log(out, message);
+        self.b.step_log(out, message);
+    }
+    fn stage_output_line(&self, stage: &str, line: &str) {
+        self.a.stage_output_line(stage, line);
+        self.b.stage_output_line(stage, line);
+    }
+    fn stage_start(&self, out: &mut dyn Write, stage: &str) {
+        self.a.stage_start(out, stage);
+        self.b.stage_start(out, stage);
+    }
+    fn stage_skipped(&self, out: &mut dyn Write, stage: &str) {
+        self.a.stage_skipped(out, stage);
+        self.b.stage_skipped(out, stage);
+    }
+    fn stage_restored(&self, out: &mut dyn Write, stage: &str) {
+        self.a.stage_restored(out, stage);
+        self.b.stage_restored(out, stage);
+    }
+    fn stage_passed(&self, out: &mut dyn Write, stage: &str) {
+        self.a.stage_passed(out, stage);
+        self.b.stage_passed(out, stage);
+    }
+    fn stage_failed(&self, out: &mut dyn Write, stage: &str, error: &Error, allow_failure: bool) {
+        self.a.stage_failed(out, stage, error, allow_failure);
+        self.b.stage_failed(out, stage, error, allow_failure);
+    }
+    fn stage_cancelled(&self, out: &mut dyn Write, stage: &str) {
+        self.a.stage_cancelled(out, stage);
+        self.b.stage_cancelled(out, stage);
+    }
+    fn stage_tests(&self, out: &mut dyn Write, stage: &str, results: &[AssertionResult]) {
+        self.a.stage_tests(out, stage, results);
+        self.b.stage_tests(out, stage, results);
+    }
+    fn stage_input_audit(&self, out: &mut dyn Write, stage: &str, undeclared: &[PathBuf]) {
+        self.a.stage_input_audit(out, stage, undeclared);
+        self.b.stage_input_audit(out, stage, undeclared);
+    }
+    fn stage_finished(
+        &self,
+        out: &mut dyn Write,
+        stage: &str,
+        outcome: StageOutcome,
+        elapsed: Duration,
+    ) {
+        self.a.stage_finished(out, stage, outcome, elapsed);
+        self.b.stage_finished(out, stage, outcome, elapsed);
+    }
+    fn pipeline_finished(&self, out: &mut dyn Write, pipeline: &str, failed_stage: Option<&str>) {
+        self.a.pipeline_finished(out, pipeline, failed_stage);
+        self.b.pipeline_finished(out, pipeline, failed_stage);
+    }
+    fn flush_block(&self, bytes: &[u8]) {
+        self.a.flush_block(bytes);
+        self.b.flush_block(bytes);
+    }
+    fn wants_buffered(&self) -> bool {
+        self.a.wants_buffered() || self.b.wants_buffered()
+    }
+}
 
 // ── Cancellation ─────────────────────────────────────────────────────────────────
 
@@ -1271,8 +1361,22 @@ fn run_one_stage(
 
     // When buffered, capture step output into a per-stage sink and assemble one block:
     // start marker, captured output, end marker. When not, stream output live and flush
-    // each marker immediately.
-    let sink = if buffered { Some(Arc::new(OutputSink::default())) } else { None };
+    // each marker immediately. A live per-line callback (wired from the run's reporter
+    // handle, when present) forwards each completed output line to `stage_output_line` so a
+    // frontend can show what the running stage is currently doing.
+    let sink = if buffered {
+        Some(Arc::new(match base.reporter.clone() {
+            Some(handle) => {
+                let name = name.to_string();
+                OutputSink::with_line_sink(Box::new(move |line| {
+                    handle.0.stage_output_line(&name, line)
+                }))
+            }
+            None => OutputSink::default(),
+        }))
+    } else {
+        None
+    };
     let mut exec_ctx = match &sink {
         Some(s) => stage_ctx.with_output(s.clone()),
         None => stage_ctx,
@@ -1567,6 +1671,46 @@ fn runner_err(msg: impl Into<String>) -> Error {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::AtomicUsize;
+
+    /// A reporter that counts events and declares whether it wants buffering, for asserting
+    /// `TeeReporter` fans out to both halves.
+    #[derive(Default)]
+    struct CountingReporter {
+        starts: AtomicUsize,
+        lines: AtomicUsize,
+        buffered: bool,
+    }
+    impl Reporter for CountingReporter {
+        fn stage_start(&self, _out: &mut dyn Write, _stage: &str) {
+            self.starts.fetch_add(1, Ordering::SeqCst);
+        }
+        fn stage_output_line(&self, _stage: &str, _line: &str) {
+            self.lines.fetch_add(1, Ordering::SeqCst);
+        }
+        fn wants_buffered(&self) -> bool {
+            self.buffered
+        }
+    }
+
+    #[test]
+    fn tee_reporter_fans_out_to_both() {
+        let tee = TeeReporter::new(
+            CountingReporter::default(),
+            CountingReporter { buffered: true, ..Default::default() },
+        );
+        let mut out: Vec<u8> = Vec::new();
+        tee.stage_start(&mut out, "a");
+        tee.stage_output_line("a", "hello");
+        tee.stage_output_line("a", "world");
+
+        assert_eq!(tee.a.starts.load(Ordering::SeqCst), 1);
+        assert_eq!(tee.b.starts.load(Ordering::SeqCst), 1);
+        assert_eq!(tee.a.lines.load(Ordering::SeqCst), 2);
+        assert_eq!(tee.b.lines.load(Ordering::SeqCst), 2);
+        // wants_buffered is the OR of the two halves.
+        assert!(tee.wants_buffered());
+    }
 
     fn graph(pairs: &[(&str, &[&str])]) -> HashMap<String, Vec<String>> {
         pairs

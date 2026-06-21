@@ -9,9 +9,10 @@ runner uses — so what they report always matches what a real run does:
 - **`mainstage explain <stage>`** — say why a stage would run or be skipped.
 - **`mainstage profile`** (or the `--profile` flag) — per-stage timings and the
   critical path.
+- **`mainstage status`** — show the **last** run's per-stage statuses and timings.
 
-These are introspection only: `query` and `explain` execute no steps and never
-write the cache. For the language itself see [`GRAMMAR.md`](GRAMMAR.md).
+These are introspection only: `query`, `explain`, and `status` execute no steps and
+never write the cache. For the language itself see [`GRAMMAR.md`](GRAMMAR.md).
 
 ---
 
@@ -20,6 +21,7 @@ write the cache. For the language itself see [`GRAMMAR.md`](GRAMMAR.md).
 1. [`mainstage query`](#mainstage-query)
 2. [`mainstage explain`](#mainstage-explain)
 3. [`mainstage profile`](#mainstage-profile)
+4. [`mainstage status`](#mainstage-status)
 
 ---
 
@@ -142,3 +144,50 @@ The same breakdown can be appended to any run with the global `--profile` flag
 (which suppresses the summary) and `--jobs` (which changes the timings but not the
 graph). Only stages that actually ran this invocation are considered, so a partial
 run still profiles cleanly.
+
+---
+
+## `mainstage status`
+
+Shows the **last** run's per-stage statuses and timings — including which stages were
+cache hits or restored from the output store — without re-running anything. It reads a
+run-state file the runner writes as it goes, `.mainstage/status.json`, so it reflects
+whatever the most recent `mainstage run`, `mainstage ui`, or `mainstage profile` did.
+
+On a terminal it opens an interactive table (dismiss with `q`, `Esc`, or `Enter`); when
+its output is piped or redirected (CI, `| cat`) it prints the same table as plain styled
+text instead:
+
+```console
+$ mainstage status
+last run: ✓ succeeded  pipeline 'release'
+  ✓ compile  passed     1.5s
+  • assets   cached
+  ↻ docs     restored
+  ✓ test     passed     420ms  tests: 12 passed, 0 failed
+```
+
+Per-stage status is one of `passed`, `cached` (skipped on a cache hit), `restored`
+(missing outputs restored from the content-addressed store), `failed` (with the error),
+`failed (allowed)`, `cancelled`, or — for a live file written by a run still in flight —
+`running` (with its latest output line). If no run has been recorded yet, `status` says so.
+
+### The run-state file
+
+`.mainstage/status.json` is a small JSON document updated atomically during a run (it sits
+next to the change-detection cache, so `mainstage clean` removes it). Its shape:
+
+```json
+{
+  "pipeline": "release",
+  "started_unix_ms": 1717000000000,
+  "status": "running",
+  "stages": [
+    { "name": "compile", "status": "running",
+      "started_unix_ms": 1717000000020, "last_output": "Compiling app v0.1.0" }
+  ]
+}
+```
+
+This is the same file the VS Code extension watches to show the running stage in its
+status bar (see [`TOOLING.md`](TOOLING.md)).

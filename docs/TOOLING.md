@@ -47,9 +47,17 @@ It speaks LSP over stdio.
 | **Document highlight** | With the cursor on a `let`/`param` binding or stage, highlight its declaration (as a write) and every use (as reads) in the document. |
 | **Document symbols** | An outline of pipelines, stages, top-level `let` bindings, and `param` declarations; a stage's description and ordering (or a param's type) appear as its detail. |
 | **Formatting** | Whole-document formatting via the shared [formatter](#formatter). |
+| **Run status bar** | While a pipeline runs (`mainstage run` / `ui`), a status-bar item shows the current stage with its elapsed time and last output line, then the final outcome. |
 
 **Document sync** is full-document in V1 (the editor sends the entire buffer on each
 change); incremental sync and range formatting are not yet implemented.
+
+**Live run status** is surfaced independently of the language server: the CLI writes a
+run-state file at `.mainstage/status.json` as a pipeline runs (the same file
+[`mainstage status`](INTROSPECTION.md#mainstage-status) renders), and the VS Code
+extension watches it to update a status-bar item — `running… : <last output>` while a
+stage runs, then `✓ <pipeline> succeeded` or `✗ <pipeline> failed: <stage>`. Toggle it
+with the `mainstage.showStatusBar` setting (on by default).
 
 ### Launching the server
 

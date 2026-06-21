@@ -1,10 +1,12 @@
-import { accessSync, chmodSync, constants, existsSync } from "node:fs";
+import { accessSync, chmodSync, constants, existsSync, readFileSync } from "node:fs";
 import { arch, platform } from "node:process";
 
 import {
   commands,
   env,
   ExtensionContext,
+  StatusBarAlignment,
+  StatusBarItem,
   window,
   workspace,
   Uri,
@@ -17,6 +19,7 @@ import {
 } from "vscode-languageclient/node";
 
 import { resolveServer as resolve, ResolvedServer, ResolverHost } from "./serverResolver";
+import { formatStatusBar, parseRunState } from "./runStatus";
 
 let client: LanguageClient | undefined;
 const outputChannel = window.createOutputChannel("Mainstage Language Server");
@@ -29,6 +32,8 @@ export async function activate(context: ExtensionContext): Promise<void> {
     commands.registerCommand("mainstage.restartServer", () => restart(context)),
     commands.registerCommand("mainstage.showOutput", () => outputChannel.show()),
   );
+
+  registerRunStatusBar(context);
 
   // Log the environment up front: when something fails to start, the platform,
   // architecture, and whether we're inside a remote (WSL, container, SSH) are
@@ -56,6 +61,102 @@ export async function activate(context: ExtensionContext): Promise<void> {
 
 export function deactivate(): Thenable<void> | undefined {
   return client?.stop();
+}
+
+/**
+ * Surface the live run status in the status bar (Phase 54). The Mainstage CLI writes a
+ * run-state file at `<project>/.mainstage/status.json` as a pipeline runs; we watch it and
+ * render the running stage (with its elapsed time and last output line), then the final
+ * outcome. A timer refreshes the live elapsed clock while a run is in progress.
+ *
+ * This is intentionally decoupled from the language server: the CLI owns runs and writes the
+ * file, the extension is a passive consumer, so the LSP stays a pure language server.
+ */
+function registerRunStatusBar(context: ExtensionContext): void {
+  const item = window.createStatusBarItem(StatusBarAlignment.Left, 0);
+  context.subscriptions.push(item);
+
+  // The path most recently read, and a ticking timer kept alive only while a run is running
+  // so the elapsed clock advances without a file change.
+  let lastPath: string | undefined;
+  let ticker: ReturnType<typeof setInterval> | undefined;
+
+  const enabled = () => workspace.getConfiguration("mainstage").get<boolean>("showStatusBar", true);
+
+  const stopTicker = () => {
+    if (ticker) {
+      clearInterval(ticker);
+      ticker = undefined;
+    }
+  };
+
+  const renderFrom = (path: string | undefined) => {
+    if (!enabled() || !path) {
+      stopTicker();
+      item.hide();
+      return;
+    }
+    let text: string;
+    try {
+      text = readFileSync(path, "utf8");
+    } catch {
+      // The file may be missing or momentarily unreadable during the atomic rename; keep the
+      // previous label and wait for the next event.
+      return;
+    }
+    const state = parseRunState(text);
+    if (!state) {
+      return;
+    }
+    const view = formatStatusBar(state, Date.now());
+    if (!view) {
+      stopTicker();
+      item.hide();
+      return;
+    }
+    item.text = view.text;
+    item.tooltip = view.tooltip;
+    item.show();
+
+    // Keep a 1s ticker running only while the run is in progress, to advance the live clock.
+    if (state.status === "running" && !ticker) {
+      ticker = setInterval(() => renderFrom(lastPath), 1000);
+    } else if (state.status !== "running") {
+      stopTicker();
+    }
+  };
+
+  const onEvent = (uri: Uri) => {
+    lastPath = uri.fsPath;
+    renderFrom(lastPath);
+  };
+
+  const watcher = workspace.createFileSystemWatcher("**/.mainstage/status.json");
+  watcher.onDidCreate(onEvent);
+  watcher.onDidChange(onEvent);
+  watcher.onDidDelete(() => {
+    lastPath = undefined;
+    stopTicker();
+    item.hide();
+  });
+  context.subscriptions.push(watcher, { dispose: stopTicker });
+
+  // Re-evaluate visibility when the user toggles the setting.
+  context.subscriptions.push(
+    workspace.onDidChangeConfiguration((event) => {
+      if (event.affectsConfiguration("mainstage.showStatusBar")) {
+        renderFrom(lastPath);
+      }
+    }),
+  );
+
+  // Seed from any existing status file in the workspace so a status shows without waiting
+  // for the next run.
+  void workspace.findFiles("**/.mainstage/status.json", undefined, 1).then((found) => {
+    if (found.length > 0) {
+      onEvent(found[0]);
+    }
+  });
 }
 
 async function start(context: ExtensionContext): Promise<void> {

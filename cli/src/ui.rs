@@ -13,6 +13,7 @@
 //! `--jobs 1`. The pipeline runs on a background thread while the main thread renders.
 
 use std::collections::HashMap;
+use std::io::IsTerminal;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -20,18 +21,23 @@ use std::time::{Duration, Instant};
 use console::style;
 use mainstage_core::{
     AnalysisResult, AssertionResult, CancelToken, Error, EvalContext, Reporter, ReporterHandle,
-    StageOutcome, ast::Program, critical_path, plan_pipeline, run_pipeline_cancellable,
+    RunState, RunStatus, StageOutcome, StageState, StageStatus, StatusRecorder, TeeReporter,
+    ast::Program, critical_path, plan_pipeline, run_pipeline_cancellable,
 };
 use ratatui::{
     Terminal, TerminalOptions, Viewport,
     backend::CrosstermBackend,
     crossterm::{
+        ExecutableCommand,
         event::{self, Event, KeyCode, KeyEventKind, KeyModifiers},
-        terminal::{disable_raw_mode, enable_raw_mode, size},
+        terminal::{
+            EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode, size,
+        },
     },
+    layout::Constraint,
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::Paragraph,
+    widgets::{Block, Borders, Cell, Paragraph, Row, Table},
 };
 
 /// How a stage stands in the HUD, mirroring the runner's lifecycle events.
@@ -59,9 +65,15 @@ impl HudStatus {
 struct HudStage {
     name: String,
     status: HudStatus,
+    /// When the stage started running, for the live elapsed clock on a running row.
+    started: Option<Instant>,
     elapsed: Option<Duration>,
     /// `(passed, failed)` assertion tallies for a `test` stage.
     tests: Option<(usize, usize)>,
+    /// The most recent line of command output, shown live while the stage runs (Phase 54).
+    last_output: Option<String>,
+    /// On failure, the error message, shown inline after `failed`.
+    error: Option<String>,
 }
 
 /// Shared state the render loop reads and the [`HudReporter`] writes. Cloned under the lock
@@ -87,8 +99,11 @@ impl HudState {
             .map(|name| HudStage {
                 name: name.clone(),
                 status: HudStatus::Queued,
+                started: None,
                 elapsed: None,
                 tests: None,
+                last_output: None,
+                error: None,
             })
             .collect();
         let index = stages.iter().enumerate().map(|(i, s)| (s.name.clone(), i)).collect();
@@ -158,7 +173,21 @@ impl Reporter for HudReporter {
     }
 
     fn stage_start(&self, _out: &mut dyn std::io::Write, stage: &str) {
-        self.state.lock().unwrap().set_status(stage, HudStatus::Running);
+        let mut s = self.state.lock().unwrap();
+        s.set_status(stage, HudStatus::Running);
+        if let Some(&i) = s.index.get(stage) {
+            s.stages[i].started = Some(Instant::now());
+        }
+    }
+
+    fn stage_output_line(&self, stage: &str, line: &str) {
+        if line.is_empty() {
+            return;
+        }
+        let mut s = self.state.lock().unwrap();
+        if let Some(&i) = s.index.get(stage) {
+            s.stages[i].last_output = Some(line.to_string());
+        }
     }
 
     fn stage_skipped(&self, _out: &mut dyn std::io::Write, stage: &str) {
@@ -184,6 +213,9 @@ impl Reporter for HudReporter {
         let status = if allow_failure { HudStatus::AllowedFailure } else { HudStatus::Failed };
         s.set_status(stage, status);
         if !allow_failure {
+            if let Some(&i) = s.index.get(stage) {
+                s.stages[i].error = Some(error.to_string());
+            }
             s.errors.push((stage.to_string(), error.to_string()));
         }
     }
@@ -245,7 +277,12 @@ pub fn run_hud(
     let pipeline_label = plan.pipeline.clone();
 
     let state = Arc::new(Mutex::new(HudState::new(&pipeline_label, &order)));
-    let reporter: Arc<dyn Reporter> = Arc::new(HudReporter { state: state.clone() });
+    // Compose the HUD reporter (drives the live screen) with a `StatusRecorder` (persists
+    // `.mainstage/status.json`) so a `mainstage ui` run is also recorded for `mainstage
+    // status` and the VS Code status bar (Phase 54). Both receive the live per-line output.
+    let recorder = StatusRecorder::new(ctx.script_dir.clone(), &pipeline_label);
+    let reporter: Arc<dyn Reporter> =
+        Arc::new(TeeReporter::new(HudReporter { state: state.clone() }, recorder));
     let run_ctx = ctx.with_reporter(ReporterHandle(reporter.clone()));
     let jobs =
         jobs.unwrap_or_else(|| std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1));
@@ -383,7 +420,7 @@ fn render(frame: &mut ratatui::Frame, state: &HudState, tick: usize) {
 
     // Stage rows, windowed around the first unfinished stage when they don't all fit.
     for stage in window(&state.stages, stage_rows) {
-        lines.push(stage_line(stage, tick));
+        lines.push(stage_line(stage, tick, area.width));
     }
 
     // Summary.
@@ -419,8 +456,11 @@ fn window(stages: &[HudStage], rows: usize) -> &[HudStage] {
     &stages[start..start + rows]
 }
 
-/// Render a single stage row: glyph, name, and status/timing.
-fn stage_line(stage: &HudStage, tick: usize) -> Line<'static> {
+/// Render a single stage row in the Phase 54 format:
+/// `[glyph] <name> (<elapsed>) <status>`, where a running row shows its live elapsed clock
+/// and a tail of the last output line, a failed row shows its error, and a skipped/restored
+/// row reads `cached` / `restored`.
+fn stage_line(stage: &HudStage, tick: usize, width: u16) -> Line<'static> {
     let (glyph, glyph_style, status, status_style) = match stage.status {
         HudStatus::Queued => ("·".to_string(), dim(), "queued".to_string(), dim()),
         HudStatus::Running => (
@@ -430,7 +470,7 @@ fn stage_line(stage: &HudStage, tick: usize) -> Line<'static> {
             Style::default().fg(Color::Cyan),
         ),
         HudStatus::Passed => {
-            ("✓".to_string(), Style::default().fg(Color::Green), timing(stage), dim())
+            ("✓".to_string(), Style::default().fg(Color::Green), "done".to_string(), dim())
         }
         HudStatus::Failed => (
             "✗".to_string(),
@@ -444,7 +484,7 @@ fn stage_line(stage: &HudStage, tick: usize) -> Line<'static> {
             "failed (allowed)".to_string(),
             Style::default().fg(Color::Yellow),
         ),
-        HudStatus::Skipped => ("•".to_string(), dim(), "up to date".to_string(), dim()),
+        HudStatus::Skipped => ("•".to_string(), dim(), "cached".to_string(), dim()),
         HudStatus::Restored => {
             ("↻".to_string(), Style::default().fg(Color::Cyan), "restored".to_string(), dim())
         }
@@ -461,8 +501,34 @@ fn stage_line(stage: &HudStage, tick: usize) -> Line<'static> {
         Span::styled(glyph, glyph_style),
         Span::raw(" "),
         Span::raw(format!("{:<20}", truncate(&stage.name, 20usize))),
-        Span::styled(status, status_style),
     ];
+    // Elapsed clock in parens: the final duration once settled, or the live clock while
+    // running.
+    if let Some(elapsed) = elapsed_of(stage) {
+        spans.push(Span::styled(format!("({}) ", fmt_millis(elapsed.as_millis())), dim()));
+    }
+    spans.push(Span::styled(status, status_style));
+
+    // A trailing detail after the status: the last output line while running, or the error
+    // on failure. Budget the remaining row width so it never wraps the inline viewport.
+    let detail = match stage.status {
+        HudStatus::Running => stage.last_output.as_deref(),
+        HudStatus::Failed => stage.error.as_deref(),
+        _ => None,
+    };
+    if let Some(text) = detail {
+        let one_line = text.lines().next().unwrap_or("").trim();
+        if !one_line.is_empty() {
+            let budget = (width as usize).saturating_sub(34).max(8);
+            let st = if stage.status == HudStatus::Failed {
+                Style::default().fg(Color::Red)
+            } else {
+                dim()
+            };
+            spans.push(Span::styled(format!(": {}", truncate(one_line, budget)), st));
+        }
+    }
+
     if let Some((passed, failed)) = stage.tests {
         let tests = format!("  tests: {passed} passed, {failed} failed");
         let st = if failed > 0 { Style::default().fg(Color::Red) } else { dim() };
@@ -471,9 +537,10 @@ fn stage_line(stage: &HudStage, tick: usize) -> Line<'static> {
     Line::from(spans)
 }
 
-/// A stage's elapsed-time label, or an empty string when not yet timed.
-fn timing(stage: &HudStage) -> String {
-    stage.elapsed.map(|d| fmt_millis(d.as_millis())).unwrap_or_default()
+/// A stage's elapsed time: the recorded final duration once settled, otherwise the live
+/// time since it started running (for the running row's clock). `None` before it starts.
+fn elapsed_of(stage: &HudStage) -> Option<Duration> {
+    stage.elapsed.or_else(|| stage.started.map(|s| s.elapsed()))
 }
 
 /// The dim style used for secondary text (timings, queued rows, output tail).
@@ -565,7 +632,10 @@ fn print_summary(
 /// The glyph and status text for a stage in the permanent summary.
 fn summary_row(stage: &HudStage) -> (console::StyledObject<&'static str>, String) {
     match stage.status {
-        HudStatus::Passed => (style("✓").green(), timing(stage)),
+        HudStatus::Passed => (
+            style("✓").green(),
+            stage.elapsed.map(|d| fmt_millis(d.as_millis())).unwrap_or_default(),
+        ),
         HudStatus::Failed => (style("✗").red(), style("failed").red().to_string()),
         HudStatus::AllowedFailure => {
             (style("!").yellow(), style("failed (allowed)").yellow().to_string())
@@ -588,6 +658,184 @@ fn fmt_millis(ms: u128) -> String {
     } else {
         let secs = ms / 1_000;
         format!("{}m {}s", secs / 60, secs % 60)
+    }
+}
+
+// ── status command (Phase 54) ────────────────────────────────────────────────────
+
+/// One row of the `mainstage status` table: the stage's name, where it settled, its
+/// duration, and a short note (error, test tally, or last output). Pure data, so the
+/// row-builder is unit-testable without a terminal.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StatusRow {
+    pub name: String,
+    pub status: StageStatus,
+    /// Pre-formatted elapsed label (`""` when the stage never ran).
+    pub elapsed: String,
+    /// A short trailing note: the error on failure, the test tally for a `test` stage, or
+    /// the last output line for a still-running stage.
+    pub note: String,
+}
+
+/// Build the table rows for a recorded run. Each stage maps to exactly one row, in the order
+/// it was recorded (≈ execution order).
+pub fn status_rows(state: &RunState) -> Vec<StatusRow> {
+    state.stages.iter().map(status_row).collect()
+}
+
+fn status_row(s: &StageState) -> StatusRow {
+    let elapsed = s.elapsed_ms.map(|ms| fmt_millis(ms as u128)).unwrap_or_default();
+    let note = if let Some(err) = &s.error {
+        err.lines().next().unwrap_or("").trim().to_string()
+    } else if let Some((passed, failed)) = s.tests {
+        format!("tests: {passed} passed, {failed} failed")
+    } else if s.status == StageStatus::Running {
+        s.last_output.clone().unwrap_or_default()
+    } else {
+        String::new()
+    };
+    StatusRow { name: s.name.clone(), status: s.status, elapsed, note }
+}
+
+/// The glyph + label + color for a stage status, shared by the TUI table and the static
+/// fallback.
+fn status_label(status: StageStatus) -> (&'static str, &'static str, Color) {
+    match status {
+        StageStatus::Queued => ("·", "queued", Color::DarkGray),
+        StageStatus::Running => ("…", "running", Color::Cyan),
+        StageStatus::Passed => ("✓", "passed", Color::Green),
+        StageStatus::Cached => ("•", "cached", Color::DarkGray),
+        StageStatus::Restored => ("↻", "restored", Color::Cyan),
+        StageStatus::Failed => ("✗", "failed", Color::Red),
+        StageStatus::AllowedFailure => ("!", "failed (allowed)", Color::Yellow),
+        StageStatus::Cancelled => ("⊘", "cancelled", Color::Yellow),
+    }
+}
+
+/// Render the last run's status. When stdout is a terminal, draw an interactive ratatui
+/// table (dismissed with `q` / `Esc` / `Enter`); otherwise print a static styled table
+/// (piped output / CI). Returns the process exit code (`1` when the recorded run failed).
+pub fn run_status(state: &RunState) -> i32 {
+    let exit = if state.status == RunStatus::Failed { 1 } else { 0 };
+    if std::io::stdout().is_terminal() && draw_status_table(state).is_ok() {
+        return exit;
+    }
+    print_status_static(state);
+    exit
+}
+
+/// Draw the status table in a fullscreen alternate screen and wait for a dismiss key.
+fn draw_status_table(state: &RunState) -> std::io::Result<()> {
+    enable_raw_mode()?;
+    let mut stdout = std::io::stdout();
+    stdout.execute(EnterAlternateScreen)?;
+    let backend = CrosstermBackend::new(stdout);
+    let mut terminal = Terminal::new(backend)?;
+
+    let _ = terminal.draw(|frame| render_status(frame, state));
+
+    // Block until the user dismisses the view.
+    loop {
+        if let Ok(Event::Key(key)) = event::read()
+            && key.kind == KeyEventKind::Press
+        {
+            let ctrl_c =
+                key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL);
+            if ctrl_c || matches!(key.code, KeyCode::Char('q') | KeyCode::Esc | KeyCode::Enter) {
+                break;
+            }
+        }
+    }
+
+    disable_raw_mode()?;
+    terminal.backend_mut().execute(LeaveAlternateScreen)?;
+    Ok(())
+}
+
+/// Draw one frame of the status table.
+fn render_status(frame: &mut ratatui::Frame, state: &RunState) {
+    let header = Row::new(["", "stage", "status", "time", "note"].map(Cell::from))
+        .style(Style::default().add_modifier(Modifier::BOLD));
+
+    let rows: Vec<Row> = status_rows(state)
+        .into_iter()
+        .map(|r| {
+            let (glyph, label, color) = status_label(r.status);
+            Row::new(vec![
+                Cell::from(glyph).style(Style::default().fg(color)),
+                Cell::from(r.name),
+                Cell::from(label).style(Style::default().fg(color)),
+                Cell::from(r.elapsed).style(dim()),
+                Cell::from(truncate(&r.note, frame.area().width.saturating_sub(40))).style(dim()),
+            ])
+        })
+        .collect();
+
+    let widths = [
+        Constraint::Length(2),
+        Constraint::Percentage(24),
+        Constraint::Length(16),
+        Constraint::Length(9),
+        Constraint::Percentage(40),
+    ];
+
+    let (run_glyph, run_text, run_color) = run_summary(state);
+    let title = format!(" {run_glyph} {run_text}  ·  pipeline '{}' ", state.pipeline);
+    let table = Table::new(rows, widths)
+        .header(header)
+        .block(Block::default().borders(Borders::ALL).title(Span::styled(
+            title,
+            Style::default().fg(run_color).add_modifier(Modifier::BOLD),
+        )))
+        .column_spacing(1);
+
+    frame.render_widget(table, frame.area());
+
+    let hint = Line::from(Span::styled("  press q / Esc / Enter to dismiss", dim()));
+    let area = frame.area();
+    if area.height > 2 {
+        let foot = ratatui::layout::Rect { y: area.height - 1, height: 1, ..area };
+        frame.render_widget(Paragraph::new(hint), foot);
+    }
+}
+
+/// Print the status table as plain styled text (no raw mode) — the piped/CI fallback.
+fn print_status_static(state: &RunState) {
+    let (run_glyph, run_text, _) = run_summary(state);
+    let conclusion = match state.status {
+        RunStatus::Succeeded => style(format!("{run_glyph} {run_text}")).green().to_string(),
+        RunStatus::Failed => style(format!("{run_glyph} {run_text}")).red().to_string(),
+        RunStatus::Running => style(format!("{run_glyph} {run_text}")).cyan().to_string(),
+    };
+    println!("{} {}  pipeline '{}'", style("last run:").bold(), conclusion, state.pipeline);
+
+    let rows = status_rows(state);
+    let width = rows.iter().map(|r| r.name.len()).max().unwrap_or(0);
+    for r in &rows {
+        let (glyph, label, _) = status_label(r.status);
+        let note = if r.note.is_empty() {
+            String::new()
+        } else {
+            format!("  {}", style(truncate(&r.note, 60usize)).dim())
+        };
+        println!(
+            "  {} {:<width$}  {:<16} {}{}",
+            glyph,
+            r.name,
+            label,
+            style(&r.elapsed).dim(),
+            note,
+            width = width,
+        );
+    }
+}
+
+/// The glyph, label, and color summarizing the overall run outcome.
+fn run_summary(state: &RunState) -> (&'static str, &'static str, Color) {
+    match state.status {
+        RunStatus::Running => ("▶", "running", Color::Cyan),
+        RunStatus::Succeeded => ("✓", "succeeded", Color::Green),
+        RunStatus::Failed => ("✗", "failed", Color::Red),
     }
 }
 
@@ -631,5 +879,66 @@ mod tests {
         assert_eq!(truncate("hello", 10u16), "hello");
         assert_eq!(truncate("hello world", 5u16), "hell…");
         assert_eq!(truncate("x", 0u16), "");
+    }
+
+    fn stage(name: &str, status: StageStatus) -> StageState {
+        StageState {
+            name: name.to_string(),
+            status,
+            started_unix_ms: None,
+            elapsed_ms: None,
+            last_output: None,
+            error: None,
+            tests: None,
+        }
+    }
+
+    #[test]
+    fn status_rows_map_status_elapsed_and_notes() {
+        let mut compile = stage("compile", StageStatus::Passed);
+        compile.elapsed_ms = Some(1_500);
+        let mut test = stage("test", StageStatus::Failed);
+        test.elapsed_ms = Some(42);
+        test.error = Some("assertion failed\nsecond line".to_string());
+        let mut lint = stage("lint", StageStatus::Running);
+        lint.last_output = Some("checking crate…".to_string());
+        let cached = stage("assets", StageStatus::Cached);
+        let mut suite = stage("suite", StageStatus::Passed);
+        suite.tests = Some((3, 1));
+
+        let state = RunState {
+            pipeline: "release".to_string(),
+            started_unix_ms: 0,
+            status: RunStatus::Failed,
+            stages: vec![compile, test, lint, cached, suite],
+        };
+        let rows = status_rows(&state);
+
+        assert_eq!(rows[0].elapsed, "1.5s");
+        assert_eq!(rows[0].note, "");
+        // The error note is collapsed to its first line.
+        assert_eq!(rows[1].note, "assertion failed");
+        assert_eq!(rows[1].elapsed, "42ms");
+        // A running stage surfaces its last output line.
+        assert_eq!(rows[2].note, "checking crate…");
+        // A cache hit has no note and no elapsed.
+        assert_eq!(rows[3].status, StageStatus::Cached);
+        assert_eq!(rows[3].note, "");
+        // A test stage shows its tally even when passed.
+        assert_eq!(rows[4].note, "tests: 3 passed, 1 failed");
+    }
+
+    #[test]
+    fn run_status_exit_code_reflects_outcome() {
+        // Non-TTY in tests, so this exercises the static path and the exit code.
+        let ok = RunState {
+            pipeline: "dev".to_string(),
+            started_unix_ms: 0,
+            status: RunStatus::Succeeded,
+            stages: vec![stage("a", StageStatus::Passed)],
+        };
+        assert_eq!(run_status(&ok), 0);
+        let bad = RunState { status: RunStatus::Failed, ..ok };
+        assert_eq!(run_status(&bad), 1);
     }
 }

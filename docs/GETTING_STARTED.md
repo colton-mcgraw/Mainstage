@@ -86,12 +86,18 @@ mainstage ui              # run the default pipeline in a live status board
 mainstage ui release      # or a named pipeline
 ```
 
-It draws a per-stage status board (spinners, timings, a running `done` count, and a
-tail of recent output) in place while the pipeline runs, then collapses to a clean
-summary — including the critical path — when it finishes. Press `q` (or Ctrl-C) to
-cancel an in-flight run. When output is piped or redirected (no terminal), `ui`
-automatically falls back to the ordinary streaming output, so it's safe in scripts and
-CI.
+It draws a per-stage status board in place while the pipeline runs, then collapses to a
+clean summary — including the critical path — when it finishes. Each row reads
+`[spinner] <stage> (<elapsed>) <status>`, where a running stage shows its live elapsed
+clock and the last line of its output (`running… : Compiling app v0.1.0`), a cache hit
+reads `cached`, restored outputs read `restored`, and a failure shows its error
+(`failed : <message>`). Press `q` (or Ctrl-C) to cancel an in-flight run. When output is
+piped or redirected (no terminal), `ui` automatically falls back to the ordinary streaming
+output, so it's safe in scripts and CI.
+
+Every run also writes a small run-state file, `.mainstage/status.json`, which
+[`mainstage status`](INTROSPECTION.md#mainstage-status) renders later and the VS Code
+extension watches to show the running stage in its status bar.
 
 ---
 

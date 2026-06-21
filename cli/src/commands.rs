@@ -16,10 +16,10 @@ use mainstage_core::ast::Program;
 use mainstage_core::{
     AnalysisResult, AssertionResult, CancelToken, Diagnostic, Error, EvalContext, ExplainVerdict,
     Explanation, LintLevel, ModuleRegistry, Permissions, Plan, PlanStatus, Reporter,
-    ReporterHandle, RunReason, SkipReason, Source, Span, StageGraph, StageOutcome, Value,
-    analyze_with, ast, cache, critical_path, eval_program_with_overrides, explain_stage,
-    lint_plugin, params_from_manifest, parse, pipeline_input_paths, plan_pipeline, query_graph,
-    run_pipeline_cancellable,
+    ReporterHandle, RunReason, RunState, SkipReason, Source, Span, StageGraph, StageOutcome,
+    StatusRecorder, TeeReporter, Value, analyze_with, ast, cache, critical_path,
+    eval_program_with_overrides, explain_stage, lint_plugin, params_from_manifest, parse,
+    pipeline_input_paths, plan_pipeline, query_graph, run_pipeline_cancellable,
 };
 
 use crate::scaffold::{self, Lang};
@@ -197,6 +197,11 @@ pub fn setup(cli: Command) -> Command {
                 .arg(file_arg()),
         )
         .subcommand(
+            Command::new("status")
+                .about("Show the last run's per-stage statuses and timings")
+                .arg(file_arg()),
+        )
+        .subcommand(
             Command::new("clean")
                 .about("Clear the change-detection cache and content-addressed output store")
                 .arg(file_arg()),
@@ -366,6 +371,7 @@ pub fn dispatch(matches: &clap::ArgMatches) -> i32 {
             // A `profile` run always reports the breakdown, regardless of the global flag.
             cmd_run(file_of(sub), name, flags, jobs, verbosity, &overrides, true, audit)
         }
+        Some(("status", sub)) => cmd_status(file_of(sub)),
         Some(("clean", sub)) => cmd_clean(file_of(sub)),
         Some(("cache", sub)) => match sub.subcommand() {
             Some(("stats", args)) => cmd_cache_stats(file_of(args)),
@@ -497,6 +503,22 @@ fn cmd_run(
     run_prepared(&program, pipeline, &ctx, &analysis, jobs, verbosity, &cancel, profile, audit)
 }
 
+/// The pipeline label to record in the run-state file: the requested name, or the program's
+/// `default pipeline` name when none was given (falling back to "default").
+fn pipeline_label(program: &Program, pipeline: Option<&str>) -> String {
+    if let Some(name) = pipeline {
+        return name.to_string();
+    }
+    program
+        .items
+        .iter()
+        .find_map(|item| match item {
+            ast::Item::Pipeline(p) if p.is_default => Some(p.name.clone()),
+            _ => None,
+        })
+        .unwrap_or_else(|| "default".to_string())
+}
+
 /// Resolve the effective input-audit setting (Phase 53). When `--audit-inputs` is requested,
 /// probe whether the filesystem tracks access times; if not, warn that the audit is inert
 /// (so a clean result is not mistaken for completeness) and disable it.
@@ -546,8 +568,14 @@ fn run_prepared(
     // Share one reporter between the runner's lifecycle events and the `log` step: install
     // a handle to it on the context so `log` routes through `Reporter::step_log` (honoring
     // `--quiet` and the per-stage buffered output) just like the runner's own markers.
-    let reporter: Arc<dyn Reporter> =
-        Arc::new(TermReporter::new(verbosity, profile, analysis.dependency_graph.clone()));
+    //
+    // The terminal reporter is composed (via `TeeReporter`) with a `StatusRecorder` so every
+    // run also persists `.mainstage/status.json` — the run-state file `mainstage status` and
+    // the VS Code status bar read (Phase 54). The recorder's `wants_buffered` is `false`, so
+    // composing it does not change the run's streaming behavior.
+    let term = TermReporter::new(verbosity, profile, analysis.dependency_graph.clone());
+    let recorder = StatusRecorder::new(ctx.script_dir.clone(), &pipeline_label(program, pipeline));
+    let reporter: Arc<dyn Reporter> = Arc::new(TeeReporter::new(term, recorder));
     // Enable the input audit only when supported, so a clean result is meaningful.
     let audit = resolve_audit(audit, ctx);
     let run_ctx = ctx.with_reporter(ReporterHandle(reporter.clone())).with_audit_inputs(audit);
@@ -1190,6 +1218,25 @@ fn print_explanation(exp: &Explanation) {
     }
     if !exp.dependents.is_empty() {
         println!("  {} {}", style("required by:").dim(), exp.dependents.join(", "));
+    }
+}
+
+// ── status (Phase 54) ──────────────────────────────────────────────────────────────
+
+/// Show the last run's per-stage statuses and timings from `.mainstage/status.json`.
+/// Renders an interactive ratatui table on a terminal, or a static table when piped.
+fn cmd_status(file: &str) -> i32 {
+    let dir = script_dir(file);
+    match RunState::load(dir) {
+        Some(state) => crate::ui::run_status(&state),
+        None => {
+            println!(
+                "{} no recorded run for this project yet — run {} first",
+                style("status:").bold(),
+                style("mainstage run").cyan()
+            );
+            0
+        }
     }
 }
 

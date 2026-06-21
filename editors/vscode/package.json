@@ -83,6 +83,12 @@
           "default": "off",
           "description": "Trace the communication between VS Code and the Mainstage language server.",
           "scope": "window"
+        },
+        "mainstage.showStatusBar": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Show the live status of the currently running Mainstage pipeline in the status bar. Reads the run-state file the CLI writes at `.mainstage/status.json`.",
+          "scope": "window"
         }
       }
     },

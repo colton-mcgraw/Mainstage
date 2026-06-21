@@ -830,6 +830,8 @@ Make change detection *restore* outputs, not just skip stages. Output: outputs s
 
 ### Phase 51: Remote / Shared Cache
 
+**Defered to next goal.**
+
 Share built artifacts across machines and CI runs. Output: a second machine (or a CI job)
 that has never built the project pulls finished outputs instead of recomputing them.
 
@@ -880,5 +882,38 @@ tools it needs, can isolate itself from ambient state, and can be checked for de
 - [x] Input-completeness audit: where the platform allows, warn when a stage reads files
       outside its declared `inputs` (the most common cause of a stale cache); `docs/` +
       an example
+
+---
+
+### Phase 54: Improved TUI Feedback and IDE Integration
+
+- [x] The current stage TUI just shows a spinner and "running..." text, which isn't very informative. We should show as follows:
+  `[spinner] <stage name> (<elapsed time>) <status>` where `<status>` is one of:
+- "running..." (default) `: <last output line>` (updated live)
+- "cached" (skipped due to cache hit)
+- "restored" (skipped due to cache hit and outputs were restored)
+- "failed" (stage failed) `: <error message>`
+- [x] Surface the same status and last output line in the LSP client (e.g. VS Code status bar) for the currently running stage.
+- [x] Add a `mainstage status` command that shows the last run's stage statuses and timings, including cache hits/restores, in a TUI table.
+
+---
+
+### Phase 55: TUI File Editor
+
+Allow a UI like experience for making a Mainstage script. Output: a `mainstage edit` command that opens a TUI file editor with syntax highlighting, error diagnostics, and LSP features.
+
+- [ ] `mainstage edit <file>` command that opens a TUI file editor for the specified `.ms` file, with a fallback to `$EDITOR` if the terminal doesn't support it
+- [ ] Syntax highlighting for `.ms` files in the TUI editor
+- [ ] Display of syntax and semantic error diagnostics in the TUI editor, integrated with the existing LSP diagnostics
+- [ ] Support for LSP features like go-to-definition, hover, and completion in the TUI editor, reusing the existing LSP server implementation.
+- [ ] Tests for the `mainstage edit` command, including opening files, displaying diagnostics, and using LSP features in the TUI editor.
+- [ ] Documentation for the `mainstage edit` command and its features in `docs/`
+
+```sh
+mainstage edit main.ms
+
+// TODO: Show sample of TUI here.
+
+```
 
 ---
