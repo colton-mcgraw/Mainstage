@@ -828,26 +828,6 @@ Make change detection *restore* outputs, not just skip stages. Output: outputs s
 
 ---
 
-### Phase 51: Remote / Shared Cache
-
-**Defered to next goal.**
-
-Share built artifacts across machines and CI runs. Output: a second machine (or a CI job)
-that has never built the project pulls finished outputs instead of recomputing them.
-
-- [ ] A `CacheBackend` trait with a local-directory backend and an HTTP backend; push/pull
-      CAS blobs and cache entries keyed by the **same** digest the local cache uses, so a
-      remote hit is indistinguishable from a local one
-- [ ] `--remote-cache <url>` flag and a manifest `[cache]` block; read-through /
-      write-through policy plus a read-only mode for untrusted CI; gate the network on the
-      existing `net` capability
-- [ ] Graceful degradation: a cache miss, timeout, auth failure, or malformed blob logs a
-      warning and falls back to local-only — **never** fails the build
-- [ ] Integration tests against an in-process fake backend (hit, miss, corruption,
-      timeout); document the wire protocol and a CI recipe in `docs/`
-
----
-
 ### Phase 52: Build Graph Query & Explain
 
 Make the dependency graph and the change-detection decisions inspectable. Output: an author
@@ -895,6 +875,32 @@ tools it needs, can isolate itself from ambient state, and can be checked for de
 - "failed" (stage failed) `: <error message>`
 - [x] Surface the same status and last output line in the LSP client (e.g. VS Code status bar) for the currently running stage.
 - [x] Add a `mainstage status` command that shows the last run's stage statuses and timings, including cache hits/restores, in a TUI table.
+
+---
+
+## Goal 9: Deferred & Future Work
+
+Phases that were scoped during earlier goals but intentionally left unimplemented
+when **v1.1.0** was cut. They are parked here, in their original form, until they
+are scheduled into a future goal. Everything above this point ships in v1.1.0.
+
+---
+
+### Phase 51: Remote / Shared Cache
+
+Share built artifacts across machines and CI runs. Output: a second machine (or a CI job)
+that has never built the project pulls finished outputs instead of recomputing them.
+
+- [ ] A `CacheBackend` trait with a local-directory backend and an HTTP backend; push/pull
+      CAS blobs and cache entries keyed by the **same** digest the local cache uses, so a
+      remote hit is indistinguishable from a local one
+- [ ] `--remote-cache <url>` flag and a manifest `[cache]` block; read-through /
+      write-through policy plus a read-only mode for untrusted CI; gate the network on the
+      existing `net` capability
+- [ ] Graceful degradation: a cache miss, timeout, auth failure, or malformed blob logs a
+      warning and falls back to local-only — **never** fails the build
+- [ ] Integration tests against an in-process fake backend (hit, miss, corruption,
+      timeout); document the wire protocol and a CI recipe in `docs/`
 
 ---
 
